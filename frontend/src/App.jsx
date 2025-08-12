@@ -1,5 +1,5 @@
 
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { PrayerTimes, CalculationMethod, Coordinates, Qibla, HighLatitudeRule, Madhab } from 'adhan'
 
 const NB_TIME = new Intl.DateTimeFormat('nb-NO', { hour: '2-digit', minute: '2-digit' })
@@ -15,15 +15,19 @@ function useLocalStorage(key, initialValue) {
 
 function buildParams(methodKey) {
   const m = CalculationMethod
+  let p
   switch (methodKey) {
-    case 'MWL': return m.MuslimWorldLeague()
-    case 'UmmAlQura': return m.UmmAlQura()
-    case 'Egyptian': return m.Egyptian()
-    case 'Karachi': return m.Karachi()
-    case 'Dubai': return m.Dubai()
-    case 'Moonsighting': return m.Moonsighting()
-    default: return m.MuslimWorldLeague()
+    case 'MWL': p = m.MuslimWorldLeague(); break
+    case 'UmmAlQura': p = m.UmmAlQura(); break
+    case 'Egyptian': p = m.Egyptian(); break
+    case 'Karachi': p = m.Karachi(); break
+    case 'Dubai': p = m.Dubai(); break
+    case 'Moonsighting': p = m.Moonsighting(); break
+    default: p = m.MuslimWorldLeague()
   }
+  // Maliki = Shafi for Asr (skygge 1x)
+  p.madhab = Madhab.Shafi
+  return p
 }
 
 // ---- Geolocation hook with robust error handling ----
@@ -71,7 +75,7 @@ function useGeolocation() {
       if (done) return; done = true
       const code = err?.code
       let msg = err?.message || 'Kunne ikke hente posisjon.'
-      if (code === 1) msg = 'Tilgang til posisjon ble nektet. Åpne nettleserinnstillinger og gi tillatelse.'
+      if (code === 1) msg = 'Tilgang til posisjon ble nektet. aA → Nettstedsinnstillinger → Sted = Tillat.'
       if (code === 2) msg = 'Posisjon utilgjengelig. Prøv nær et vindu, slå på GPS/mobilnett, eller skriv inn manuelt.'
       if (code === 3) msg = 'Tidsavbrudd. Prøv igjen, eller skriv inn manuelt.'
       setError(msg)
@@ -104,77 +108,74 @@ async function reverseGeocode(lat, lng) {
   }
 }
 
+// ---- Compass with explicit permission flow, degrees label and Kaaba marker ----
+function KaabaIcon({ size=26 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" aria-label="Kaaba">
+      <rect x="3" y="7" width="18" height="12" rx="2" fill="#111827" stroke="#374151" />
+      <rect x="3" y="7" width="18" height="4" fill="#22c55e"/>
+      <path d="M7 9h2v2H7zm4 0h2v2h-2zm4 0h2v2h-2z" fill="#111827"/>
+    </svg>
+  )
+}
+
 function Compass({ bearing }) {
   const [heading, setHeading] = useState(null)
   const [perm, setPerm] = useState('prompt')
   const [showHelp, setShowHelp] = useState(false)
   const [hasEvent, setHasEvent] = useState(false)
+  const cleanupRef = useRef(() => {})
 
-  useEffect(() => {
+  const addListeners = () => {
     const onOrientation = (e) => {
       let hdg = null
       if (typeof e.webkitCompassHeading === 'number') {
-        hdg = e.webkitCompassHeading
+        hdg = e.webkitCompassHeading // iOS provides degrees from North
       } else if (typeof e.alpha === 'number') {
+        // Convert alpha (0-360, clockwise from device top) to compass heading
         hdg = 360 - e.alpha
       }
-      if (hdg != null) {
+      if (hdg != null && !Number.isNaN(hdg)) {
         setHeading((hdg + 360) % 360)
         setHasEvent(true)
       }
     }
+    window.addEventListener('deviceorientationabsolute', onOrientation, true)
+    window.addEventListener('deviceorientation', onOrientation, true)
+    cleanupRef.current = () => {
+      window.removeEventListener('deviceorientationabsolute', onOrientation, true)
+      window.removeEventListener('deviceorientation', onOrientation, true)
+    }
+  }
 
-    let cleanup = () => {}
-    if (!(window.DeviceOrientationEvent && typeof DeviceOrientationEvent.requestPermission === 'function')) {
-      window.addEventListener('deviceorientationabsolute', onOrientation, true)
-      window.addEventListener('deviceorientation', onOrientation, true)
-      setPerm('granted')
-      cleanup = () => {
-        window.removeEventListener('deviceorientationabsolute', onOrientation, true)
-        window.removeEventListener('deviceorientation', onOrientation, true)
-      }
-    } else {
+  useEffect(() => {
+    // If iOS permission API exists, wait for user gesture; else attach directly
+    if (window.DeviceOrientationEvent && typeof DeviceOrientationEvent.requestPermission === 'function') {
       setPerm('prompt')
       setShowHelp(true)
+    } else {
+      setPerm('granted')
+      addListeners()
     }
-
-    // If no event after a few seconds, suggest calibration / settings
     const timer = setTimeout(() => {
       if (!hasEvent && perm === 'granted') setShowHelp(true)
     }, 4000)
-
-    return () => { cleanup(); clearTimeout(timer) }
+    return () => { cleanupRef.current(); clearTimeout(timer) }
   }, [perm])
 
   const requestCompass = async () => {
     try {
       if (window.DeviceOrientationEvent && typeof DeviceOrientationEvent.requestPermission === 'function') {
-        const p = await DeviceOrientationEvent.requestPermission()
+        const p = await DeviceOrientationEvent.requestPermission() // must be in a click
         setPerm(p)
-        if (p === 'granted') {
-          const onOrientation = (e) => {
-            let hdg = null
-            if (typeof e.webkitCompassHeading === 'number') {
-              hdg = e.webkitCompassHeading
-            } else if (typeof e.alpha === 'number') {
-              hdg = 360 - e.alpha
-            }
-            if (hdg != null) {
-              setHeading((hdg + 360) % 360)
-              setHasEvent(true)
-            }
-          }
-          window.addEventListener('deviceorientationabsolute', onOrientation, true)
-          window.addEventListener('deviceorientation', onOrientation, true)
-          setShowHelp(false)
-        } else {
-          setShowHelp(true)
-        }
+        if (p === 'granted') { addListeners(); setShowHelp(false) }
+        else { setShowHelp(true) }
       } else {
         setPerm('granted')
+        addListeners()
         setShowHelp(false)
       }
-    } catch (e) {
+    } catch {
       setPerm('denied')
       setShowHelp(true)
     }
@@ -192,33 +193,44 @@ function Compass({ bearing }) {
         <div className="mark s">S</div>
         <div className="mark w">V</div>
         <div className="mark e">Ø</div>
+        {/* Qibla arrow */}
         <div className="arrow" style={{ transform: `translateY(10px) rotate(${arrowRotation}deg)` }} aria-label="Qibla-pil"></div>
+        {/* Kaaba marker at the tip */}
+        <div style={{ position:'absolute', top: 20, transform:`rotate(${arrowRotation}deg)` }}>
+          <div style={{ transform:'translate(-50%, -10px) rotate(-'+arrowRotation+'deg)' }}>
+            <KaabaIcon />
+          </div>
+        </div>
       </div>
 
       {showHelp && (
         <div style={{marginTop:12, border:'1px solid #334155', borderRadius:12, padding:12, background:'#0b1220'}}>
           <div style={{fontWeight:600, marginBottom:8}}>Få kompasset i gang</div>
           <ol style={{margin:'0 0 8px 16px'}}>
-            <li>Trykk <b>Be om kompass-tilgang</b> og velg <b>Tillat</b>.</li>
+            <li>Trykk <b>Aktiver kompass</b> og velg <b>Tillat</b>.</li>
             <li>Hvis du ikke får spørsmål: i Safari, trykk <b>aA</b> → <b>Nettstedsinnstillinger</b> → slå på <b>Bevegelse & orientering</b>.</li>
             <li>Kalibrer ved å bevege telefonen i en <b>figur-8</b>.</li>
           </ol>
-          <button className="btn" onClick={requestCompass}>Be om kompass-tilgang</button>
+          <button className="btn" onClick={requestCompass}>Aktiver kompass</button>
         </div>
       )}
 
       <div className="hint" style={{textAlign:'center', marginTop:8}}>
         {perm !== 'granted'
           ? 'Kompass-tillatelse er ikke aktivert ennå.'
-          : (heading == null ? 'Venter på kompass…' : <>Enhetsretning: {heading?.toFixed?.(0)}° • Qibla: {bearing?.toFixed?.(1)}°</>)
+          : (heading == null ? 'Venter på kompass…' : <>Enhetsretning: {heading.toFixed(0)}° • Qibla: {bearing?.toFixed?.(1)}°</>)
         }
       </div>
     </div>
   )
 }
+// -----------------------------------------------------------------------------
 
 async function getVapidKey() {
-  const res = await fetch(import.meta.env.VITE_PUSH_SERVER_URL + '/vapidPublicKey')
+  const base = import.meta.env.VITE_PUSH_SERVER_URL
+  if (!base) throw new Error('VITE_PUSH_SERVER_URL mangler i Netlify Environment')
+  const res = await fetch(base + '/vapidPublicKey')
+  if (!res.ok) throw new Error('Kunne ikke hente VAPID nøkkel')
   const data = await res.json()
   return data.publicKey
 }
@@ -241,6 +253,8 @@ export default function App() {
   const [cityLabel, setCityLabel] = useLocalStorage('aq_city', '')
   const [pushEnabled, setPushEnabled] = useLocalStorage('aq_push', false)
   const [minutesBefore, setMinutesBefore] = useLocalStorage('aq_push_lead', 10)
+  const [adhanError, setAdhanError] = useState('')
+  const [pushStatus, setPushStatus] = useState('idle') // idle | ready | subscribed | error
 
   // Reverse geocode when coords change
   useEffect(() => {
@@ -259,29 +273,40 @@ export default function App() {
   }, [coords, manualLat, manualLng])
 
   const params = useMemo(() => {
-    const p = buildParams(method)
-    p.madhab = Madhab.Shafi // Maliki Asr = 1x skygge
-    p.highLatitudeRule = HighLatitudeRule[hlr] ?? HighLatitudeRule.MiddleOfTheNight
-    return p
+    try {
+      const p = buildParams(method)
+      p.highLatitudeRule = HighLatitudeRule[hlr] ?? HighLatitudeRule.MiddleOfTheNight
+      setAdhanError('')
+      return p
+    } catch (e) {
+      setAdhanError('Feil med beregningsparametere for bønnetider.')
+      return buildParams('MWL')
+    }
   }, [method, hlr])
 
   const compute = () => {
-    if (!activeCoords) return { times: null, qiblaDeg: null, dateLabel: NB_DAY.format(new Date()) }
-    const d = new Date()
-    const c = new Coordinates(activeCoords.latitude, activeCoords.longitude)
-    const pt = new PrayerTimes(c, d, params)
-    const bearing = Qibla(c) // adhan: Qibla returns degrees directly
-    return {
-      times: {
-        Fajr: pt.fajr,
-        Soloppgang: pt.sunrise,
-        Dhuhr: pt.dhuhr,
-        Asr: pt.asr,
-        Maghrib: pt.maghrib,
-        Isha: pt.isha,
-      },
-      qiblaDeg: bearing,
-      dateLabel: NB_DAY.format(d),
+    try {
+      if (!activeCoords) return { times: null, qiblaDeg: null, dateLabel: NB_DAY.format(new Date()) }
+      const d = new Date()
+      const c = new Coordinates(activeCoords.latitude, activeCoords.longitude)
+      const pt = new PrayerTimes(c, d, params)
+      const bearing = Qibla(c)
+      return {
+        times: {
+          Fajr: pt.fajr,
+          Soloppgang: pt.sunrise,
+          Dhuhr: pt.dhuhr,
+          Asr: pt.asr,
+          Maghrib: pt.maghrib,
+          Isha: pt.isha,
+        },
+        qiblaDeg: bearing,
+        dateLabel: NB_DAY.format(d),
+      }
+    } catch (e) {
+      console.error('Adhan error:', e)
+      setAdhanError('Klarte ikke beregne bønnetider her. Prøv en annen metode eller sett posisjon manuelt.')
+      return { times: null, qiblaDeg: null, dateLabel: NB_DAY.format(new Date()) }
     }
   }
   const { times, qiblaDeg, dateLabel } = compute()
@@ -305,49 +330,77 @@ export default function App() {
 
   // PUSH SUBSCRIPTION
   useEffect(() => {
-    async function ensurePush() {
+    (async () => {
       if (!pushEnabled) return
-      if (!('Notification' in window)) { alert('Push støttes ikke i denne nettleseren.'); setPushEnabled(false); return }
-      const perm = await Notification.requestPermission()
-      if (perm !== 'granted') { alert('Tillat varsler for å aktivere push.'); setPushEnabled(false); return }
-      const reg = await navigator.serviceWorker.ready
-      const publicKey = await getVapidKey().catch(()=>null)
-      if (!publicKey) { alert('Fikk ikke hentet VAPID-nøkkel.'); setPushEnabled(false); return }
-      const sub = await reg.pushManager.subscribe({
-        userVisibleOnly: true,
-        applicationServerKey: urlBase64ToUint8Array(publicKey)
-      })
-      await fetch(import.meta.env.VITE_PUSH_SERVER_URL + '/subscribe', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          subscription: sub,
-          settings: {
-            minutesBefore,
-            method,
-            hlr,
-            lat: activeCoords?.latitude,
-            lng: activeCoords?.longitude,
-            tz: Intl.DateTimeFormat().resolvedOptions().timeZone
-          }
+      setPushStatus('idle')
+      try {
+        if (!('Notification' in window)) throw new Error('Varsler støttes ikke i denne nettleseren.')
+        const perm = await Notification.requestPermission()
+        if (perm !== 'granted') throw new Error('Du må tillate varsler.')
+        const reg = await navigator.serviceWorker.ready
+        const publicKey = await getVapidKey()
+        const existing = await reg.pushManager.getSubscription()
+        let sub = existing
+        if (!existing) {
+          sub = await reg.pushManager.subscribe({
+            userVisibleOnly: true,
+            applicationServerKey: urlBase64ToUint8Array(publicKey)
+          })
+        }
+        const resp = await fetch(import.meta.env.VITE_PUSH_SERVER_URL + '/subscribe', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            subscription: sub,
+            settings: {
+              minutesBefore,
+              method,
+              hlr,
+              lat: activeCoords?.latitude,
+              lng: activeCoords?.longitude,
+              tz: Intl.DateTimeFormat().resolvedOptions().timeZone
+            }
+          })
         })
-      })
-    }
-    ensurePush()
+        if (!resp.ok) throw new Error('Server avviste abonnement.')
+        setPushStatus('subscribed')
+      } catch (e) {
+        alert(e.message || 'Klarte ikke aktivere push.')
+        setPushEnabled(false)
+        setPushStatus('error')
+      }
+    })()
   }, [pushEnabled, minutesBefore, method, hlr, activeCoords?.latitude, activeCoords?.longitude])
 
   async function disablePush() {
-    const reg = await navigator.serviceWorker.ready
-    const sub = await reg.pushManager.getSubscription()
-    if (sub) {
-      await fetch(import.meta.env.VITE_PUSH_SERVER_URL + '/unsubscribe', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ endpoint: sub.endpoint })
-      })
-      await sub.unsubscribe()
+    try {
+      const reg = await navigator.serviceWorker.ready
+      const sub = await reg.pushManager.getSubscription()
+      if (sub) {
+        await fetch(import.meta.env.VITE_PUSH_SERVER_URL + '/unsubscribe', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ endpoint: sub.endpoint })
+        })
+        await sub.unsubscribe()
+      }
+      setPushEnabled(false)
+      setPushStatus('idle')
+    } catch (e) {
+      alert('Klarte ikke avmelde: ' + (e.message || 'ukjent feil'))
     }
-    setPushEnabled(false)
+  }
+
+  async function sendTest() {
+    try {
+      if (pushStatus !== 'subscribed') throw new Error('Aktiver push-varsler først (bryteren over).')
+      const res = await fetch(import.meta.env.VITE_PUSH_SERVER_URL + '/send-test', { method:'POST' })
+      const data = await res.json().catch(()=>({}))
+      if (!res.ok || data.ok === false) throw new Error(data.message || 'Ingen abonnenter på serveren enda.')
+      alert('Testvarsel sendt ✅')
+    } catch (e) {
+      alert('Feil ved test: ' + (e.message || 'ukjent feil'))
+    }
   }
 
   return (
@@ -388,13 +441,14 @@ export default function App() {
             {activeCoords ? (
               <>
                 <Compass bearing={qiblaDeg} />
-                <div className="hint" style={{textAlign:'center'}}>Pek enheten slik at pilen peker opp – da vender du mot Qibla.</div>
+                <div className="hint" style={{textAlign:'center'}}>Pek enheten slik at <b>Kaaba-ikonet</b> peker opp — da vender du mot Qibla.</div>
               </>
             ) : (<div className="hint">Velg/bekreft posisjon for å vise Qibla.</div>)}
           </section>
 
           <section className="card">
             <h3>Bønnetider i dag</h3>
+            {adhanError && <div className="hint" style={{color:'#fca5a5', marginBottom:8}}>{adhanError}</div>}
             {times ? (
               <ul className="times">
                 {Object.entries(times).map(([name, t]) => (
@@ -413,7 +467,12 @@ export default function App() {
           <div className="row" style={{justifyContent:'space-between'}}>
             <div>
               <div style={{fontSize:14, fontWeight:600}}>Aktiver push-varsler</div>
-              <div className="hint">Sender varsel før bønnetid (krever bakendtjeneste).</div>
+              <div className="hint">
+                {pushStatus === 'subscribed' ? 'Abonnert – test kan sendes.' :
+                 pushStatus === 'error' ? 'Feil – sjekk nett og server.' :
+                 'Sender varsel før bønnetid (krever bakendtjeneste).'
+                }
+              </div>
             </div>
             <div className={"switch " + (pushEnabled ? "on": "")} onClick={()=> setPushEnabled(!pushEnabled)}>
               <div className="knob" />
@@ -424,10 +483,7 @@ export default function App() {
             <input type="number" min="0" max="60" value={minutesBefore} onChange={e=>setMinutesBefore(parseInt(e.target.value||'0'))} />
           </div>
           <div className="row" style={{marginTop:8}}>
-            <button className="btn" onClick={async ()=>{
-              await fetch(import.meta.env.VITE_PUSH_SERVER_URL + '/send-test', {method:'POST'})
-              alert('Testvarsel sendt (hvis abonnement finnes).')
-            }}>Send testvarsel</button>
+            <button className="btn" onClick={sendTest}>Send testvarsel</button>
             <button className="btn" onClick={disablePush}>Deaktiver/avmeld</button>
           </div>
         </section>
