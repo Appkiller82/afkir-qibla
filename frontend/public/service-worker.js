@@ -1,48 +1,27 @@
 
-const CACHE = 'afkir-qibla-v5';
-const ASSETS = [
-  '/', '/index.html', '/manifest.webmanifest',
-  '/icons/icon-192.png', '/icons/icon-512.png', '/icons/maskable-192.png', '/icons/maskable-512.png',
-  '/src/main.jsx', '/src/App.jsx'
-];
+const CACHE = 'afkir-qibla-v8';
+self.addEventListener('install', e => { e.waitUntil(self.skipWaiting()); });
+self.addEventListener('activate', e => { e.waitUntil(self.clients.claim()); });
+self.addEventListener('fetch', () => {});
 
-self.addEventListener('install', e => {
-  e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)).then(self.skipWaiting()));
-});
-self.addEventListener('activate', e => {
-  e.waitUntil(self.clients.claim());
-});
-self.addEventListener('fetch', e => {
-  const url = new URL(e.request.url);
-  if (url.origin === location.origin) {
-    e.respondWith(
-      caches.match(e.request).then(r => r || fetch(e.request).then(res => {
-        const copy = res.clone();
-        caches.open(CACHE).then(c => c.put(e.request, copy));
-        return res;
-      }))
-    );
-  }
-});
-
-// PUSH HANDLERS
 self.addEventListener('push', event => {
-  const data = event.data ? event.data.json() : { title: 'Bønnetid', body: 'Det er tid for bønn.' };
-  const { title, body, url } = data;
-  event.waitUntil(self.registration.showNotification(title || 'Bønnetid', {
-    body: body || '',
+  let data = { title: 'Bønnetid', body: 'Det er tid for bønn.', url: '/?play=adhan' };
+  try { if (event.data) data = Object.assign(data, event.data.json()); } catch {}
+  event.waitUntil(self.registration.showNotification(data.title || 'Bønnetid', {
+    body: data.body || '',
     icon: '/icons/icon-192.png',
     badge: '/icons/icon-192.png',
-    data: { url: url || '/' }
+    data: { url: data.url || '/?play=adhan' }
   }));
 });
 
 self.addEventListener('notificationclick', event => {
   event.notification.close();
-  const url = event.notification.data?.url || '/';
-  event.waitUntil(clients.matchAll({ type: 'window' }).then(windowClients => {
+  const url = event.notification.data?.url || '/?play=adhan';
+  event.waitUntil(clients.matchAll({ type: 'window', includeUncontrolled:true }).then(windowClients => {
     for (const client of windowClients) {
-      if (client.url.includes(url) && 'focus' in client) return client.focus();
+      client.navigate(url);
+      if ('focus' in client) return client.focus();
     }
     if (clients.openWindow) return clients.openWindow(url);
   }));
