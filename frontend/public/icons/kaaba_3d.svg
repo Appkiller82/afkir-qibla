@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="96" height="96" viewBox="0 0 96 96" xmlns="http://www.w3.org/2000/svg" aria-label="Kaaba 3D">
+  <defs>
+    <linearGradient id="gBody" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#1b1b22"/>
+      <stop offset="100%" stop-color="#0e0e14"/>
+    </linearGradient>
+    <linearGradient id="gGold" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ffd76a"/>
+      <stop offset="100%" stop-color="#d4a82c"/>
+    </linearGradient>
+  </defs>
+  <g>
+    <path d="M16 30 L48 16 L80 30 L80 66 L48 80 L16 66 Z" fill="url(#gBody)" stroke="#222532" stroke-width="2"/>
+    <path d="M16 30 L48 44 L80 30 L48 16 Z" fill="#10121a" opacity="0.9"/>
+    <rect x="16" y="30" width="64" height="12" fill="url(#gGold)"/>
+    <g fill="#1a1a1f">
+      <rect x="22" y="33" width="10" height="8" rx="2"/>
+      <rect x="36" y="33" width="10" height="8" rx="2"/>
+      <rect x="50" y="33" width="10" height="8" rx="2"/>
+      <rect x="64" y="33" width="10" height="8" rx="2"/>
+    </g>
+    <rect x="56" y="54" width="14" height="18" rx="2" fill="url(#gGold)" stroke="#d6b14a" stroke-width="2"/>
+  </g>
+</svg>
