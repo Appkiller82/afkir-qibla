@@ -13,21 +13,6 @@ function useLocalStorage(key, initialValue) {
   return [value, setValue]
 }
 
-const calcMethodOptions = [
-  { value: 'MWL', label: 'Muslim World League (anbefalt)' },
-  { value: 'UmmAlQura', label: 'Umm al-Qura (Mekka)' },
-  { value: 'Egyptian', label: 'Egyptian General Authority' },
-  { value: 'Karachi', label: 'Karachi' },
-  { value: 'Dubai', label: 'Dubai' },
-  { value: 'Moonsighting', label: 'Moonsighting Committee' },
-]
-
-const highLatOptions = [
-  { value: 'MiddleOfTheNight', label: 'Midt-på-natten (anbefalt)' },
-  { value: 'SeventhOfTheNight', label: '1/7 av natten' },
-  { value: 'TwilightAngle', label: 'Skumringsvinkel' },
-]
-
 function buildParams(methodKey) {
   const m = CalculationMethod
   switch (methodKey) {
@@ -41,7 +26,7 @@ function buildParams(methodKey) {
   }
 }
 
-// ---- Updated geolocation with robust error handling & permission awareness ----
+// ---- Geolocation hook with robust error handling ----
 function useGeolocation() {
   const [coords, setCoords] = useState(null)
   const [error, setError] = useState(null)
@@ -103,11 +88,12 @@ function useGeolocation() {
 
   return { coords, error, loading, request, setCoords, permission }
 }
-// ----------------------------------------------------------------------------
+// -----------------------------------------------------
 
 function Compass({ bearing }) {
   const [heading, setHeading] = useState(null)
   const [perm, setPerm] = useState('prompt')
+  const [showHelp, setShowHelp] = useState(false)
 
   useEffect(() => {
     const onOrientation = (e) => {
@@ -120,27 +106,52 @@ function Compass({ bearing }) {
       if (hdg != null) setHeading((hdg + 360) % 360)
     }
 
-    const enable = async () => {
-      try {
-        if (window.DeviceOrientationEvent && typeof DeviceOrientationEvent.requestPermission === 'function') {
-          const p = await DeviceOrientationEvent.requestPermission()
-          setPerm(p)
-          if (p === 'granted') {
-            window.addEventListener('deviceorientation', onOrientation, true)
-          }
-        } else {
-          window.addEventListener('deviceorientationabsolute', onOrientation, true)
-          window.addEventListener('deviceorientation', onOrientation, true)
-          setPerm('granted')
-        }
-      } catch (e) { setPerm('denied') }
-    }
-    enable()
-    return () => {
-      window.removeEventListener('deviceorientationabsolute', onOrientation, true)
-      window.removeEventListener('deviceorientation', onOrientation, true)
+    // If no special permission API, attach listeners immediately
+    if (!(window.DeviceOrientationEvent && typeof DeviceOrientationEvent.requestPermission === 'function')) {
+      window.addEventListener('deviceorientationabsolute', onOrientation, true)
+      window.addEventListener('deviceorientation', onOrientation, true)
+      setPerm('granted')
+      return () => {
+        window.removeEventListener('deviceorientationabsolute', onOrientation, true)
+        window.removeEventListener('deviceorientation', onOrientation, true)
+      }
+    } else {
+      // On iOS, default to prompt state and show help until user taps the button
+      setPerm('prompt')
+      setShowHelp(true)
     }
   }, [])
+
+  const requestCompass = async () => {
+    try {
+      if (window.DeviceOrientationEvent && typeof DeviceOrientationEvent.requestPermission === 'function') {
+        const p = await DeviceOrientationEvent.requestPermission() // must be in a click handler
+        setPerm(p)
+        if (p === 'granted') {
+          const onOrientation = (e) => {
+            let hdg = null
+            if (typeof e.webkitCompassHeading === 'number') {
+              hdg = e.webkitCompassHeading
+            } else if (typeof e.alpha === 'number') {
+              hdg = 360 - e.alpha
+            }
+            if (hdg != null) setHeading((hdg + 360) % 360)
+          }
+          window.addEventListener('deviceorientationabsolute', onOrientation, true)
+          window.addEventListener('deviceorientation', onOrientation, true)
+          setShowHelp(false)
+        } else {
+          setShowHelp(true)
+        }
+      } else {
+        setPerm('granted')
+        setShowHelp(false)
+      }
+    } catch (e) {
+      setPerm('denied')
+      setShowHelp(true)
+    }
+  }
 
   const arrowRotation = useMemo(() => {
     if (heading == null || bearing == null) return 0
@@ -156,9 +167,25 @@ function Compass({ bearing }) {
         <div className="mark e">Ø</div>
         <div className="arrow" style={{ transform: `translateY(10px) rotate(${arrowRotation}deg)` }} aria-label="Qibla-pil"></div>
       </div>
-      <div className="hint">
-        {heading == null ? (perm === 'denied' ? 'Kompass-tillatelse avslått' : 'Venter på kompass…')
-          : <>Enhetsretning: {heading.toFixed(0)}° • Qibla: {bearing?.toFixed(1)}°</>}
+
+      {/* Inline helper overlay */}
+      {showHelp && (
+        <div style={{marginTop:12, border:'1px solid #334155', borderRadius:12, padding:12, background:'#0b1220'}}>
+          <div style={{fontWeight:600, marginBottom:8}}>Aktiver kompass</div>
+          <ol style={{margin:'0 0 8px 16px'}}>
+            <li>Trykk på knappen nedenfor og velg <b>Tillat</b>.</li>
+            <li>Hvis du ikke får spørsmål: i Safari, trykk <b>aA</b> → <b>Nettstedsinnstillinger</b> → slå på <b>Bevegelse & orientering</b>.</li>
+            <li>Last siden på nytt og prøv igjen.</li>
+          </ol>
+          <button className="btn" onClick={requestCompass}>Be om kompass-tilgang</button>
+        </div>
+      )}
+
+      <div className="hint" style={{textAlign:'center', marginTop:8}}>
+        {perm !== 'granted'
+          ? 'Kompass-tillatelse er ikke aktivert ennå.'
+          : (heading == null ? 'Venter på kompass…' : <>Enhetsretning: {heading.toFixed(0)}° • Qibla: {bearing?.toFixed(1)}°</>)
+        }
       </div>
     </div>
   )
@@ -209,7 +236,7 @@ export default function App() {
     const d = new Date()
     const c = new Coordinates(activeCoords.latitude, activeCoords.longitude)
     const pt = new PrayerTimes(c, d, params)
-    const bearing = Qibla(c)
+    const bearing = Qibla(c) // adhan: Qibla returns degrees directly
     return {
       times: {
         Fajr: pt.fajr,
@@ -304,10 +331,9 @@ export default function App() {
           <div className="row" style={{marginTop:8}}>
             <button className="btn" onClick={request} disabled={loading}>{loading ? 'Henter…' : 'Bruk stedstjenester'}</button>
             <span className="hint">
-              {coords ? `Fant posisjon: ${coords.latitude.toFixed(4)}, ${coords.longitude.toFixed(4)}` : permission === 'denied' ? 'Posisjon er blokkert i nettleseren.' : geoError ? `Feil: ${geoError}` : 'Gi tilgang for automatisk lokasjon'}
+              {coords ? `Fant posisjon: ${coords.latitude.toFixed(4)}, ${coords.longitude.toFixed(4)}` : permission === 'denied' ? 'Posisjon er blokkert i nettleseren.' : (geoError ? `Feil: ${geoError}` : 'Gi tilgang for automatisk lokasjon')}
             </span>
           </div>
-          {/* Show explicit error line in red if present */}
           {geoError && <div className="hint" style={{color:'#fca5a5', marginTop:6}}>{geoError}</div>}
           <div className="row" style={{marginTop:8}}>
             <input placeholder="By/sted (valgfritt)" value={cityLabel} onChange={e=>setCityLabel(e.target.value)} />

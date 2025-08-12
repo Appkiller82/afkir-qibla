@@ -1,3 +1,4 @@
+
 const CACHE = 'afkir-qibla-v4';
 const ASSETS = [
   '/', '/index.html', '/manifest.webmanifest',
