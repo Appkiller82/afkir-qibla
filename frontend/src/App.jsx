@@ -25,12 +25,11 @@ function buildParams(methodKey) {
     case 'Moonsighting': p = m.Moonsighting(); break
     default: p = m.MuslimWorldLeague()
   }
-  // Maliki = Shafi for Asr (skygge 1x)
-  p.madhab = Madhab.Shafi
+  p.madhab = Madhab.Shafi // Maliki ~ Shafi (Asr 1x skygge)
   return p
 }
 
-// ---- Geolocation hook with robust error handling ----
+// ---- Geolocation hook ----
 function useGeolocation() {
   const [coords, setCoords] = useState(null)
   const [error, setError] = useState(null)
@@ -57,44 +56,25 @@ function useGeolocation() {
       setError('Stedstjenester er ikke tilgjengelig i denne nettleseren.')
       return
     }
-    setLoading(true)
-    setError(null)
-
+    setLoading(true); setError(null)
     const opts = { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
-    let done = false
-
-    const onSuccess = (pos) => {
-      if (done) return; done = true
-      const { latitude, longitude } = pos.coords
-      setCoords({ latitude, longitude })
-      setError(null)
-      setLoading(false)
-    }
-
-    const onError = (err) => {
-      if (done) return; done = true
-      const code = err?.code
-      let msg = err?.message || 'Kunne ikke hente posisjon.'
-      if (code === 1) msg = 'Tilgang til posisjon ble nektet. aA → Nettstedsinnstillinger → Sted = Tillat.'
-      if (code === 2) msg = 'Posisjon utilgjengelig. Prøv nær et vindu, slå på GPS/mobilnett, eller skriv inn manuelt.'
-      if (code === 3) msg = 'Tidsavbrudd. Prøv igjen, eller skriv inn manuelt.'
-      setError(msg)
-      setLoading(false)
-    }
-
-    try {
-      navigator.geolocation.getCurrentPosition(onSuccess, onError, opts)
-    } catch (e) {
-      setError('Uventet feil med stedstjenester.')
-      setLoading(false)
-    }
+    navigator.geolocation.getCurrentPosition(
+      (pos) => { const { latitude, longitude } = pos.coords; setCoords({ latitude, longitude }); setLoading(false) },
+      (err) => {
+        const code = err?.code
+        let msg = err?.message || 'Kunne ikke hente posisjon.'
+        if (code === 1) msg = 'Tilgang til posisjon ble nektet. aA → Nettstedsinnstillinger → Sted = Tillat.'
+        if (code === 2) msg = 'Posisjon utilgjengelig. Prøv nær et vindu, slå på GPS/mobilnett, eller skriv inn manuelt.'
+        if (code === 3) msg = 'Tidsavbrudd. Prøv igjen, eller skriv inn manuelt.'
+        setError(msg); setLoading(false)
+      },
+      opts
+    )
   }
-
   return { coords, error, loading, request, setCoords, permission }
 }
-// -----------------------------------------------------
 
-// Reverse geocode to get a city/town name (best-effort via Nominatim)
+// ---- Reverse geocode (city) ----
 async function reverseGeocode(lat, lng) {
   try {
     const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lng}&accept-language=nb&zoom=10&addressdetails=1`
@@ -103,41 +83,39 @@ async function reverseGeocode(lat, lng) {
     const a = data.address || {}
     const name = a.city || a.town || a.village || a.municipality || a.suburb || a.state || a.county || a.country
     return name || ''
-  } catch (e) {
-    return ''
-  }
+  } catch { return '' }
 }
 
-// ---- Compass with explicit permission flow, degrees label and Kaaba marker ----
-function KaabaIcon({ size=26 }) {
+// ---- Compass ----
+function KaabaIcon({ size=28 }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24" aria-label="Kaaba">
-      <rect x="3" y="7" width="18" height="12" rx="2" fill="#111827" stroke="#374151" />
-      <rect x="3" y="7" width="18" height="4" fill="#22c55e"/>
-      <path d="M7 9h2v2H7zm4 0h2v2h-2zm4 0h2v2h-2z" fill="#111827"/>
+    <svg width={size} height={size} viewBox="0 0 64 64" aria-label="Kaaba">
+      <rect x="8" y="20" width="48" height="34" rx="4" fill="#111827" stroke="#374151" strokeWidth="2"/>
+      <rect x="8" y="20" width="48" height="10" fill="#16a34a"/>
+      <rect x="12" y="23" width="8" height="6" fill="#111827"/>
+      <rect x="28" y="23" width="8" height="6" fill="#111827"/>
+      <rect x="44" y="23" width="8" height="6" fill="#111827"/>
     </svg>
   )
 }
 
 function Compass({ bearing }) {
   const [heading, setHeading] = useState(null)
-  const [perm, setPerm] = useState('prompt')
+  const [activated, setActivated] = useState(false)
   const [showHelp, setShowHelp] = useState(false)
-  const [hasEvent, setHasEvent] = useState(false)
+  const [manualHeading, setManualHeading] = useState(0)
   const cleanupRef = useRef(() => {})
 
   const addListeners = () => {
     const onOrientation = (e) => {
       let hdg = null
       if (typeof e.webkitCompassHeading === 'number') {
-        hdg = e.webkitCompassHeading // iOS provides degrees from North
+        hdg = e.webkitCompassHeading
       } else if (typeof e.alpha === 'number') {
-        // Convert alpha (0-360, clockwise from device top) to compass heading
         hdg = 360 - e.alpha
       }
       if (hdg != null && !Number.isNaN(hdg)) {
         setHeading((hdg + 360) % 360)
-        setHasEvent(true)
       }
     }
     window.addEventListener('deviceorientationabsolute', onOrientation, true)
@@ -148,84 +126,109 @@ function Compass({ bearing }) {
     }
   }
 
-  useEffect(() => {
-    // If iOS permission API exists, wait for user gesture; else attach directly
-    if (window.DeviceOrientationEvent && typeof DeviceOrientationEvent.requestPermission === 'function') {
-      setPerm('prompt')
-      setShowHelp(true)
-    } else {
-      setPerm('granted')
-      addListeners()
-    }
-    const timer = setTimeout(() => {
-      if (!hasEvent && perm === 'granted') setShowHelp(true)
-    }, 4000)
-    return () => { cleanupRef.current(); clearTimeout(timer) }
-  }, [perm])
-
-  const requestCompass = async () => {
+  const requestSensors = async () => {
+    // On iOS 13+, both may require permission
+    try {
+      if (window.DeviceMotionEvent && typeof DeviceMotionEvent.requestPermission === 'function') {
+        await DeviceMotionEvent.requestPermission().catch(()=>{})
+      }
+    } catch {}
     try {
       if (window.DeviceOrientationEvent && typeof DeviceOrientationEvent.requestPermission === 'function') {
-        const p = await DeviceOrientationEvent.requestPermission() // must be in a click
-        setPerm(p)
-        if (p === 'granted') { addListeners(); setShowHelp(false) }
-        else { setShowHelp(true) }
-      } else {
-        setPerm('granted')
-        addListeners()
-        setShowHelp(false)
+        const p = await DeviceOrientationEvent.requestPermission()
+        if (p !== 'granted') return false
       }
-    } catch {
-      setPerm('denied')
-      setShowHelp(true)
-    }
+    } catch {}
+    return true
   }
 
+  const activateCompass = async () => {
+    let ok = true
+    if (window.DeviceOrientationEvent && typeof DeviceOrientationEvent.requestPermission === 'function') {
+      ok = await requestSensors()
+    }
+    if (!ok) { setShowHelp(true); return }
+    addListeners()
+    setActivated(true)
+    setTimeout(() => { if (heading == null) setShowHelp(true) }, 3000)
+  }
+
+  useEffect(() => () => cleanupRef.current(), [])
+
+  const usedHeading = heading == null ? manualHeading : heading
   const arrowRotation = useMemo(() => {
-    if (heading == null || bearing == null) return 0
-    return (bearing - heading + 360) % 360
-  }, [heading, bearing])
+    if (usedHeading == null || bearing == null) return 0
+    return (bearing - usedHeading + 360) % 360
+  }, [usedHeading, bearing])
 
   return (
-    <div className="compass-wrap">
-      <div className="dial">
-        <div className="mark n">N</div>
-        <div className="mark s">S</div>
-        <div className="mark w">V</div>
-        <div className="mark e">Ø</div>
-        {/* Qibla arrow */}
-        <div className="arrow" style={{ transform: `translateY(10px) rotate(${arrowRotation}deg)` }} aria-label="Qibla-pil"></div>
-        {/* Kaaba marker at the tip */}
-        <div style={{ position:'absolute', top: 20, transform:`rotate(${arrowRotation}deg)` }}>
-          <div style={{ transform:'translate(-50%, -10px) rotate(-'+arrowRotation+'deg)' }}>
+    <div>
+      <div style={{position:'relative', width:220, height:220, margin:'12px auto'}}>
+        <div style={{position:'absolute', inset:0, borderRadius:'50%', border:'2px solid #334155', boxShadow:'inset 0 0 0 6px #0f172a'}}/>
+        {[...Array(12)].map((_,i)=>(
+          <div key={i} style={{
+            position:'absolute', top:6, left:'50%', width:2, height:10, background:'#334155',
+            transform:`translateX(-50%) rotate(${i*30}deg) translateY(-90px)`,
+            transformOrigin:'center 100px', borderRadius:1, opacity: i%3===0 ? 1 : 0.6
+          }}/>
+        ))}
+        <div style={{position:'absolute', top:10, left:'50%', transform:'translateX(-50%)', fontSize:12, color:'#94a3b8'}}>N</div>
+        <div style={{position:'absolute', bottom:10, left:'50%', transform:'translateX(-50%)', fontSize:12, color:'#94a3b8'}}>S</div>
+        <div style={{position:'absolute', top:'50%', left:10, transform:'translateY(-50%)', fontSize:12, color:'#94a3b8'}}>V</div>
+        <div style={{position:'absolute', top:'50%', right:10, transform:'translateY(-50%)', fontSize:12, color:'#94a3b8'}}>Ø</div>
+
+        {/* Qibla arrow + Kaaba */}
+        <div className="arrow" style={{ position:'absolute', left:'50%', top:'50%', width:2, height:80, background:'#22c55e', transform:`translate(-50%, -60%) rotate(${arrowRotation}deg)`, transformOrigin:'bottom center', borderRadius:1}}/>
+        <div style={{position:'absolute', left:'50%', top:'50%', transform:`translate(-50%, -110%) rotate(${arrowRotation}deg)`}}>
+          <div style={{ transform:`translate(-50%, -14px) rotate(${-arrowRotation}deg)` }}>
             <KaabaIcon />
           </div>
         </div>
       </div>
 
+      <div className="hint" style={{textAlign:'center', marginTop:4}}>
+        {heading == null
+          ? <>Ingen sensordata – bruk <b>Aktiver kompass</b> eller <b>Manuelt kompass</b> under.</>
+          : <>Enhetsretning: <b>{heading.toFixed(0)}°</b> • Qibla: <b>{bearing?.toFixed?.(1)}°</b></>}
+      </div>
+
+      <div style={{textAlign:'center', marginTop:8}}>
+        <button className="btn" onClick={activateCompass} style={{marginRight:8}}>Aktiver kompass</button>
+        <button className="btn" onClick={()=>setShowHelp(true)}>Få i gang kompasset</button>
+      </div>
+
+      {/* Manual heading fallback */}
+      <div style={{marginTop:12, textAlign:'center'}}>
+        <div className="hint">Manuelt kompass (hvis sensoren ikke virker):</div>
+        <input type="range" min="0" max="359" value={manualHeading} onChange={e=>setManualHeading(parseInt(e.target.value||'0'))} style={{width:'100%'}}/>
+        <div className="hint">Manuell retning: <b>{manualHeading}°</b></div>
+      </div>
+
+      {/* Modal help */}
       {showHelp && (
-        <div style={{marginTop:12, border:'1px solid #334155', borderRadius:12, padding:12, background:'#0b1220'}}>
-          <div style={{fontWeight:600, marginBottom:8}}>Få kompasset i gang</div>
-          <ol style={{margin:'0 0 8px 16px'}}>
-            <li>Trykk <b>Aktiver kompass</b> og velg <b>Tillat</b>.</li>
-            <li>Hvis du ikke får spørsmål: i Safari, trykk <b>aA</b> → <b>Nettstedsinnstillinger</b> → slå på <b>Bevegelse & orientering</b>.</li>
-            <li>Kalibrer ved å bevege telefonen i en <b>figur-8</b>.</li>
-          </ol>
-          <button className="btn" onClick={requestCompass}>Aktiver kompass</button>
+        <div style={{position:'fixed', inset:0, background:'rgba(0,0,0,.6)', display:'grid', placeItems:'center', zIndex:50}} onClick={()=>setShowHelp(false)}>
+          <div style={{background:'#0b1220', border:'1px solid #334155', borderRadius:12, padding:16, width:'90%', maxWidth:420}} onClick={e=>e.stopPropagation()}>
+            <div style={{display:'flex', justifyContent:'space-between', alignItems:'center'}}>
+              <h3 style={{margin:0}}>Få i gang kompasset</h3>
+              <button className="btn" onClick={()=>setShowHelp(false)}>Lukk</button>
+            </div>
+            <ol style={{margin:'12px 0 0 18px'}}>
+              <li>Trykk <b>Aktiver kompass</b> og velg <b>Tillat</b>.</li>
+              <li>Safari: <b>aA</b> → <b>Nettstedsinnstillinger</b> → slå på <b>Bevegelse & orientering</b>.</li>
+              <li>Kalibrer ved å bevege telefonen i en <b>figur-8</b>.</li>
+              <li>Unngå magnetdeksler/metallbord.</li>
+            </ol>
+            <div style={{marginTop:12, textAlign:'right'}}>
+              <button className="btn" onClick={activateCompass}>Aktiver kompass</button>
+            </div>
+          </div>
         </div>
       )}
-
-      <div className="hint" style={{textAlign:'center', marginTop:8}}>
-        {perm !== 'granted'
-          ? 'Kompass-tillatelse er ikke aktivert ennå.'
-          : (heading == null ? 'Venter på kompass…' : <>Enhetsretning: {heading.toFixed(0)}° • Qibla: {bearing?.toFixed?.(1)}°</>)
-        }
-      </div>
     </div>
   )
 }
-// -----------------------------------------------------------------------------
 
+// ---- Push helpers ----
 async function getVapidKey() {
   const base = import.meta.env.VITE_PUSH_SERVER_URL
   if (!base) throw new Error('VITE_PUSH_SERVER_URL mangler i Netlify Environment')
@@ -254,20 +257,18 @@ export default function App() {
   const [pushEnabled, setPushEnabled] = useLocalStorage('aq_push', false)
   const [minutesBefore, setMinutesBefore] = useLocalStorage('aq_push_lead', 10)
   const [adhanError, setAdhanError] = useState('')
-  const [pushStatus, setPushStatus] = useState('idle') // idle | ready | subscribed | error
+  const [pushStatus, setPushStatus] = useState('idle')
+  const audioRef = useRef(null)
 
-  // Reverse geocode when coords change
+  // City label
   useEffect(() => {
     if (!coords?.latitude || !coords?.longitude) return
-    reverseGeocode(coords.latitude, coords.longitude).then(name => {
-      if (name) setCityLabel(name)
-    })
+    reverseGeocode(coords.latitude, coords.longitude).then(name => { if (name) setCityLabel(name) })
   }, [coords?.latitude, coords?.longitude])
 
   const activeCoords = useMemo(() => {
     if (coords) return coords
-    const lat = parseFloat(manualLat)
-    const lng = parseFloat(manualLng)
+    const lat = parseFloat(manualLat), lng = parseFloat(manualLng)
     if (!Number.isNaN(lat) && !Number.isNaN(lng)) return { latitude: lat, longitude: lng }
     return null
   }, [coords, manualLat, manualLng])
@@ -278,10 +279,7 @@ export default function App() {
       p.highLatitudeRule = HighLatitudeRule[hlr] ?? HighLatitudeRule.MiddleOfTheNight
       setAdhanError('')
       return p
-    } catch (e) {
-      setAdhanError('Feil med beregningsparametere for bønnetider.')
-      return buildParams('MWL')
-    }
+    } catch { setAdhanError('Feil med beregningsparametere for bønnetider.'); return buildParams('MWL') }
   }, [method, hlr])
 
   const compute = () => {
@@ -291,21 +289,9 @@ export default function App() {
       const c = new Coordinates(activeCoords.latitude, activeCoords.longitude)
       const pt = new PrayerTimes(c, d, params)
       const bearing = Qibla(c)
-      return {
-        times: {
-          Fajr: pt.fajr,
-          Soloppgang: pt.sunrise,
-          Dhuhr: pt.dhuhr,
-          Asr: pt.asr,
-          Maghrib: pt.maghrib,
-          Isha: pt.isha,
-        },
-        qiblaDeg: bearing,
-        dateLabel: NB_DAY.format(d),
-      }
+      return { times: { Fajr: pt.fajr, Soloppgang: pt.sunrise, Dhuhr: pt.dhuhr, Asr: pt.asr, Maghrib: pt.maghrib, Isha: pt.isha }, qiblaDeg: bearing, dateLabel: NB_DAY.format(d) }
     } catch (e) {
-      console.error('Adhan error:', e)
-      setAdhanError('Klarte ikke beregne bønnetider her. Prøv en annen metode eller sett posisjon manuelt.')
+      setAdhanError('Klarte ikke beregne bønnetider her.')
       return { times: null, qiblaDeg: null, dateLabel: NB_DAY.format(new Date()) }
     }
   }
@@ -315,20 +301,12 @@ export default function App() {
     if (!(date instanceof Date)) return '–'
     const str = NB_TIME.format(date)
     if (use24h) return str
-    const h = date.getHours(); const m = String(date.getMinutes()).padStart(2, '0')
-    const ampm = h < 12 ? 'AM' : 'PM'
-    const h12 = ((h + 11) % 12) + 1
+    const h = date.getHours(), m = String(date.getMinutes()).padStart(2, '0')
+    const ampm = h < 12 ? 'AM' : 'PM', h12 = ((h + 11) % 12) + 1
     return `${h12}:${m} ${ampm}`
   }
 
-  const setManual = () => {
-    const lat = parseFloat(manualLat)
-    const lng = parseFloat(manualLng)
-    if (Number.isNaN(lat) || Number.isNaN(lng)) return
-    setCoords({ latitude: lat, longitude: lng })
-  }
-
-  // PUSH SUBSCRIPTION
+  // Push subscribe
   useEffect(() => {
     (async () => {
       if (!pushEnabled) return
@@ -342,33 +320,15 @@ export default function App() {
         const existing = await reg.pushManager.getSubscription()
         let sub = existing
         if (!existing) {
-          sub = await reg.pushManager.subscribe({
-            userVisibleOnly: true,
-            applicationServerKey: urlBase64ToUint8Array(publicKey)
-          })
+          sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(publicKey) })
         }
         const resp = await fetch(import.meta.env.VITE_PUSH_SERVER_URL + '/subscribe', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            subscription: sub,
-            settings: {
-              minutesBefore,
-              method,
-              hlr,
-              lat: activeCoords?.latitude,
-              lng: activeCoords?.longitude,
-              tz: Intl.DateTimeFormat().resolvedOptions().timeZone
-            }
-          })
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ subscription: sub, settings: { minutesBefore, method, hlr, lat: activeCoords?.latitude, lng: activeCoords?.longitude, tz: Intl.DateTimeFormat().resolvedOptions().timeZone } })
         })
         if (!resp.ok) throw new Error('Server avviste abonnement.')
         setPushStatus('subscribed')
-      } catch (e) {
-        alert(e.message || 'Klarte ikke aktivere push.')
-        setPushEnabled(false)
-        setPushStatus('error')
-      }
+      } catch (e) { alert(e.message || 'Klarte ikke aktivere push.'); setPushEnabled(false); setPushStatus('error') }
     })()
   }, [pushEnabled, minutesBefore, method, hlr, activeCoords?.latitude, activeCoords?.longitude])
 
@@ -378,17 +338,12 @@ export default function App() {
       const sub = await reg.pushManager.getSubscription()
       if (sub) {
         await fetch(import.meta.env.VITE_PUSH_SERVER_URL + '/unsubscribe', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ endpoint: sub.endpoint })
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ endpoint: sub.endpoint })
         })
         await sub.unsubscribe()
       }
-      setPushEnabled(false)
-      setPushStatus('idle')
-    } catch (e) {
-      alert('Klarte ikke avmelde: ' + (e.message || 'ukjent feil'))
-    }
+      setPushEnabled(false); setPushStatus('idle')
+    } catch (e) { alert('Klarte ikke avmelde: ' + (e.message || 'ukjent feil')) }
   }
 
   async function sendTest() {
@@ -398,9 +353,14 @@ export default function App() {
       const data = await res.json().catch(()=>({}))
       if (!res.ok || data.ok === false) throw new Error(data.message || 'Ingen abonnenter på serveren enda.')
       alert('Testvarsel sendt ✅')
-    } catch (e) {
-      alert('Feil ved test: ' + (e.message || 'ukjent feil'))
-    }
+    } catch (e) { alert('Feil ved test: ' + (e.message || 'ukjent feil')) }
+  }
+
+  const audioOkTip = 'Hvis du ikke hører lyd: 1) sjekk at /audio/adhan.mp3 finnes, 2) slå av stillebryteren (ringer på), 3) øk volumet, 4) trykk knappen igjen.'
+  const playAdhan = () => {
+    const el = audioRef.current; if (!el) return
+    el.currentTime = 0
+    el.play().then(()=>{}).catch(()=> alert('Kunne ikke spille av lyd. ' + audioOkTip))
   }
 
   return (
@@ -422,16 +382,6 @@ export default function App() {
                 : permission === 'denied' ? 'Posisjon er blokkert i nettleseren.'
                 : (geoError ? `Feil: ${geoError}` : 'Gi tilgang for automatisk lokasjon')}
             </span>
-          </div>
-          {geoError && <div className="hint" style={{color:'#fca5a5', marginTop:6}}>{geoError}</div>}
-          <div className="row" style={{marginTop:8}}>
-            <input placeholder="By/sted (valgfritt)" value={cityLabel} onChange={e=>setCityLabel(e.target.value)} />
-            <input placeholder="Breddegrad (lat)" value={manualLat} onChange={e=>setManualLat(e.target.value)} />
-            <input placeholder="Lengdegrad (lng)" value={manualLng} onChange={e=>setManualLng(e.target.value)} />
-          </div>
-          <div className="row" style={{marginTop:8}}>
-            <button className="btn" onClick={setManual}>Bruk manuell posisjon</button>
-            {coords && !cityLabel && <span className="hint">Henter stedsnavn…</span>}
           </div>
         </section>
 
@@ -485,9 +435,13 @@ export default function App() {
           <div className="row" style={{marginTop:8}}>
             <button className="btn" onClick={sendTest}>Send testvarsel</button>
             <button className="btn" onClick={disablePush}>Deaktiver/avmeld</button>
+            <button className="btn" onClick={playAdhan}>Test Adhan-lyd</button>
           </div>
+          <div className="hint" style={{marginTop:6}}>{audioOkTip}</div>
         </section>
       </div>
+
+      <audio ref={audioRef} preload="auto" src="/audio/adhan.mp3"></audio>
 
       <footer>© {new Date().getFullYear()} Afkir Qibla • Norsk • Maliki Asr (Shafi) – adhan.js • Installer via «Legg til på hjemskjerm»</footer>
     </div>
