@@ -209,7 +209,7 @@ export default function App() {
     const d = new Date()
     const c = new Coordinates(activeCoords.latitude, activeCoords.longitude)
     const pt = new PrayerTimes(c, d, params)
-    const bearing = Qibla.degrees(c)
+    const bearing = Qibla(c)
     return {
       times: {
         Fajr: pt.fajr,
