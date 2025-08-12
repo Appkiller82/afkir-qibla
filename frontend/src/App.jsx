@@ -2,18 +2,15 @@
 import React, { useEffect, useMemo, useRef, useState } from "react"
 
 /**
- * Afkir Qibla – App.jsx (needle points to Kaaba)
+ * Afkir Qibla – App.jsx (needle points to Kaaba) – fixed layout + countdown
  * - Prayer times from Aladhan API (method=3 MWL, school=0 Maliki 1x)
  * - Auto refresh at midnight
  * - Kaaba icon fixed at top (true Qibla direction)
  * - Needle rotates toward Kaaba: angle = (bearing - heading)
- * - Degrees readout + short helper text
- * - City label via Nominatim
- * - Next prayer countdown
- * - Test Adhan (public/audio/adhan.mp3)
- * - Theme toggle (light/dark)
- * - Futuristic rotating backgrounds from /public/backgrounds (local files)
- * - Clear red error messages for GPS, sensor, API
+ * - Hours+minutes countdown to next prayer
+ * - Safe‑area layout for iPhone notch (title + theme button easy to tap)
+ * - City label via Nominatim, adhan test, light/dark theme
+ * - Rotating local backgrounds in /public/backgrounds
  */
 
 // ------- Utilities -------
@@ -184,16 +181,16 @@ function ModernCompass({ bearing }) {
 
   return (
     <div>
-      <div style={{position:"relative", width:280, height:280, margin:"12px auto", WebkitTransform:"translateZ(0)", transform:"translateZ(0)"}}>
+      <div style={{position:"relative", width:280, height:300, margin:"12px auto 0", WebkitTransform:"translateZ(0)", transform:"translateZ(0)"}}>
         {/* Static dial */}
         <div style={{
-          position:"absolute", inset:0, borderRadius:"50%",
+          position:"absolute", inset:"20px 0 0 0", borderRadius:"50%",
           background:"radial-gradient(140px 140px at 50% 45%, rgba(255,255,255,.10), rgba(15,23,42,.65))",
           boxShadow:"inset 0 10px 30px rgba(0,0,0,.5), 0 6px 24px rgba(0,0,0,.35)",
           border:"1px solid rgba(148,163,184,.35)"
         }}/>
 
-        <div style={{position:"absolute", inset:10, borderRadius:"50%"}}>
+        <div style={{position:"absolute", inset:"30px 10px 10px 10px", borderRadius:"50%"}}>
           <div style={{position:"absolute", inset:0, borderRadius:"50%", border:"2px solid #3b475e", boxShadow:"inset 0 0 0 8px #0f172a"}}/>
           {[...Array(60)].map((_,i)=>(
             <div key={i} style={{position:"absolute", inset:0, transform:`rotate(${i*6}deg)`}}>
@@ -212,12 +209,12 @@ function ModernCompass({ bearing }) {
         </div>
 
         {/* Fixed 3D Kaaba at top */}
-        <div style={{position:"absolute", top:24, left:"50%", transform:"translateX(-50%)", zIndex:3}}>
+        <div style={{position:"absolute", top:30, left:"50%", transform:"translateX(-50%)", zIndex:3}}>
           <img src="/icons/kaaba_3d.svg" alt="Kaaba" width={40} height={40} draggable="false" />
         </div>
 
         {/* Needle points toward Kaaba */}
-        <svg width="280" height="280" style={{position:"absolute", inset:0, pointerEvents:"none", zIndex:4}} aria-hidden="true">
+        <svg width="280" height="280" style={{position:"absolute", top:20, left:0, right:0, margin:"0 auto", pointerEvents:"none", zIndex:4}} aria-hidden="true">
           <defs>
             <linearGradient id="needle" x1="0" y1="0" x2="0" y2="1">
               <stop offset="0%" stopColor="#ef4444"/><stop offset="100%" stopColor="#991b1b"/>
@@ -235,7 +232,7 @@ function ModernCompass({ bearing }) {
         </svg>
       </div>
 
-      <div style={{textAlign:"center", marginTop:6}}>
+      <div style={{textAlign:"center", marginTop:10}}>
         <div style={{fontSize:14}}>
           Enhetsretning: <b>{(usedHeading ?? 0).toFixed(0)}°</b> • Qibla: <b>{(bearing ?? 0).toFixed(1)}°</b> — {turnText}
         </div>
@@ -285,10 +282,13 @@ function nextPrayerInfo(times) {
     const t = times[label]
     if (t && t.getTime() > now.getTime()) {
       const diffMs = t.getTime() - now.getTime()
-      return { name: label, diffMin: Math.round(diffMs/60000), at: t }
+      const totalMin = Math.floor(diffMs / 60000)
+      const h = Math.floor(totalMin / 60)
+      const m = totalMin % 60
+      return { name: label, diffText: `${h} t ${m} min`, at: t }
     }
   }
-  return { name: null, diffMin: null, at: null }
+  return { name: null, diffText: null, at: null }
 }
 
 // ------- Theme + rotating backgrounds -------
@@ -313,7 +313,7 @@ export default function App(){
   const [apiError, setApiError] = useState("")
   const [bgIdx, setBgIdx] = useState(0)
   const [theme, setTheme] = useTheme()
-  const [countdown, setCountdown] = useState({ name: null, diffMin: null, at: null })
+  const [countdown, setCountdown] = useState({ name: null, diffText: null, at: null })
   const audioRef = useRef(null)
 
   // rotate background every 25s
@@ -351,7 +351,7 @@ export default function App(){
       const data = await fetchAladhan(lat, lng, "today")
       setTimes({
         Fajr: data.times.Fajr,
-        Soloppgang: data.times.Soloppgang, // internal sunrise name
+        Soloppgang: data.times.Soloppgang,
         Dhuhr: data.times.Dhuhr,
         Asr: data.times.Asr,
         Maghrib: data.times.Maghrib,
@@ -386,29 +386,30 @@ export default function App(){
     <div style={{minHeight:"100dvh", color:"var(--fg)", backgroundSize:"cover", backgroundPosition:"center", backgroundImage:`linear-gradient(rgba(4,6,12,.65), rgba(4,6,12,.65)), url(${bg})`, transition:"background-image .8s ease"}}>
       <style>{`
         :root { --fg:#e5e7eb; --muted:#cbd5e1; --card:rgba(15,23,42,.72); --border:#334155; --btn:#0b1220; }
-        :root[data-theme="light"] { --fg:#0f172a; --muted:#475569; --card:rgba(255,255,255,.82); --border:#d1d5db; --btn:#f8fafc; }
-        .container { padding: 16px; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
-        .card { border:1px solid var(--border); border-radius: 14px; padding: 12px; background: var(--card); backdrop-filter: blur(8px); }
-        .btn { padding:8px 12px; border-radius:10px; border:1px solid var(--border); background: var(--btn); color: var(--fg); cursor:pointer; }
-        .btn:hover { opacity:.9 }
+        :root[data-theme="light"] { --fg:#0f172a; --muted:#475569; --card:rgba(255,255,255,.9); --border:#d1d5db; --btn:#f8fafc; }
+        .container { padding: calc(env(safe-area-inset-top) + 8px) 16px 16px; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+        .card { border:1px solid var(--border); border-radius: 16px; padding: 14px; background: var(--card); backdrop-filter: blur(10px); }
+        .btn { padding:10px 14px; border-radius:12px; border:1px solid var(--border); background: var(--btn); color: var(--fg); cursor:pointer; }
+        .btn:hover { opacity:.95 }
         .hint { color: var(--muted); font-size: 13px; }
         .row { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
-        h1,h2,h3 { margin:0 0 6px 0 }
+        h1 { margin:0 0 8px 0; font-size: 28px; line-height:1.15 }
+        h2,h3 { margin:0 0 6px 0 }
         ul.times { list-style:none; padding:0; margin:0 }
-        .time-item { display:flex; justify-content:space-between; padding:6px 0; border-bottom:1px dashed var(--border); }
-        .error { color:#fecaca; background:rgba(239,68,68,.12); border:1px solid rgba(239,68,68,.35); padding:8px; border-radius:10px; }
-        .theme { position: fixed; top: 12px; right: 12px; z-index: 60; }
+        .time-item { display:flex; justify-content:space-between; padding:8px 0; border-bottom:1px dashed var(--border); font-size:16px }
+        .error { color:#fecaca; background:rgba(239,68,68,.12); border:1px solid rgba(239,68,68,.35); padding:10px; border-radius:12px; }
+        .theme { position: fixed; top: calc(env(safe-area-inset-top) + 12px); right: 12px; z-index: 60; }
       `}</style>
 
       <div className="container">
-        {/* Theme switch */}
+        {/* Theme switch – now below the notch */}
         <div className="theme">
           <button className="btn" onClick={()=>setTheme(theme==="dark"?"light":"dark")}>
             Tema: {theme==="dark"?"Mørk":"Lys"}
           </button>
         </div>
 
-        <header style={{marginBottom:10}}>
+        <header style={{marginBottom:12}}>
           <h1>Afkir Qibla</h1>
           <div className="hint">{NB_DAY.format(new Date())}</div>
         </header>
@@ -424,7 +425,7 @@ export default function App(){
                 : (permission === "denied" ? "Posisjon er blokkert i nettleseren." : "Gi tilgang for automatisk lokasjon")}
             </span>
           </div>
-          {geoError && <div className="error" style={{marginTop:8}}>{geoError}</div>}
+          {error && <div className="error" style={{marginTop:8}}>{error}</div>}
         </section>
 
         {/* Compass + Times */}
@@ -442,14 +443,18 @@ export default function App(){
             {times ? (
               <>
                 <ul className="times">
-                  <li className="time-item"><span>Fajr</span><span>{formatTime(times.Fajr)}</span></li>
-                  <li className="time-item"><span>Soloppgang</span><span>{formatTime(times.Soloppgang)}</span></li>
-                  <li className="time-item"><span>Dhuhr</span><span>{formatTime(times.Dhuhr)}</span></li>
-                  <li className="time-item"><span>Asr</span><span>{formatTime(times.Asr)}</span></li>
-                  <li className="time-item"><span>Maghrib</span><span>{formatTime(times.Maghrib)}</span></li>
-                  <li className="time-item"><span>Isha</span><span>{formatTime(times.Isha)}</span></li>
+                  <li className="time-item"><span>Fajr</span><span>{NB_TIME.format(times.Fajr)}</span></li>
+                  <li className="time-item"><span>Soloppgang</span><span>{NB_TIME.format(times.Soloppgang)}</span></li>
+                  <li className="time-item"><span>Dhuhr</span><span>{NB_TIME.format(times.Dhuhr)}</span></li>
+                  <li className="time-item"><span>Asr</span><span>{NB_TIME.format(times.Asr)}</span></li>
+                  <li className="time-item"><span>Maghrib</span><span>{NB_TIME.format(times.Maghrib)}</span></li>
+                  <li className="time-item"><span>Isha</span><span>{NB_TIME.format(times.Isha)}</span></li>
                 </ul>
-                <CountdownView countdown={countdown} />
+                <div className="hint" style={{marginTop:8}}>
+                  {countdown?.name
+                    ? `Neste: ${countdown.name} om ${countdown.diffText} (${NB_TIME.format(countdown.at)})`
+                    : "Alle dagens bønner er passert – oppdateres ved midnatt."}
+                </div>
                 <div style={{marginTop:8}}>
                   <button className="btn" onClick={()=>{ const a = audioRef.current; if (a) { a.currentTime=0; a.play().catch(()=>{}) } }}>Test Adhan</button>
                   <audio ref={audioRef} preload="auto" src="/audio/adhan.mp3"></audio>
@@ -461,12 +466,4 @@ export default function App(){
       </div>
     </div>
   )
-}
-
-function CountdownView({ countdown }) {
-  const fmt = (d) => d instanceof Date ? NB_TIME.format(d) : "–"
-  if (!countdown?.name) return <div className="hint" style={{marginTop:8}}>Alle dagens bønner er passert – oppdateres ved midnatt.</div>
-  return <div className="hint" style={{marginTop:8}}>
-    {`Neste: ${countdown.name} om ${countdown.diffMin} min (${fmt(countdown.at)})`}
-  </div>
 }
