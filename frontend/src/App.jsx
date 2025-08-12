@@ -85,8 +85,8 @@ async function reverseGeocode(lat, lng) {
   } catch { return '' }
 }
 
-// ---------- Compass (Kaaba fixed at top; dial rotates) ----------
-function Compass({ bearing }) {
+// ---------- Modern Compass (Kaaba fixed top; rotating dial; central needle) ----------
+function ModernCompass({ bearing }) {
   const [heading, setHeading] = useState(null)
   const [showHelp, setShowHelp] = useState(false)
   const [manualHeading, setManualHeading] = useState(0)
@@ -137,38 +137,73 @@ function Compass({ bearing }) {
 
   return (
     <div>
-      <div style={{position:'relative', width:240, height:240, margin:'12px auto'}}>
-        {/* Dial */}
+      <div style={{position:'relative', width:260, height:260, margin:'12px auto'}}>
+        {/* Glassy background */}
         <div style={{
-          position:'absolute', inset:0, borderRadius:'50%', border:'2px solid #334155', boxShadow:'inset 0 0 0 6px #0f172a',
-          transform:`rotate(${delta}deg)`, transition:'transform 0.08s linear'
+          position:'absolute', inset:0, borderRadius:'50%',
+          background:'radial-gradient(120px 120px at 50% 45%, rgba(255,255,255,0.08), rgba(15,23,42,0.7))',
+          boxShadow:'inset 0 10px 25px rgba(0,0,0,0.5), 0 2px 12px rgba(0,0,0,0.3)',
+          border:'1px solid #334155'
         }}/>
-        {/* Ticks */}
-        {[...Array(12)].map((_,i)=>(
-          <div key={i} style={{position:'absolute', inset:0, transform:`rotate(${i*30}deg)`}}>
-            <div style={{position:'absolute', top:8, left:'50%', width:2, height:12, background:'#334155', transform:'translateX(-50%)', opacity:i%3===0?1:0.6}}/>
+
+        {/* Rotating dial ring */}
+        <div style={{position:'absolute', inset:8, borderRadius:'50%', transform:`rotate(${delta}deg)`, transition:'transform 0.08s linear'}}>
+          <div style={{position:'absolute', inset:0, borderRadius:'50%', border:'2px solid #3b475e', boxShadow:'inset 0 0 0 6px #0f172a'}}/>
+          {/* Ticks */}
+          {[...Array(60)].map((_,i)=>(
+            <div key={i} style={{position:'absolute', inset:0, transform:`rotate(${i*6}deg)`}}>
+              <div style={{
+                position:'absolute', top:6, left:'50%', transform:'translateX(-50%)',
+                width: i%5===0 ? 3 : 2, height: i%5===0 ? 14 : 9, background:'#445169', opacity: i%5===0 ? 1 : .7, borderRadius:2
+              }}/>
+            </div>
+          ))}
+          {/* Cardinal letters */}
+          <div style={{position:'absolute', inset:0, color:'#a5b4fc', fontWeight:600}}>
+            <div style={{position:'absolute', top:12, left:'50%', transform:'translateX(-50%)'}}>N</div>
+            <div style={{position:'absolute', bottom:12, left:'50%', transform:'translateX(-50%)'}}>S</div>
+            <div style={{position:'absolute', top:'50%', left:12, transform:'translateY(-50%)'}}>V</div>
+            <div style={{position:'absolute', top:'50%', right:12, transform:'translateY(-50%)'}}>Ø</div>
           </div>
-        ))}
-        {/* Cardinal letters (rotate with dial) */}
-        <div style={{position:'absolute', inset:0, transform:`rotate(${delta}deg)`, color:'#94a3b8'}}>
-          <div style={{position:'absolute', top:12, left:'50%', transform:'translateX(-50%)'}}>N</div>
-          <div style={{position:'absolute', bottom:12, left:'50%', transform:'translateX(-50%)'}}>S</div>
-          <div style={{position:'absolute', top:'50%', left:12, transform:'translateY(-50%)'}}>V</div>
-          <div style={{position:'absolute', top:'50%', right:12, transform:'translateY(-50%)'}}>Ø</div>
         </div>
-        {/* Kaaba fixed at top */}
-        <div style={{position:'absolute', top:18, left:'50%', transform:'translateX(-50%)'}}>
-          <img src="/icons/kaaba.svg" alt="Kaaba" width={34} height={34} draggable="false" />
+
+        {/* Fixed Kaaba at top */}
+        <div style={{position:'absolute', top:20, left:'50%', transform:'translateX(-50%)'}}>
+          <img src="/icons/kaaba.svg" alt="Kaaba" width={36} height={36} draggable="false" />
         </div>
+
+        {/* Needle (viser) */}
+        <svg width="260" height="260" style={{position:'absolute', inset:0, pointerEvents:'none'}} aria-hidden="true">
+          <defs>
+            <linearGradient id="needle" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#ef4444"/><stop offset="100%" stopColor="#991b1b"/>
+            </linearGradient>
+            <linearGradient id="tail" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#94a3b8"/><stop offset="100%" stopColor="#475569"/>
+            </linearGradient>
+          </defs>
+          {/* main needle pointing up */}
+          <g filter="url(#shadow-none)">
+            <polygon points="130,36 122,130 138,130" fill="url(#needle)" opacity="0.95"/>
+            {/* tail */}
+            <polygon points="122,130 138,130 130,200" fill="url(#tail)" opacity="0.85"/>
+            {/* hub */}
+            <circle cx="130" cy="130" r="8" fill="#e5e7eb" stroke="#334155" strokeWidth="2"/>
+            <circle cx="130" cy="130" r="2.5" fill="#1f2937"/>
+          </g>
+        </svg>
+
+        {/* Gloss highlight */}
+        <div style={{position:'absolute', inset:0, borderRadius:'50%', background:'radial-gradient(140px 80px at 50% 20%, rgba(255,255,255,0.12), rgba(255,255,255,0.0))'}}/>
       </div>
 
-      <div className="hint" style={{textAlign:'center', marginTop:4}}>
+      <div className="hint" style={{textAlign:'center', marginTop:6}}>
         {usedHeading == null
           ? 'Ingen sensordata — bruk Aktiver kompass eller manuell slider.'
           : <>Enhetsretning: <b>{usedHeading.toFixed?.(0)}°</b> • Qibla: <b>{bearing?.toFixed?.(1)}°</b> — {turnText}</>}
       </div>
 
-      <div style={{textAlign:'center', marginTop:8}}>
+      <div style={{textAlign:'center', marginTop:10}}>
         <button className="btn" onClick={activateCompass} style={{marginRight:8}}>Aktiver kompass</button>
         <button className="btn" onClick={()=>setShowHelp(true)}>Få i gang kompasset</button>
       </div>
@@ -373,7 +408,7 @@ export default function App() {
             <h3>Qibla-retning</h3>
             {activeCoords ? (
               <>
-                <Compass bearing={qiblaDeg} />
+                <ModernCompass bearing={qiblaDeg} />
                 <div className="hint" style={{textAlign:'center'}}>Drei mobilen slik at Kaaba ligger i topp — da vender du mot Qibla.</div>
               </>
             ) : (<div className="hint">Velg/bekreft posisjon for å vise Qibla.</div>)}
