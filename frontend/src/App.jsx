@@ -2,8 +2,10 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { PrayerTimes, CalculationMethod, Coordinates, Qibla, HighLatitudeRule, Madhab } from 'adhan'
 
+// ---------- Helpers ----------
 const NB_TIME = new Intl.DateTimeFormat('nb-NO', { hour: '2-digit', minute: '2-digit' })
 const NB_DAY = new Intl.DateTimeFormat('nb-NO', { weekday: 'long', day: '2-digit', month: 'long' })
+const ISO_DATE = (d) => d.toISOString().slice(0,10)
 
 function useLocalStorage(key, initialValue) {
   const [value, setValue] = useState(() => {
@@ -13,6 +15,7 @@ function useLocalStorage(key, initialValue) {
   return [value, setValue]
 }
 
+// ---------- Build adhan params ----------
 function buildParams(methodKey, hlrKey, useIshaInterval) {
   const m = CalculationMethod
   let p
@@ -25,13 +28,13 @@ function buildParams(methodKey, hlrKey, useIshaInterval) {
     case 'Moonsighting': p = m.Moonsighting(); break
     default: p = m.Moonsighting()
   }
-  p.madhab = Madhab.Shafi
+  p.madhab = Madhab.Shafi // Maliki ~ Shafi (Asr 1x)
   p.highLatitudeRule = HighLatitudeRule[hlrKey] ?? HighLatitudeRule.TwilightAngle
-  if (useIshaInterval) p.ishaInterval = 90 // 90 min etter Maghrib (vanlig praksis i Norge sommer/høy breddegrad)
+  if (useIshaInterval) p.ishaInterval = 90 // Isha = Maghrib + 90 min
   return p
 }
 
-// ---- Geolocation ----
+// ---------- Geolocation ----------
 function useGeolocation() {
   const [coords, setCoords] = useState(null)
   const [error, setError] = useState(null)
@@ -72,7 +75,7 @@ function useGeolocation() {
   return { coords, error, loading, request, setCoords, permission }
 }
 
-// ---- Reverse geocode (city) ----
+// ---------- Reverse geocode (city) ----------
 async function reverseGeocode(lat, lng) {
   try {
     const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lng}&accept-language=nb&zoom=10&addressdetails=1`
@@ -84,12 +87,12 @@ async function reverseGeocode(lat, lng) {
   } catch { return '' }
 }
 
-// ---- Modern Compass with always-visible needle ----
+// ---------- Modern Compass (Dial rotates by -heading; Kaaba at absolute bearing) ----------
 function ModernCompass({ bearing }) {
   const [heading, setHeading] = useState(null)
   const [showHelp, setShowHelp] = useState(false)
   const [manualHeading, setManualHeading] = useState(0)
-  const [sensorStatus, setSensorStatus] = useState('idle') // idle | granted | denied | noevents
+  const [sensorStatus, setSensorStatus] = useState('idle')
   const cleanupRef = useRef(() => {})
 
   const onOrientation = (e) => {
@@ -127,11 +130,12 @@ function ModernCompass({ bearing }) {
   useEffect(() => () => cleanupRef.current(), [])
 
   const usedHeading = heading == null ? manualHeading : heading
-  const delta = useMemo(() => {
-    if (bearing == null || usedHeading == null) return 0
-    return (bearing - usedHeading + 360) % 360
-  }, [bearing, usedHeading])
+  const dialRotate = useMemo(() => {
+    if (usedHeading == null) return 0
+    return (-usedHeading + 360) % 360
+  }, [usedHeading])
 
+  const kaabaAngle = bearing ?? 0 // absolute from North
   const turnText = (() => {
     if (bearing == null || usedHeading == null) return '—'
     const a = ((bearing - usedHeading + 540) % 360) - 180
@@ -142,7 +146,7 @@ function ModernCompass({ bearing }) {
   return (
     <div>
       <div style={{position:'relative', width:260, height:260, margin:'12px auto', WebkitTransform:'translateZ(0)', transform:'translateZ(0)'}}>
-        {/* Base */}
+        {/* Base disc */}
         <div style={{
           position:'absolute', inset:0, borderRadius:'50%',
           background:'radial-gradient(120px 120px at 50% 45%, rgba(255,255,255,0.08), rgba(15,23,42,0.7))',
@@ -151,7 +155,7 @@ function ModernCompass({ bearing }) {
         }}/>
 
         {/* Rotating dial */}
-        <div style={{position:'absolute', inset:8, borderRadius:'50%', transform:`rotate(${delta}deg) translateZ(0)`, transition:'transform 0.08s linear'}}>
+        <div style={{position:'absolute', inset:8, borderRadius:'50%', transform:`rotate(${dialRotate}deg) translateZ(0)`, transition:'transform 0.08s linear'}}>
           <div style={{position:'absolute', inset:0, borderRadius:'50%', border:'2px solid #3b475e', boxShadow:'inset 0 0 0 6px #0f172a'}}/>
           {[...Array(60)].map((_,i)=>(
             <div key={i} style={{position:'absolute', inset:0, transform:`rotate(${i*6}deg)`}}>
@@ -167,14 +171,16 @@ function ModernCompass({ bearing }) {
             <div style={{position:'absolute', top:'50%', left:12, transform:'translateY(-50%)'}}>V</div>
             <div style={{position:'absolute', top:'50%', right:12, transform:'translateY(-50%)'}}>Ø</div>
           </div>
+
+          {/* Kaaba marker at absolute bearing on the dial */}
+          <div style={{position:'absolute', inset:0, transform:`rotate(${kaabaAngle}deg)`}}>
+            <div style={{position:'absolute', top:16, left:'50%', transform:'translateX(-50%)'}}>
+              <img src="/icons/kaaba.svg" alt="Kaaba" width={34} height={34} draggable="false" />
+            </div>
+          </div>
         </div>
 
-        {/* Kaaba fixed */}
-        <div style={{position:'absolute', top:20, left:'50%', transform:'translateX(-50%)', zIndex:3}}>
-          <img src="/icons/kaaba.svg" alt="Kaaba" width={36} height={36} draggable="false" />
-        </div>
-
-        {/* Needle always visible */}
+        {/* Needle (device heading up) */}
         <svg width="260" height="260" style={{position:'absolute', inset:0, pointerEvents:'none', zIndex:4}} aria-hidden="true">
           <defs>
             <linearGradient id="needle" x1="0" y1="0" x2="0" y2="1">
@@ -192,8 +198,6 @@ function ModernCompass({ bearing }) {
           </g>
         </svg>
 
-        {/* Gloss */}
-        <div style={{position:'absolute', inset:0, borderRadius:'50%', background:'radial-gradient(140px 80px at 50% 20%, rgba(255,255,255,0.12), rgba(255,255,255,0))', zIndex:2}}/>
       </div>
 
       <div className="hint" style={{textAlign:'center', marginTop:6}}>
@@ -236,7 +240,17 @@ function ModernCompass({ bearing }) {
   )
 }
 
-// ---- Push helpers ----
+// ---------- Server fetch for prayer times (optional) ----------
+async function fetchServerTimes(baseUrl, lat, lng, dateISO, method, hlr, isha90) {
+  const url = `${baseUrl}/prayertimes?lat=${lat}&lng=${lng}&date=${dateISO}&method=${encodeURIComponent(method)}&hlr=${encodeURIComponent(hlr)}&isha90=${isha90?1:0}`
+  const res = await fetch(url)
+  if (!res.ok) throw new Error('Server svarte ikke 200')
+  const data = await res.json()
+  // expected format: { fajr, sunrise, dhuhr, asr, maghrib, isha } as 'HH:mm' local
+  return data
+}
+
+// ---------- Push helpers ----------
 async function getVapidKey() {
   const base = import.meta.env.VITE_PUSH_SERVER_URL
   if (!base) throw new Error('VITE_PUSH_SERVER_URL mangler i Netlify Environment')
@@ -254,7 +268,7 @@ function urlBase64ToUint8Array(base64String) {
   return outputArray
 }
 
-// ---- Main App ----
+// ---------- Main App ----------
 export default function App() {
   const { coords, error: geoError, loading, request, setCoords, permission } = useGeolocation()
   const [method, setMethod] = useLocalStorage('aq_method', 'Moonsighting')
@@ -265,11 +279,29 @@ export default function App() {
   const [cityLabel, setCityLabel] = useLocalStorage('aq_city', '')
   const [pushEnabled, setPushEnabled] = useLocalStorage('aq_push', false)
   const [minutesBefore, setMinutesBefore] = useLocalStorage('aq_push_lead', 10)
+  const [useIshaInterval, setUseIshaInterval] = useLocalStorage('aq_isha90', true)
+  const [useServerDB, setUseServerDB] = useLocalStorage('aq_use_server_db', true)
+  const [serverStatus, setServerStatus] = useState('off') // off | ok | fail
   const [adhanError, setAdhanError] = useState('')
   const [pushStatus, setPushStatus] = useState('idle')
-  const [useIshaInterval, setUseIshaInterval] = useLocalStorage('aq_isha90', true)
+  const [tick, setTick] = useState(Date.now())
   const audioRef = useRef(null)
 
+  // Minute tick + midnight refresh
+  useEffect(() => {
+    let lastDate = ISO_DATE(new Date())
+    const iv = setInterval(() => {
+      const now = new Date()
+      const iso = ISO_DATE(now)
+      if (iso !== lastDate) {
+        lastDate = iso
+        setTick(Date.now()) // triggers recompute
+      }
+    }, 60 * 1000)
+    return () => clearInterval(iv)
+  }, [])
+
+  // City label
   useEffect(() => {
     if (!coords?.latitude || !coords?.longitude) return
     reverseGeocode(coords.latitude, coords.longitude).then(name => { if (name) setCityLabel(name) })
@@ -287,7 +319,8 @@ export default function App() {
     catch { setAdhanError('Feil i beregning.'); return buildParams('Moonsighting', 'TwilightAngle', useIshaInterval) }
   }, [method, hlr, useIshaInterval])
 
-  const computed = useMemo(() => {
+  // Local compute (fallback)
+  const localComputed = useMemo(() => {
     try {
       if (!activeCoords) return { times: null, qiblaDeg: null, dateLabel: NB_DAY.format(new Date()) }
       const d = new Date()
@@ -303,23 +336,56 @@ export default function App() {
       setAdhanError('Klarte ikke beregne bønnetider her.')
       return { times: null, qiblaDeg: null, dateLabel: NB_DAY.format(new Date()) }
     }
-  }, [activeCoords?.latitude, activeCoords?.longitude, params])
-  const { times, qiblaDeg, dateLabel } = computed
+  }, [activeCoords?.latitude, activeCoords?.longitude, params, tick])
+  const { qiblaDeg } = localComputed
+
+  // Server DB fetch (optional)
+  const [serverTimes, setServerTimes] = useState(null)
+  const dateISO = ISO_DATE(new Date())
+  useEffect(() => {
+    let canceled = false
+    ;(async () => {
+      if (!useServerDB || !activeCoords) { setServerStatus('off'); setServerTimes(null); return }
+      const base = import.meta.env.VITE_API_URL
+      if (!base) { setServerStatus('off'); setServerTimes(null); return }
+      try {
+        setServerStatus('loading')
+        const data = await fetchServerTimes(base, activeCoords.latitude, activeCoords.longitude, dateISO, method, hlr, useIshaInterval)
+        if (canceled) return
+        // Convert 'HH:mm' to Date today
+        const now = new Date()
+        const mk = (hm) => {
+          const [h,m] = String(hm).split(':').map(x=>parseInt(x,10))
+          const d = new Date(now.getFullYear(), now.getMonth(), now.getDate(), h||0, m||0, 0, 0)
+          return d
+        }
+        setServerTimes({
+          Fajr: mk(data.fajr), Soloppgang: mk(data.sunrise), Dhuhr: mk(data.dhuhr),
+          Asr: mk(data.asr), Maghrib: mk(data.maghrib), Isha: mk(data.isha)
+        })
+        setServerStatus('ok')
+      } catch (e) {
+        if (canceled) return
+        setServerTimes(null)
+        setServerStatus('fail')
+      }
+    })()
+    return () => { canceled = true }
+  }, [useServerDB, activeCoords?.latitude, activeCoords?.longitude, method, hlr, useIshaInterval, dateISO, tick])
+
+  const showTimes = serverTimes || localComputed.times
+  const dateLabel = localComputed.dateLabel
 
   const formatTime = (date) => {
     if (!(date instanceof Date)) return '–'
     const str = NB_TIME.format(date)
-    if (use24h) return str
-    const h = date.getHours(), m = String(date.getMinutes()).padStart(2, '0')
-    const ampm = h < 12 ? 'AM' : 'PM', h12 = ((h + 11) % 12) + 1
-    return `${h12}:${m} ${ampm}`
+    return str
   }
 
   // Push subscribe
   useEffect(() => {
     (async () => {
       if (!pushEnabled) return
-      setPushStatus('idle')
       try {
         if (!('Notification' in window)) throw new Error('Varsler støttes ikke i denne nettleseren.')
         const perm = await Notification.requestPermission()
@@ -331,46 +397,26 @@ export default function App() {
         if (!existing) {
           sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(publicKey) })
         }
-        const resp = await fetch(import.meta.env.VITE_PUSH_SERVER_URL + '/subscribe', {
+        await fetch(import.meta.env.VITE_PUSH_SERVER_URL + '/subscribe', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ subscription: sub, settings: { minutesBefore, method, hlr, lat: activeCoords?.latitude, lng: activeCoords?.longitude, tz: Intl.DateTimeFormat().resolvedOptions().timeZone } })
         })
-        if (!resp.ok) throw new Error('Server avviste abonnement.')
-        setPushStatus('subscribed')
-      } catch (e) { alert(e.message || 'Klarte ikke aktivere push.'); setPushEnabled(false); setPushStatus('error') }
+      } catch (e) { alert(e.message || 'Klarte ikke aktivere push.'); setPushEnabled(false); }
     })()
   }, [pushEnabled, minutesBefore, method, hlr, activeCoords?.latitude, activeCoords?.longitude])
 
-  async function disablePush() {
-    try {
-      const reg = await navigator.serviceWorker.ready
-      const sub = await reg.pushManager.getSubscription()
-      if (sub) {
-        await fetch(import.meta.env.VITE_PUSH_SERVER_URL + '/unsubscribe', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ endpoint: sub.endpoint })
-        })
-        await sub.unsubscribe()
-      }
-      setPushEnabled(false); setPushStatus('idle')
-    } catch (e) { alert('Klarte ikke avmelde: ' + (e.message || 'ukjent feil')) }
-  }
-
   async function sendTest() {
     try {
-      if (pushStatus !== 'subscribed') throw new Error('Aktiver push-varsler først (bryteren over).')
-      const res = await fetch(import.meta.env.VITE_PUSH_SERVER_URL + '/send-test', { method:'POST' })
-      const data = await res.json().catch(()=>({}))
-      if (!res.ok || data.ok === false) throw new Error(data.message || 'Ingen abonnenter på serveren enda.')
+      const base = import.meta.env.VITE_PUSH_SERVER_URL
+      if (!base) throw new Error('Mangler VITE_PUSH_SERVER_URL')
+      const res = await fetch(base + '/send-test', { method:'POST' })
+      if (!res.ok) throw new Error('Server feilet ved test.')
       alert('Testvarsel sendt ✅')
     } catch (e) { alert('Feil ved test: ' + (e.message || 'ukjent feil')) }
   }
 
-  const audioOkTip = 'Hvis du ikke hører lyd: 1) sjekk at /audio/adhan.mp3 finnes, 2) slå av stillebryteren (ringer på), 3) øk volumet, 4) trykk knappen igjen.'
-  const playAdhan = () => {
-    const el = audioRef.current; if (!el) return
-    el.currentTime = 0
-    el.play().then(()=>{}).catch(()=> alert('Kunne ikke spille av lyd. ' + audioOkTip))
-  }
+  const audioRef = useRef(null)
+  const playAdhan = () => { const el = audioRef.current; if (el) { el.currentTime = 0; el.play().catch(()=>{}) } }
 
   return (
     <div className="container" style={{padding:16, fontFamily:'system-ui, sans-serif'}}>
@@ -391,7 +437,7 @@ export default function App() {
             <span className="hint">
               {coords ? `${cityLabel ? cityLabel + ' • ' : ''}${coords.latitude.toFixed(4)}, ${coords.longitude.toFixed(4)}`
                 : permission === 'denied' ? 'Posisjon er blokkert i nettleseren.'
-                : (geoError ? `Feil: ${geoError}` : 'Gi tilgang for automatisk lokasjon')}
+                : 'Gi tilgang for automatisk lokasjon'}
             </span>
           </div>
         </section>
@@ -402,7 +448,7 @@ export default function App() {
             {activeCoords ? (
               <>
                 <ModernCompass bearing={qiblaDeg} />
-                <div className="hint" style={{textAlign:'center'}}>Drei mobilen slik at Kaaba ligger i topp — da vender du mot Qibla.</div>
+                <div className="hint" style={{textAlign:'center'}}>Roter telefonen; når Kaaba-ikonet står i topp, peker du mot Qibla.</div>
               </>
             ) : (<div className="hint">Velg/bekreft posisjon for å vise Qibla.</div>)}
           </section>
@@ -410,12 +456,13 @@ export default function App() {
           <section className="card" style={{border:'1px solid #334155', borderRadius:12, padding:12}}>
             <h3>Bønnetider i dag</h3>
             <div className="row" style={{marginBottom:8, display:'flex', alignItems:'center', gap:8}}>
-              <label><input type="checkbox" checked={useIshaInterval} onChange={e=>setUseIshaInterval(e.target.checked)} /> Bruk Isha = Maghrib + 90 min</label>
+              <label><input type="checkbox" checked={useIshaInterval} onChange={e=>setUseIshaInterval(e.target.checked)} /> Isha = Maghrib + 90 min</label>
+              <label><input type="checkbox" checked={useServerDB} onChange={e=>setUseServerDB(e.target.checked)} /> Hent fra server/DB</label>
+              <span className="hint">Server: {serverStatus}</span>
             </div>
-            {adhanError && <div className="hint" style={{color:'#fca5a5', marginBottom:8}}>{adhanError}</div>}
-            {times ? (
+            {showTimes ? (
               <ul className="times" style={{listStyle:'none', padding:0, margin:0}}>
-                {Object.entries(times).map(([name, t]) => (
+                {Object.entries(showTimes).map(([name, t]) => (
                   <li key={name} className="time-item" style={{display:'flex', justifyContent:'space-between', padding:'6px 0', borderBottom:'1px dashed #1f2937'}}>
                     <span style={{fontWeight:600}}>{name}</span>
                     <span>{formatTime(t)}</span>
@@ -431,12 +478,7 @@ export default function App() {
           <div className="row" style={{display:'flex', justifyContent:'space-between', alignItems:'center', gap:12, flexWrap:'wrap'}}>
             <div>
               <div style={{fontSize:14, fontWeight:600}}>Aktiver push-varsler</div>
-              <div className="hint">
-                {pushStatus === 'subscribed' ? 'Abonnert – test kan sendes.' :
-                 pushStatus === 'error' ? 'Feil – sjekk nett og server.' :
-                 (!import.meta.env.VITE_PUSH_SERVER_URL ? 'Mangler VITE_PUSH_SERVER_URL i Netlify (kreves for push).' : 'Sender varsel før bønnetid (krever bakendtjeneste).')
-                }
-              </div>
+              <div className="hint">{import.meta.env.VITE_PUSH_SERVER_URL ? 'Når aktivert: server sender varsel X min før bønn.' : 'Mangler VITE_PUSH_SERVER_URL i Netlify.'}</div>
             </div>
             <div
               className={"switch " + (pushEnabled ? "on": "")}
@@ -458,16 +500,12 @@ export default function App() {
           </div>
           <div className="row" style={{marginTop:8, display:'flex', gap:8, flexWrap:'wrap'}}>
             <button className="btn" onClick={sendTest} style={{padding:'8px 12px', borderRadius:8, border:'1px solid #334155', background:'#0b1220', color:'#fff'}}>Send testvarsel</button>
-            <button className="btn" onClick={disablePush} style={{padding:'8px 12px', borderRadius:8, border:'1px solid #334155', background:'#0b1220', color:'#fff'}}>Deaktiver/avmeld</button>
-            <button className="btn" onClick={()=>{ const el = audioRef.current; if (el) { el.currentTime = 0; el.play().catch(()=>alert('Kunne ikke spille av lyd. ' + audioOkTip)) }}} style={{padding:'8px 12px', borderRadius:8, border:'1px solid #334155', background:'#0b1220', color:'#fff'}}>Test Adhan-lyd</button>
+            <button className="btn" onClick={()=>{ const el = audioRef.current; if (el) { el.currentTime = 0; el.play().catch(()=>{}) }}} style={{padding:'8px 12px', borderRadius:8, border:'1px solid #334155', background:'#0b1220', color:'#fff'}}>Test Adhan-lyd</button>
           </div>
-          <div className="hint" style={{marginTop:6}}>Hvis du ikke hører lyd: sjekk at <code>/audio/adhan.mp3</code> finnes, at stillebryteren er AV, og at volumet er opp.</div>
         </section>
       </div>
 
       <audio ref={audioRef} preload="auto" src="/audio/adhan.mp3"></audio>
-
-      <footer style={{marginTop:16, color:'#94a3b8'}}>© {new Date().getFullYear()} Afkir Qibla • Norsk • Maliki Asr (Shafi) – adhan.js • Installer via «Legg til på hjemskjerm»</footer>
     </div>
   )
 }
