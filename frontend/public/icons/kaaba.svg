@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="128" height="128" viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg" aria-label="Kaaba">
+  <defs>
+    <linearGradient id="g1" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#1a1a1f"/>
+      <stop offset="100%" stop-color="#0e0e12"/>
+    </linearGradient>
+    <linearGradient id="g2" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ffd76a"/>
+      <stop offset="100%" stop-color="#d4a82c"/>
+    </linearGradient>
+    <filter id="shadow" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="1.5" stdDeviation="1.5" flood-opacity="0.35" flood-color="#000"/>
+    </filter>
+  </defs>
+
+  <!-- Body -->
+  <g filter="url(#shadow)">
+    <rect x="18" y="30" width="92" height="70" rx="8" fill="url(#g1)" stroke="#1f2937" stroke-width="2"/>
+    <!-- Kiswah band -->
+    <rect x="18" y="30" width="92" height="18" fill="url(#g2)"/>
+    <!-- Belt ornaments (simple squares) -->
+    <g fill="#1a1a1f">
+      <rect x="28" y="34" width="10" height="10" rx="2"/>
+      <rect x="46" y="34" width="10" height="10" rx="2"/>
+      <rect x="64" y="34" width="10" height="10" rx="2"/>
+      <rect x="82" y="34" width="10" height="10" rx="2"/>
+    </g>
+    <!-- Door -->
+    <rect x="76" y="58" width="18" height="32" rx="2" fill="url(#g2)" stroke="#d6b14a" stroke-width="2"/>
+  </g>
+</svg>
