@@ -90,10 +90,25 @@ function useGeolocation() {
 }
 // -----------------------------------------------------
 
+// Reverse geocode to get a city/town name (best-effort via Nominatim)
+async function reverseGeocode(lat, lng) {
+  try {
+    const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lng}&accept-language=nb&zoom=10&addressdetails=1`
+    const res = await fetch(url, { headers: { 'Accept': 'application/json' } })
+    const data = await res.json()
+    const a = data.address || {}
+    const name = a.city || a.town || a.village || a.municipality || a.suburb || a.state || a.county || a.country
+    return name || ''
+  } catch (e) {
+    return ''
+  }
+}
+
 function Compass({ bearing }) {
   const [heading, setHeading] = useState(null)
   const [perm, setPerm] = useState('prompt')
   const [showHelp, setShowHelp] = useState(false)
+  const [hasEvent, setHasEvent] = useState(false)
 
   useEffect(() => {
     const onOrientation = (e) => {
@@ -103,29 +118,38 @@ function Compass({ bearing }) {
       } else if (typeof e.alpha === 'number') {
         hdg = 360 - e.alpha
       }
-      if (hdg != null) setHeading((hdg + 360) % 360)
+      if (hdg != null) {
+        setHeading((hdg + 360) % 360)
+        setHasEvent(true)
+      }
     }
 
-    // If no special permission API, attach listeners immediately
+    let cleanup = () => {}
     if (!(window.DeviceOrientationEvent && typeof DeviceOrientationEvent.requestPermission === 'function')) {
       window.addEventListener('deviceorientationabsolute', onOrientation, true)
       window.addEventListener('deviceorientation', onOrientation, true)
       setPerm('granted')
-      return () => {
+      cleanup = () => {
         window.removeEventListener('deviceorientationabsolute', onOrientation, true)
         window.removeEventListener('deviceorientation', onOrientation, true)
       }
     } else {
-      // On iOS, default to prompt state and show help until user taps the button
       setPerm('prompt')
       setShowHelp(true)
     }
-  }, [])
+
+    // If no event after a few seconds, suggest calibration / settings
+    const timer = setTimeout(() => {
+      if (!hasEvent && perm === 'granted') setShowHelp(true)
+    }, 4000)
+
+    return () => { cleanup(); clearTimeout(timer) }
+  }, [perm])
 
   const requestCompass = async () => {
     try {
       if (window.DeviceOrientationEvent && typeof DeviceOrientationEvent.requestPermission === 'function') {
-        const p = await DeviceOrientationEvent.requestPermission() // must be in a click handler
+        const p = await DeviceOrientationEvent.requestPermission()
         setPerm(p)
         if (p === 'granted') {
           const onOrientation = (e) => {
@@ -135,7 +159,10 @@ function Compass({ bearing }) {
             } else if (typeof e.alpha === 'number') {
               hdg = 360 - e.alpha
             }
-            if (hdg != null) setHeading((hdg + 360) % 360)
+            if (hdg != null) {
+              setHeading((hdg + 360) % 360)
+              setHasEvent(true)
+            }
           }
           window.addEventListener('deviceorientationabsolute', onOrientation, true)
           window.addEventListener('deviceorientation', onOrientation, true)
@@ -168,14 +195,13 @@ function Compass({ bearing }) {
         <div className="arrow" style={{ transform: `translateY(10px) rotate(${arrowRotation}deg)` }} aria-label="Qibla-pil"></div>
       </div>
 
-      {/* Inline helper overlay */}
       {showHelp && (
         <div style={{marginTop:12, border:'1px solid #334155', borderRadius:12, padding:12, background:'#0b1220'}}>
-          <div style={{fontWeight:600, marginBottom:8}}>Aktiver kompass</div>
+          <div style={{fontWeight:600, marginBottom:8}}>Få kompasset i gang</div>
           <ol style={{margin:'0 0 8px 16px'}}>
-            <li>Trykk på knappen nedenfor og velg <b>Tillat</b>.</li>
+            <li>Trykk <b>Be om kompass-tilgang</b> og velg <b>Tillat</b>.</li>
             <li>Hvis du ikke får spørsmål: i Safari, trykk <b>aA</b> → <b>Nettstedsinnstillinger</b> → slå på <b>Bevegelse & orientering</b>.</li>
-            <li>Last siden på nytt og prøv igjen.</li>
+            <li>Kalibrer ved å bevege telefonen i en <b>figur-8</b>.</li>
           </ol>
           <button className="btn" onClick={requestCompass}>Be om kompass-tilgang</button>
         </div>
@@ -184,7 +210,7 @@ function Compass({ bearing }) {
       <div className="hint" style={{textAlign:'center', marginTop:8}}>
         {perm !== 'granted'
           ? 'Kompass-tillatelse er ikke aktivert ennå.'
-          : (heading == null ? 'Venter på kompass…' : <>Enhetsretning: {heading.toFixed(0)}° • Qibla: {bearing?.toFixed(1)}°</>)
+          : (heading == null ? 'Venter på kompass…' : <>Enhetsretning: {heading?.toFixed?.(0)}° • Qibla: {bearing?.toFixed?.(1)}°</>)
         }
       </div>
     </div>
@@ -215,6 +241,14 @@ export default function App() {
   const [cityLabel, setCityLabel] = useLocalStorage('aq_city', '')
   const [pushEnabled, setPushEnabled] = useLocalStorage('aq_push', false)
   const [minutesBefore, setMinutesBefore] = useLocalStorage('aq_push_lead', 10)
+
+  // Reverse geocode when coords change
+  useEffect(() => {
+    if (!coords?.latitude || !coords?.longitude) return
+    reverseGeocode(coords.latitude, coords.longitude).then(name => {
+      if (name) setCityLabel(name)
+    })
+  }, [coords?.latitude, coords?.longitude])
 
   const activeCoords = useMemo(() => {
     if (coords) return coords
@@ -331,7 +365,9 @@ export default function App() {
           <div className="row" style={{marginTop:8}}>
             <button className="btn" onClick={request} disabled={loading}>{loading ? 'Henter…' : 'Bruk stedstjenester'}</button>
             <span className="hint">
-              {coords ? `Fant posisjon: ${coords.latitude.toFixed(4)}, ${coords.longitude.toFixed(4)}` : permission === 'denied' ? 'Posisjon er blokkert i nettleseren.' : (geoError ? `Feil: ${geoError}` : 'Gi tilgang for automatisk lokasjon')}
+              {coords ? `${cityLabel ? cityLabel + ' • ' : ''}${coords.latitude.toFixed(4)}, ${coords.longitude.toFixed(4)}`
+                : permission === 'denied' ? 'Posisjon er blokkert i nettleseren.'
+                : (geoError ? `Feil: ${geoError}` : 'Gi tilgang for automatisk lokasjon')}
             </span>
           </div>
           {geoError && <div className="hint" style={{color:'#fca5a5', marginTop:6}}>{geoError}</div>}
@@ -342,7 +378,7 @@ export default function App() {
           </div>
           <div className="row" style={{marginTop:8}}>
             <button className="btn" onClick={setManual}>Bruk manuell posisjon</button>
-            {activeCoords && <span className="hint">Aktiv: {(cityLabel||'').trim() || 'Egendefinert'} • {activeCoords.latitude.toFixed(4)}, {activeCoords.longitude.toFixed(4)}</span>}
+            {coords && !cityLabel && <span className="hint">Henter stedsnavn…</span>}
           </div>
         </section>
 

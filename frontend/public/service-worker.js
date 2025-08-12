@@ -1,5 +1,5 @@
 
-const CACHE = 'afkir-qibla-v4';
+const CACHE = 'afkir-qibla-v5';
 const ASSETS = [
   '/', '/index.html', '/manifest.webmanifest',
   '/icons/icon-192.png', '/icons/icon-512.png', '/icons/maskable-192.png', '/icons/maskable-512.png',
