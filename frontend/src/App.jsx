@@ -2,16 +2,17 @@
 import React, { useEffect, useMemo, useRef, useState } from "react"
 
 /**
- * Afkir Qibla – full app
+ * Afkir Qibla – App.jsx (needle points to Kaaba)
  * - Prayer times from Aladhan API (method=3 MWL, school=0 Maliki 1x)
  * - Auto refresh at midnight
- * - 3D-styled Kaaba icon + rotating compass dial; fixed Kaaba marker (true Qibla)
- * - Degrees readout and short helper line
+ * - Kaaba icon fixed at top (true Qibla direction)
+ * - Needle rotates toward Kaaba: angle = (bearing - heading)
+ * - Degrees readout + short helper text
  * - City label via Nominatim
  * - Next prayer countdown
  * - Test Adhan (public/audio/adhan.mp3)
  * - Theme toggle (light/dark)
- * - Futuristic rotating background images from /backgrounds
+ * - Futuristic rotating backgrounds from /public/backgrounds (local files)
  * - Clear red error messages for GPS, sensor, API
  */
 
@@ -26,9 +27,6 @@ function useLocalStorage(key, init) {
   useEffect(() => { try { localStorage.setItem(key, JSON.stringify(v)) } catch {} }, [key, v])
   return [v, setV]
 }
-
-function clamp(n, a, b){ return Math.min(b, Math.max(a, n)) }
-
 
 // ------- Geolocation -------
 function useGeolocation() {
@@ -101,8 +99,8 @@ async function fetchAladhan(lat, lng, date = "today") {
   const params = new URLSearchParams({
     latitude: String(lat),
     longitude: String(lng),
-    method: "3",
-    school: "0",
+    method: "3",  // MWL
+    school: "0",  // Shafi/Maliki (1x)
     timezonestring: tz,
     iso8601: "true"
   })
@@ -129,7 +127,7 @@ async function fetchAladhan(lat, lng, date = "today") {
   return { times, meta: json.data.meta }
 }
 
-// ------- Modern Compass -------
+// ------- Modern Compass (needle points toward Kaaba) -------
 function ModernCompass({ bearing }) {
   const [heading, setHeading] = useState(null)
   const [showHelp, setShowHelp] = useState(false)
@@ -175,7 +173,8 @@ function ModernCompass({ bearing }) {
   useEffect(() => () => cleanupRef.current(), [])
 
   const usedHeading = heading == null ? manualHeading : heading
-  const delta = useMemo(() => {
+  // Needle angle = bearing - heading (0° = up)
+  const needleAngle = useMemo(() => {
     if (bearing == null || usedHeading == null) return 0
     return (bearing - usedHeading + 360) % 360
   }, [bearing, usedHeading])
@@ -186,6 +185,7 @@ function ModernCompass({ bearing }) {
   return (
     <div>
       <div style={{position:"relative", width:280, height:280, margin:"12px auto", WebkitTransform:"translateZ(0)", transform:"translateZ(0)"}}>
+        {/* Static dial */}
         <div style={{
           position:"absolute", inset:0, borderRadius:"50%",
           background:"radial-gradient(140px 140px at 50% 45%, rgba(255,255,255,.10), rgba(15,23,42,.65))",
@@ -193,7 +193,7 @@ function ModernCompass({ bearing }) {
           border:"1px solid rgba(148,163,184,.35)"
         }}/>
 
-        <div style={{position:"absolute", inset:10, borderRadius:"50%", transform:`rotate(${delta}deg) translateZ(0)`, transition:"transform .08s linear"}}>
+        <div style={{position:"absolute", inset:10, borderRadius:"50%"}}>
           <div style={{position:"absolute", inset:0, borderRadius:"50%", border:"2px solid #3b475e", boxShadow:"inset 0 0 0 8px #0f172a"}}/>
           {[...Array(60)].map((_,i)=>(
             <div key={i} style={{position:"absolute", inset:0, transform:`rotate(${i*6}deg)`}}>
@@ -211,10 +211,12 @@ function ModernCompass({ bearing }) {
           </div>
         </div>
 
+        {/* Fixed 3D Kaaba at top */}
         <div style={{position:"absolute", top:24, left:"50%", transform:"translateX(-50%)", zIndex:3}}>
           <img src="/icons/kaaba_3d.svg" alt="Kaaba" width={40} height={40} draggable="false" />
         </div>
 
+        {/* Needle points toward Kaaba */}
         <svg width="280" height="280" style={{position:"absolute", inset:0, pointerEvents:"none", zIndex:4}} aria-hidden="true">
           <defs>
             <linearGradient id="needle" x1="0" y1="0" x2="0" y2="1">
@@ -224,7 +226,7 @@ function ModernCompass({ bearing }) {
               <stop offset="0%" stopColor="#94a3b8"/><stop offset="100%" stopColor="#475569"/>
             </linearGradient>
           </defs>
-          <g>
+          <g transform={`rotate(${needleAngle} 140 140)`}>
             <polygon points="140,40 132,140 148,140" fill="url(#needle)" opacity="0.96"/>
             <polygon points="132,140 148,140 140,208" fill="url(#tail)" opacity="0.86"/>
             <circle cx="140" cy="140" r="8.5" fill="#e5e7eb" stroke="#334155" strokeWidth="2"/>
@@ -296,11 +298,11 @@ function useTheme() {
   return [theme, setTheme]
 }
 const BACKGROUNDS = [
-  "/backgrounds/mecca1.jpg",
-  "/backgrounds/kaaba1.jpg",
-  "/backgrounds/islamic1.jpg",
-  "/backgrounds/mecca2.jpg",
-  "/backgrounds/kaaba2.jpg"
+  "/backgrounds/mecca_panorama.jpg",
+  "/backgrounds/kaaba_2024.jpg",
+  "/backgrounds/mecca_aerial.jpg",
+  "/backgrounds/mecca_city_panorama.jpg",
+  "/backgrounds/mecca_exterior.jpg"
 ]
 
 // ------- Main App -------
@@ -314,11 +316,13 @@ export default function App(){
   const [countdown, setCountdown] = useState({ name: null, diffMin: null, at: null })
   const audioRef = useRef(null)
 
+  // rotate background every 25s
   useEffect(() => {
     const id = setInterval(()=> setBgIdx(i => (i+1)%BACKGROUNDS.length), 25000)
     return () => clearInterval(id)
   }, [])
 
+  // auto refresh at midnight + update countdown every minute
   useEffect(() => {
     let last = new Date().toDateString()
     const id = setInterval(()=>{
@@ -333,6 +337,7 @@ export default function App(){
     return () => clearInterval(id)
   }, [coords, times?.Fajr?.getTime?.()])
 
+  // reverse geocode on coords change
   useEffect(() => {
     if (!coords) return
     reverseGeocode(coords.latitude, coords.longitude).then(n => n && setCity(n))
@@ -346,7 +351,7 @@ export default function App(){
       const data = await fetchAladhan(lat, lng, "today")
       setTimes({
         Fajr: data.times.Fajr,
-        Soloppgang: data.times.Soloppgang,
+        Soloppgang: data.times.Soloppgang, // internal sunrise name
         Dhuhr: data.times.Dhuhr,
         Asr: data.times.Asr,
         Maghrib: data.times.Maghrib,
@@ -396,6 +401,7 @@ export default function App(){
       `}</style>
 
       <div className="container">
+        {/* Theme switch */}
         <div className="theme">
           <button className="btn" onClick={()=>setTheme(theme==="dark"?"light":"dark")}>
             Tema: {theme==="dark"?"Mørk":"Lys"}
@@ -407,6 +413,7 @@ export default function App(){
           <div className="hint">{NB_DAY.format(new Date())}</div>
         </header>
 
+        {/* Location */}
         <section className="card">
           <h3>Plassering</h3>
           <div className="row" style={{marginTop:8}}>
@@ -420,6 +427,7 @@ export default function App(){
           {geoError && <div className="error" style={{marginTop:8}}>{geoError}</div>}
         </section>
 
+        {/* Compass + Times */}
         <div style={{display:"grid", gap:12, marginTop:12}}>
           <section className="card">
             <h3>Qibla-retning</h3>
@@ -441,20 +449,24 @@ export default function App(){
                   <li className="time-item"><span>Maghrib</span><span>{formatTime(times.Maghrib)}</span></li>
                   <li className="time-item"><span>Isha</span><span>{formatTime(times.Isha)}</span></li>
                 </ul>
-                <div className="hint" style={{marginTop:8}}>
-                  {countdown?.name
-                    ? `Neste: ${countdown.name} om ${countdown.diffMin} min (${formatTime(countdown.at)})`
-                    : "Alle dagens bønner er passert – oppdateres ved midnatt."}
+                <CountdownView countdown={countdown} />
+                <div style={{marginTop:8}}>
+                  <button className="btn" onClick={()=>{ const a = audioRef.current; if (a) { a.currentTime=0; a.play().catch(()=>{}) } }}>Test Adhan</button>
+                  <audio ref={audioRef} preload="auto" src="/audio/adhan.mp3"></audio>
                 </div>
               </>
             ) : <div className="hint">Henter bønnetider… (krever internett)</div>}
-            <div style={{marginTop:8}}>
-              <button className="btn" onClick={()=>{ const a = audioRef.current; if (a) { a.currentTime=0; a.play().catch(()=>{}) } }}>Test Adhan</button>
-              <audio ref={audioRef} preload="auto" src="/audio/adhan.mp3"></audio>
-            </div>
           </section>
         </div>
       </div>
     </div>
   )
+}
+
+function CountdownView({ countdown }) {
+  const fmt = (d) => d instanceof Date ? NB_TIME.format(d) : "–"
+  if (!countdown?.name) return <div className="hint" style={{marginTop:8}}>Alle dagens bønner er passert – oppdateres ved midnatt.</div>
+  return <div className="hint" style={{marginTop:8}}>
+    {`Neste: ${countdown.name} om ${countdown.diffMin} min (${fmt(countdown.at)})`}
+  </div>
 }
