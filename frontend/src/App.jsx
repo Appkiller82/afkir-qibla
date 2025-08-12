@@ -1,3 +1,4 @@
+
 import React, { useEffect, useMemo, useState } from 'react'
 import { PrayerTimes, CalculationMethod, Coordinates, Qibla, HighLatitudeRule, Madhab } from 'adhan'
 
@@ -40,10 +41,27 @@ function buildParams(methodKey) {
   }
 }
 
+// ---- Updated geolocation with robust error handling & permission awareness ----
 function useGeolocation() {
   const [coords, setCoords] = useState(null)
   const [error, setError] = useState(null)
   const [loading, setLoading] = useState(false)
+  const [permission, setPermission] = useState('prompt')
+
+  useEffect(() => {
+    let mounted = true
+    async function checkPerm() {
+      try {
+        if (navigator.permissions && navigator.permissions.query) {
+          const p = await navigator.permissions.query({ name: 'geolocation' })
+          if (mounted) setPermission(p.state)
+          p.onchange = () => mounted && setPermission(p.state)
+        }
+      } catch {}
+    }
+    checkPerm()
+    return () => { mounted = false }
+  }, [])
 
   const request = () => {
     if (!('geolocation' in navigator)) {
@@ -51,22 +69,41 @@ function useGeolocation() {
       return
     }
     setLoading(true)
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        const { latitude, longitude } = pos.coords
-        setCoords({ latitude, longitude })
-        setError(null)
-        setLoading(false)
-      },
-      (err) => {
-        setError(err.message || 'Kunne ikke hente posisjon.')
-        setLoading(false)
-      },
-      { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 }
-    )
+    setError(null)
+
+    const opts = { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+    let done = false
+
+    const onSuccess = (pos) => {
+      if (done) return; done = true
+      const { latitude, longitude } = pos.coords
+      setCoords({ latitude, longitude })
+      setError(null)
+      setLoading(false)
+    }
+
+    const onError = (err) => {
+      if (done) return; done = true
+      const code = err?.code
+      let msg = err?.message || 'Kunne ikke hente posisjon.'
+      if (code === 1) msg = 'Tilgang til posisjon ble nektet. Åpne nettleserinnstillinger og gi tillatelse.'
+      if (code === 2) msg = 'Posisjon utilgjengelig. Prøv nær et vindu, slå på GPS/mobilnett, eller skriv inn manuelt.'
+      if (code === 3) msg = 'Tidsavbrudd. Prøv igjen, eller skriv inn manuelt.'
+      setError(msg)
+      setLoading(false)
+    }
+
+    try {
+      navigator.geolocation.getCurrentPosition(onSuccess, onError, opts)
+    } catch (e) {
+      setError('Uventet feil med stedstjenester.')
+      setLoading(false)
+    }
   }
-  return { coords, error, loading, request, setCoords }
+
+  return { coords, error, loading, request, setCoords, permission }
 }
+// ----------------------------------------------------------------------------
 
 function Compass({ bearing }) {
   const [heading, setHeading] = useState(null)
@@ -142,7 +179,7 @@ function urlBase64ToUint8Array(base64String) {
 }
 
 export default function App() {
-  const { coords, error: geoError, loading, request, setCoords } = useGeolocation()
+  const { coords, error: geoError, loading, request, setCoords, permission } = useGeolocation()
   const [method, setMethod] = useLocalStorage('aq_method', 'MWL')
   const [hlr, setHlr] = useLocalStorage('aq_hlr', 'MiddleOfTheNight')
   const [use24h, setUse24h] = useLocalStorage('aq_24h', true)
@@ -267,9 +304,11 @@ export default function App() {
           <div className="row" style={{marginTop:8}}>
             <button className="btn" onClick={request} disabled={loading}>{loading ? 'Henter…' : 'Bruk stedstjenester'}</button>
             <span className="hint">
-              {coords ? `Fant posisjon: ${coords.latitude.toFixed(4)}, ${coords.longitude.toFixed(4)}` : geoError ? `Feil: ${geoError}` : 'Gi tilgang for automatisk lokasjon'}
+              {coords ? `Fant posisjon: ${coords.latitude.toFixed(4)}, ${coords.longitude.toFixed(4)}` : permission === 'denied' ? 'Posisjon er blokkert i nettleseren.' : geoError ? `Feil: ${geoError}` : 'Gi tilgang for automatisk lokasjon'}
             </span>
           </div>
+          {/* Show explicit error line in red if present */}
+          {geoError && <div className="hint" style={{color:'#fca5a5', marginTop:6}}>{geoError}</div>}
           <div className="row" style={{marginTop:8}}>
             <input placeholder="By/sted (valgfritt)" value={cityLabel} onChange={e=>setCityLabel(e.target.value)} />
             <input placeholder="Breddegrad (lat)" value={manualLat} onChange={e=>setManualLat(e.target.value)} />
