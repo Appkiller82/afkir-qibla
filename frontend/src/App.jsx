@@ -2,7 +2,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { PrayerTimes, CalculationMethod, Coordinates, Qibla, HighLatitudeRule, Madhab } from 'adhan'
 
-// ---------- Helpers & formatters ----------
 const NB_TIME = new Intl.DateTimeFormat('nb-NO', { hour: '2-digit', minute: '2-digit' })
 const NB_DAY = new Intl.DateTimeFormat('nb-NO', { weekday: 'long', day: '2-digit', month: 'long' })
 
@@ -14,8 +13,7 @@ function useLocalStorage(key, initialValue) {
   return [value, setValue]
 }
 
-// ---------- Build adhan params ----------
-function buildParams(methodKey) {
+function buildParams(methodKey, hlrKey, useIshaInterval) {
   const m = CalculationMethod
   let p
   switch (methodKey) {
@@ -27,12 +25,13 @@ function buildParams(methodKey) {
     case 'Moonsighting': p = m.Moonsighting(); break
     default: p = m.Moonsighting()
   }
-  // Maliki ≈ Shafi (Asr = skygge 1x)
   p.madhab = Madhab.Shafi
+  p.highLatitudeRule = HighLatitudeRule[hlrKey] ?? HighLatitudeRule.TwilightAngle
+  if (useIshaInterval) p.ishaInterval = 90 // 90 min etter Maghrib (vanlig praksis i Norge sommer/høy breddegrad)
   return p
 }
 
-// ---------- Geolocation ----------
+// ---- Geolocation ----
 function useGeolocation() {
   const [coords, setCoords] = useState(null)
   const [error, setError] = useState(null)
@@ -73,7 +72,7 @@ function useGeolocation() {
   return { coords, error, loading, request, setCoords, permission }
 }
 
-// ---------- Reverse geocode (city) ----------
+// ---- Reverse geocode (city) ----
 async function reverseGeocode(lat, lng) {
   try {
     const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lng}&accept-language=nb&zoom=10&addressdetails=1`
@@ -85,25 +84,30 @@ async function reverseGeocode(lat, lng) {
   } catch { return '' }
 }
 
-// ---------- Modern Compass (Kaaba fixed top; rotating dial; central needle) ----------
+// ---- Modern Compass with always-visible needle ----
 function ModernCompass({ bearing }) {
   const [heading, setHeading] = useState(null)
   const [showHelp, setShowHelp] = useState(false)
   const [manualHeading, setManualHeading] = useState(0)
+  const [sensorStatus, setSensorStatus] = useState('idle') // idle | granted | denied | noevents
   const cleanupRef = useRef(() => {})
 
   const onOrientation = (e) => {
     let hdg = null
     if (typeof e.webkitCompassHeading === 'number') hdg = e.webkitCompassHeading
     else if (typeof e.alpha === 'number') hdg = 360 - e.alpha
-    if (hdg != null && !Number.isNaN(hdg)) setHeading((hdg + 360) % 360)
+    if (hdg != null && !Number.isNaN(hdg)) {
+      setHeading((hdg + 360) % 360)
+      setSensorStatus('granted')
+    }
   }
 
   const requestSensors = async () => {
     try { if (window.DeviceMotionEvent && typeof DeviceMotionEvent.requestPermission === 'function') await DeviceMotionEvent.requestPermission() } catch {}
     if (window.DeviceOrientationEvent && typeof DeviceOrientationEvent.requestPermission === 'function') {
-      try { const p = await DeviceOrientationEvent.requestPermission(); if (p !== 'granted') return false } catch { return false }
+      try { const p = await DeviceOrientationEvent.requestPermission(); if (p !== 'granted') { setSensorStatus('denied'); return false } } catch { setSensorStatus('denied'); return false }
     }
+    setSensorStatus('granted')
     return true
   }
 
@@ -117,7 +121,7 @@ function ModernCompass({ bearing }) {
       window.removeEventListener('deviceorientationabsolute', onOrientation, true)
       window.removeEventListener('deviceorientation', onOrientation, true)
     }
-    setTimeout(() => { if (heading == null) setShowHelp(true) }, 3000)
+    setTimeout(() => { if (heading == null) { setShowHelp(true); setSensorStatus('noevents') } }, 3000)
   }
 
   useEffect(() => () => cleanupRef.current(), [])
@@ -137,8 +141,8 @@ function ModernCompass({ bearing }) {
 
   return (
     <div>
-      <div style={{position:'relative', width:260, height:260, margin:'12px auto'}}>
-        {/* Glassy background */}
+      <div style={{position:'relative', width:260, height:260, margin:'12px auto', WebkitTransform:'translateZ(0)', transform:'translateZ(0)'}}>
+        {/* Base */}
         <div style={{
           position:'absolute', inset:0, borderRadius:'50%',
           background:'radial-gradient(120px 120px at 50% 45%, rgba(255,255,255,0.08), rgba(15,23,42,0.7))',
@@ -146,10 +150,9 @@ function ModernCompass({ bearing }) {
           border:'1px solid #334155'
         }}/>
 
-        {/* Rotating dial ring */}
-        <div style={{position:'absolute', inset:8, borderRadius:'50%', transform:`rotate(${delta}deg)`, transition:'transform 0.08s linear'}}>
+        {/* Rotating dial */}
+        <div style={{position:'absolute', inset:8, borderRadius:'50%', transform:`rotate(${delta}deg) translateZ(0)`, transition:'transform 0.08s linear'}}>
           <div style={{position:'absolute', inset:0, borderRadius:'50%', border:'2px solid #3b475e', boxShadow:'inset 0 0 0 6px #0f172a'}}/>
-          {/* Ticks */}
           {[...Array(60)].map((_,i)=>(
             <div key={i} style={{position:'absolute', inset:0, transform:`rotate(${i*6}deg)`}}>
               <div style={{
@@ -158,7 +161,6 @@ function ModernCompass({ bearing }) {
               }}/>
             </div>
           ))}
-          {/* Cardinal letters */}
           <div style={{position:'absolute', inset:0, color:'#a5b4fc', fontWeight:600}}>
             <div style={{position:'absolute', top:12, left:'50%', transform:'translateX(-50%)'}}>N</div>
             <div style={{position:'absolute', bottom:12, left:'50%', transform:'translateX(-50%)'}}>S</div>
@@ -167,13 +169,13 @@ function ModernCompass({ bearing }) {
           </div>
         </div>
 
-        {/* Fixed Kaaba at top */}
-        <div style={{position:'absolute', top:20, left:'50%', transform:'translateX(-50%)'}}>
+        {/* Kaaba fixed */}
+        <div style={{position:'absolute', top:20, left:'50%', transform:'translateX(-50%)', zIndex:3}}>
           <img src="/icons/kaaba.svg" alt="Kaaba" width={36} height={36} draggable="false" />
         </div>
 
-        {/* Needle (viser) */}
-        <svg width="260" height="260" style={{position:'absolute', inset:0, pointerEvents:'none'}} aria-hidden="true">
+        {/* Needle always visible */}
+        <svg width="260" height="260" style={{position:'absolute', inset:0, pointerEvents:'none', zIndex:4}} aria-hidden="true">
           <defs>
             <linearGradient id="needle" x1="0" y1="0" x2="0" y2="1">
               <stop offset="0%" stopColor="#ef4444"/><stop offset="100%" stopColor="#991b1b"/>
@@ -182,40 +184,36 @@ function ModernCompass({ bearing }) {
               <stop offset="0%" stopColor="#94a3b8"/><stop offset="100%" stopColor="#475569"/>
             </linearGradient>
           </defs>
-          {/* main needle pointing up */}
-          <g filter="url(#shadow-none)">
+          <g>
             <polygon points="130,36 122,130 138,130" fill="url(#needle)" opacity="0.95"/>
-            {/* tail */}
             <polygon points="122,130 138,130 130,200" fill="url(#tail)" opacity="0.85"/>
-            {/* hub */}
             <circle cx="130" cy="130" r="8" fill="#e5e7eb" stroke="#334155" strokeWidth="2"/>
             <circle cx="130" cy="130" r="2.5" fill="#1f2937"/>
           </g>
         </svg>
 
-        {/* Gloss highlight */}
-        <div style={{position:'absolute', inset:0, borderRadius:'50%', background:'radial-gradient(140px 80px at 50% 20%, rgba(255,255,255,0.12), rgba(255,255,255,0.0))'}}/>
+        {/* Gloss */}
+        <div style={{position:'absolute', inset:0, borderRadius:'50%', background:'radial-gradient(140px 80px at 50% 20%, rgba(255,255,255,0.12), rgba(255,255,255,0))', zIndex:2}}/>
       </div>
 
       <div className="hint" style={{textAlign:'center', marginTop:6}}>
         {usedHeading == null
-          ? 'Ingen sensordata — bruk Aktiver kompass eller manuell slider.'
+          ? 'Ingen sensordata — trykk Aktiver eller bruk manuell slider.'
           : <>Enhetsretning: <b>{usedHeading.toFixed?.(0)}°</b> • Qibla: <b>{bearing?.toFixed?.(1)}°</b> — {turnText}</>}
       </div>
+      <div className="hint" style={{textAlign:'center', marginTop:4}}>Debug sensor: <b>{sensorStatus}</b></div>
 
       <div style={{textAlign:'center', marginTop:10}}>
         <button className="btn" onClick={activateCompass} style={{marginRight:8}}>Aktiver kompass</button>
         <button className="btn" onClick={()=>setShowHelp(true)}>Få i gang kompasset</button>
       </div>
 
-      {/* Manual heading fallback */}
       <div style={{marginTop:12, textAlign:'center'}}>
         <div className="hint">Manuelt kompass (hvis sensoren ikke virker):</div>
         <input type="range" min="0" max="359" value={manualHeading} onChange={e=>setManualHeading(parseInt(e.target.value||'0'))} style={{width:'100%'}}/>
         <div className="hint">Manuell retning: <b>{manualHeading}°</b></div>
       </div>
 
-      {/* Modal help */}
       {showHelp && (
         <div style={{position:'fixed', inset:0, background:'rgba(0,0,0,.6)', display:'grid', placeItems:'center', zIndex:50}} onClick={()=>setShowHelp(false)}>
           <div style={{background:'#0b1220', border:'1px solid #334155', borderRadius:12, padding:16, width:'90%', maxWidth:420}} onClick={e=>e.stopPropagation()}>
@@ -238,7 +236,7 @@ function ModernCompass({ bearing }) {
   )
 }
 
-// ---------- Push helpers ----------
+// ---- Push helpers ----
 async function getVapidKey() {
   const base = import.meta.env.VITE_PUSH_SERVER_URL
   if (!base) throw new Error('VITE_PUSH_SERVER_URL mangler i Netlify Environment')
@@ -256,7 +254,7 @@ function urlBase64ToUint8Array(base64String) {
   return outputArray
 }
 
-// ---------- Main App ----------
+// ---- Main App ----
 export default function App() {
   const { coords, error: geoError, loading, request, setCoords, permission } = useGeolocation()
   const [method, setMethod] = useLocalStorage('aq_method', 'Moonsighting')
@@ -269,9 +267,9 @@ export default function App() {
   const [minutesBefore, setMinutesBefore] = useLocalStorage('aq_push_lead', 10)
   const [adhanError, setAdhanError] = useState('')
   const [pushStatus, setPushStatus] = useState('idle')
+  const [useIshaInterval, setUseIshaInterval] = useLocalStorage('aq_isha90', true)
   const audioRef = useRef(null)
 
-  // City label
   useEffect(() => {
     if (!coords?.latitude || !coords?.longitude) return
     reverseGeocode(coords.latitude, coords.longitude).then(name => { if (name) setCityLabel(name) })
@@ -285,15 +283,10 @@ export default function App() {
   }, [coords, manualLat, manualLng])
 
   const params = useMemo(() => {
-    try {
-      const p = buildParams(method)
-      p.highLatitudeRule = HighLatitudeRule[hlr] ?? HighLatitudeRule.TwilightAngle
-      setAdhanError('')
-      return p
-    } catch { setAdhanError('Feil med beregningsparametere for bønnetider.'); return buildParams('Moonsighting') }
-  }, [method, hlr])
+    try { return buildParams(method, hlr, useIshaInterval) }
+    catch { setAdhanError('Feil i beregning.'); return buildParams('Moonsighting', 'TwilightAngle', useIshaInterval) }
+  }, [method, hlr, useIshaInterval])
 
-  // Compute prayer times & Qibla
   const computed = useMemo(() => {
     try {
       if (!activeCoords) return { times: null, qiblaDeg: null, dateLabel: NB_DAY.format(new Date()) }
@@ -416,6 +409,9 @@ export default function App() {
 
           <section className="card" style={{border:'1px solid #334155', borderRadius:12, padding:12}}>
             <h3>Bønnetider i dag</h3>
+            <div className="row" style={{marginBottom:8, display:'flex', alignItems:'center', gap:8}}>
+              <label><input type="checkbox" checked={useIshaInterval} onChange={e=>setUseIshaInterval(e.target.checked)} /> Bruk Isha = Maghrib + 90 min</label>
+            </div>
             {adhanError && <div className="hint" style={{color:'#fca5a5', marginBottom:8}}>{adhanError}</div>}
             {times ? (
               <ul className="times" style={{listStyle:'none', padding:0, margin:0}}>
