@@ -1,16 +1,22 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 
 /**
- * Afkir Qibla — FIX 3 (IRN switch for Norway):
- * - Provider auto-switch: IRN (bonnetid.no API) for Norway when API key is present; else Aladhan.
- * - If in Norway but no IRN key, optionally apply "Norway tuning" offsets to Aladhan to better resemble IRN.
- * - Reverse geocode now returns {name, countryCode}.
- * - Settings: toggle IRN-in-Norway and input for IRN API key (stored locally).
+ * Afkir Qibla — FIX 3 (IRN for Norway + Norway tuning)
+ * ----------------------------------------------------
+ * - Auto-switch provider: IRN (bonnetid.no) when in Norway and API key is present.
+ * - Fallback to Aladhan with small "Norway tuning" offsets when IRN is unavailable.
+ * - Outside Norway: unchanged Aladhan logic.
+ * - reverseGeocode now returns {name, countryCode}.
  *
- * NOTE on IRN API:
- * IRN's API (api.bonnetid.no) requires an API key. You can paste it in Settings.
- * If no key is provided, the app will fall back to Aladhan everywhere, with a mild Norway tuning when in NO.
+ * HOW TO ENABLE IRN:
+ *   1) Put your IRN API key in IRN_API_KEY below (keep it empty to disable).
+ *   2) Adjust IRN_BASE if your endpoint differs.
+ *   3) Build & deploy as usual.
  */
+
+// --------- IRN CONFIG (fill these later) ---------
+const IRN_BASE = "https://api.bonnetid.no"; // adjust if you have a tenant-specific base
+const IRN_API_KEY = ""; // <-- paste API key here to enable IRN in Norway
 
 // ---------- Intl ----------
 const NB_TIME = new Intl.DateTimeFormat("nb-NO", { hour: "2-digit", minute: "2-digit" });
@@ -184,8 +190,7 @@ async function fetchAladhan(lat, lng, when = "today") {
   };
 }
 
-// ---------- Aladhan "Norway tuning" (small offsets) ----------
-// These minimal offsets (in minutes) can make Aladhan look closer to IRN without changing method globally.
+// ---------- Norway tuning (small offsets) ----------
 const NORWAY_OFFSETS = { Fajr: 0, Soloppgang: 0, Dhuhr: 1, Asr: 0, Maghrib: 0, Isha: 0 };
 function applyOffsets(times, offsets) {
   const out = {};
@@ -199,52 +204,30 @@ function applyOffsets(times, offsets) {
 }
 
 // ---------- IRN (bonnetid.no) ----------
-// This function expects an API base and key. Because IRN's API isn't public without a key, we keep it configurable.
-async function fetchIRNByCoords(lat, lng, when="today", irnCfg) {
-  // You can customize these with your deployment details:
-  const base = (irnCfg?.base || "https://api.bonnetid.no").replace(/\\/$/, "");
-  const key  = irnCfg?.key || "";
-  if (!key) throw new Error("IRN API-nøkkel mangler");
-
-  // Strategy: round to nearest covered place by sending coords to a 'nearest' endpoint (if available),
-  // otherwise, project-specific mapping must be supplied.
-  // Example endpoints (you may need to adjust to your tenant/version):
-  //  - GET `${base}/v1/nearest?lat=${lat}&lng=${lng}` → { placeId }
-  //  - GET `${base}/v1/timings/${when}?placeId=...` with `Authorization: Bearer <key>`
-  // Since exact routes vary, we implement a flexible attempt list.
-  const candidates = [
-    // Hypothetical endpoints — replace with your exact ones if different:
-    { url: `${base}/v1/nearest?lat=${encodeURIComponent(lat)}&lng=${encodeURIComponent(lng)}`, headers: { "Authorization": `Bearer ${key}` } },
-  ];
-
-  let placeId = null;
-  for (const c of candidates) {
-    try {
-      const res = await fetch(c.url, { headers: c.headers });
-      if (res.ok) {
-        const j = await res.json();
-        placeId = j?.placeId || j?.id || j?.data?.placeId || null;
-        if (placeId) break;
-      }
-    } catch {}
-  }
-  if (!placeId) throw new Error("IRN: fant ikke nærmeste by/ID");
-
-  const params = new URLSearchParams({ when });
-  const tRes = await fetch(`${base}/v1/timings?placeId=${encodeURIComponent(placeId)}&${params.toString()}`, {
+async function fetchIRNByCoords(lat, lng, when="today") {
+  const base = (IRN_BASE || "").replace(/\\/$/, "");
+  const key = IRN_API_KEY;
+  if (!base || !key) throw new Error("IRN API-konfig mangler");
+  // Example flow (adjust to your actual API routes):
+  // 1) Find nearest/covered place by coords
+  const nearestURL = `${base}/v1/nearest?lat=${encodeURIComponent(lat)}&lng=${encodeURIComponent(lng)}`;
+  const nearestRes = await fetch(nearestURL, { headers: { "Authorization": `Bearer ${key}` } });
+  if (!nearestRes.ok) throw new Error("IRN nearest feilet");
+  const nearest = await nearestRes.json();
+  const placeId = nearest?.placeId || nearest?.id || nearest?.data?.placeId;
+  if (!placeId) throw new Error("IRN: placeId mangler");
+  // 2) Fetch timings
+  const tRes = await fetch(`${base}/v1/timings?placeId=${encodeURIComponent(placeId)}&when=${encodeURIComponent(when)}`, {
     headers: { "Authorization": `Bearer ${key}` }
   });
-  if (!tRes.ok) throw new Error("IRN: klarte ikke hente bønnetider");
+  if (!tRes.ok) throw new Error("IRN timings feilet");
   const tJson = await tRes.json();
-
-  // Expected shape: times as "HH:MM"
   const greg = tJson?.dateYMD || (() => {
     const d = new Date();
     return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
   })();
-
   const T = tJson?.timings || tJson?.data || tJson || {};
-  const out = {
+  return {
     Fajr: mkDateFromYmdHM(greg, T.Fajr || T.fajr || T.SUBH || T.F),
     Soloppgang: mkDateFromYmdHM(greg, T.Sunrise || T.sunrise || T.Shurooq || T.SR),
     Dhuhr: mkDateFromYmdHM(greg, T.Dhuhr || T.Thuhr || T.Zuhr || T.Z),
@@ -252,7 +235,6 @@ async function fetchIRNByCoords(lat, lng, when="today", irnCfg) {
     Maghrib: mkDateFromYmdHM(greg, T.Maghrib || T.Magrib || T.M),
     Isha: mkDateFromYmdHM(greg, T.Isha || T.I)
   };
-  return out;
 }
 
 // ---------- Countdown ----------
@@ -341,13 +323,6 @@ export default function App(){
   const [countdown, setCountdown] = useState({ name: null, at: null, diffText: null, tomorrow: false });
   const [remindersOn, setRemindersOn] = useLocalStorage("aq_reminders_on", false);
   const [showMap, setShowMap] = useState(false);
-
-  // New: Provider settings
-  const [useIrnInNorway, setUseIrnInNorway] = useLocalStorage("aq_irn_use_no", true);
-  const [irnApiKey, setIrnApiKey] = useLocalStorage("aq_irn_api_key", "");
-  const [irnBase, setIrnBase] = useLocalStorage("aq_irn_base", "https://api.bonnetid.no");
-  const [applyNoOffsets, setApplyNoOffsets] = useLocalStorage("aq_no_offsets", true);
-
   const audioRef = useRef(null);
   const timersRef = useRef([]);
 
@@ -402,22 +377,18 @@ export default function App(){
 
   const qiblaDeg = useMemo(() => coords ? qiblaBearing(coords.latitude, coords.longitude) : null, [coords?.latitude, coords?.longitude]);
 
-  // Unified prayer-time fetcher
   async function fetchPrayerTimesSmart(lat, lng) {
     const inNorway = (countryCode || "").toUpperCase() === "NO";
-    // Try IRN first if in Norway and enabled & key present
-    if (inNorway && useIrnInNorway && irnApiKey) {
+    if (inNorway && IRN_API_KEY) {
       try {
-        const irnTimes = await fetchIRNByCoords(lat, lng, "today", { base: irnBase, key: irnApiKey });
+        const irnTimes = await fetchIRNByCoords(lat, lng, "today");
         return irnTimes;
       } catch (e) {
-        console.warn("IRN feilet, faller tilbake til Aladhan.", e);
-        // fall through to Aladhan (with optional offsets)
+        console.warn("IRN feilet, bruker Aladhan med Norway tuning.", e);
       }
     }
-    // Fallback: Aladhan (optionally with Norway offsets)
     const aa = await fetchAladhan(lat, lng, "today");
-    if (inNorway && applyNoOffsets) return applyOffsets(aa, NORWAY_OFFSETS);
+    if (inNorway) return applyOffsets(aa, NORWAY_OFFSETS);
     return aa;
   }
 
@@ -427,18 +398,15 @@ export default function App(){
       const today = await fetchPrayerTimesSmart(lat, lng);
       const info = nextPrayerInfo(today);
       if (info.tomorrow) {
-        const tomorrowProvider = async () => {
-          // For consistency, we fetch "tomorrow" the same way
-          // Using Aladhan for tomorrow is acceptable even if IRN failed on today.
-          try {
-            if ((countryCode||"").toUpperCase()==="NO" && useIrnInNorway && irnApiKey) {
-              const tmr = await fetchIRNByCoords(lat, lng, "tomorrow", { base: irnBase, key: irnApiKey });
-              return tmr;
-            }
-          } catch {}
-          return await fetchAladhan(lat, lng, "tomorrow");
-        };
-        const tomorrow = await tomorrowProvider();
+        // Fetch tomorrow via same logic (IRN if available; else Aladhan)
+        let tomorrow;
+        const inNorway = (countryCode || "").toUpperCase() === "NO";
+        if (inNorway && IRN_API_KEY) {
+          try { tomorrow = await fetchIRNByCoords(lat, lng, "tomorrow"); }
+          catch { tomorrow = await fetchAladhan(lat, lng, "tomorrow"); }
+        } else {
+          tomorrow = await fetchAladhan(lat, lng, "tomorrow");
+        }
         const fajr = tomorrow.Fajr;
         setTimes(today);
         setCountdown({ name: "Fajr", at: fajr, diffText: diffToText(fajr.getTime() - Date.now()), tomorrow: true });
@@ -456,7 +424,7 @@ export default function App(){
   // initial fetch and start watch
   const onUseLocation = () => { requestOnce(); startWatch(); };
 
-  useEffect(() => { if (!coords) return; refreshTimes(coords.latitude, coords.longitude) }, [coords?.latitude, coords?.longitude, countryCode, useIrnInNorway, irnApiKey, irnBase, applyNoOffsets]);
+  useEffect(() => { if (!coords) return; refreshTimes(coords.latitude, coords.longitude) }, [coords?.latitude, coords?.longitude, countryCode]);
 
   // notifications permission helper
   const ensureNotify = async () => {
@@ -482,10 +450,6 @@ export default function App(){
         ul.times { list-style:none; padding:0; margin:0 }
         .time-item { display:flex; justify-content:space-between; padding:8px 0; border-bottom:1px dashed var(--border); font-size:16px }
         .error { color:#fecaca; background:rgba(239,68,68,.12); border:1px solid rgba(239,68,68,.35); padding:10px; border-radius:12px; }
-        .switch { display:inline-flex; align-items:center; gap:8px; cursor:pointer; user-select:none; }
-        .switch input { width:1.2em; height:1.2em; }
-        input[type="text"] { padding:8px 10px; border-radius:10px; border:1px solid var(--border); background:var(--btn); color:var(--fg); }
-        .grid { display:grid; gap:12px; }
       `}</style>
 
       <div className="container">
@@ -509,32 +473,6 @@ export default function App(){
                 ? ((city ? city + (countryCode?` (${countryCode})`:"") + " • " : "") + coords.latitude.toFixed(4) + ", " + coords.longitude.toFixed(4))
                 : (permission === "denied" ? "Posisjon er blokkert i nettleseren." : "Gi tilgang for automatisk lokasjon")}
             </span>
-          </div>
-        </section>
-
-        {/* Settings for Provider */}
-        <section className="card" style={{marginTop:12}}>
-          <h3>Innstillinger for bønnetider</h3>
-          <div className="grid">
-            <label className="switch">
-              <input type="checkbox" checked={useIrnInNorway} onChange={e=>setUseIrnInNorway(e.target.checked)} />
-              Bruk IRN i Norge (hvis API-nøkkel er satt)
-            </label>
-            <label className="switch">
-              <input type="checkbox" checked={applyNoOffsets} onChange={e=>setApplyNoOffsets(e.target.checked)} />
-              Justér Aladhan litt i Norge (for å ligne IRN)
-            </label>
-            <div className="row">
-              <span className="hint" style={{minWidth:88}}>IRN base:</span>
-              <input type="text" value={irnBase} onChange={e=>setIrnBase(e.target.value)} style={{flex:1}} placeholder="https://api.bonnetid.no" />
-            </div>
-            <div className="row">
-              <span className="hint" style={{minWidth:88}}>IRN nøkkel:</span>
-              <input type="text" value={irnApiKey} onChange={e=>setIrnApiKey(e.target.value)} style={{flex:1}} placeholder="lim inn API key her" />
-            </div>
-            <div className="hint">
-              Tips: Aktiver posisjon og lagre innstillingene. Hvis IRN feiler, faller appen automatisk tilbake til Aladhan.
-            </div>
           </div>
         </section>
 
@@ -598,7 +536,7 @@ export default function App(){
   );
 }
 
-// ---------- Compass (from previous version, unchanged visuals) ----------
+// ---------- Compass (same visuals) ----------
 function ModernCompass({ bearing }) {
   const [heading, setHeading] = useState(null);
   const [manualHeading, setManualHeading] = useState(0);
