@@ -1,11 +1,11 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 
 /**
- * Afkir Qibla — FIX 3 (build-safe):
- * - FIX: reverseGeocode template string (unexpected "&" build error)
- * - Keep: HH:MM regex parse; local Date from API gregorian date
- * - Smooth countdown hh:mm:ss; compass; auto-refresh >5km + midnight
- * - Norway: "IRN uten nøkkel" via small offsets (Norway tuning)
+ * Afkir Qibla — Norway IRN emulation (no key)
+ * - Reverse geocode fixed (one template string)
+ * - Norway tuning: month baseline + latitude bands + city overrides
+ * - Global (outside NO): Aladhan (Maliki) unchanged
+ * - Robust HH:MM parsing, local Date construction, smooth countdown, compass + map
  */
 
 // ---------- Intl ----------
@@ -127,7 +127,6 @@ function qiblaBearing(lat, lng) {
 }
 
 // ---------- Aladhan (Maliki) ----------
-// Robust parse with HH:MM regex; build Date from API's gregorian date (DD-MM-YYYY) in local TZ.
 function ddmmyyyyToYmd(ddmmyyyy) {
   const [dd, mm, yyyy] = String(ddmmyyyy).split("-").map(v => parseInt(v, 10));
   const y = String(yyyy);
@@ -184,40 +183,57 @@ async function fetchAladhan(lat, lng, when = "today") {
   };
 }
 
-// ---------- "IRN uten nøkkel" for Norge ----------
-// Emuler IRN ved små, justerbare offset-minutter per bønn og måned.
-const NO_OFFSETS_BY_MONTH = {
-  // m:  Fajr, Sunrise, Dhuhr, Asr, Maghrib, Isha   (i minutter)
-  1:  {Fajr: 0, Soloppgang: 0, Dhuhr: 1, Asr: 0, Maghrib: 0, Isha: 0},
-  2:  {Fajr: 0, Soloppgang: 0, Dhuhr: 1, Asr: 0, Maghrib: 0, Isha: 0},
-  3:  {Fajr: 0, Soloppgang: 0, Dhuhr: 1, Asr: 0, Maghrib: 0, Isha: 0},
-  4:  {Fajr: 0, Soloppgang: 0, Dhuhr: 1, Asr: 0, Maghrib: 0, Isha: 0},
-  5:  {Fajr: 0, Soloppgang: 0, Dhuhr: 1, Asr: 0, Maghrib: 0, Isha: 0},
-  6:  {Fajr: 0, Soloppgang: 0, Dhuhr: 1, Asr: 0, Maghrib: 0, Isha: 0},
-  7:  {Fajr: 0, Soloppgang: 0, Dhuhr: 1, Asr: 0, Maghrib: 0, Isha: 0},
-  8:  {Fajr: 0, Soloppgang: 0, Dhuhr: 1, Asr: 0, Maghrib: 0, Isha: 0},
-  9:  {Fajr: 0, Soloppgang: 0, Dhuhr: 1, Asr: 0, Maghrib: 0, Isha: 0},
- 10:  {Fajr: 0, Soloppgang: 0, Dhuhr: 1, Asr: 0, Maghrib: 0, Isha: 0},
- 11:  {Fajr: 0, Soloppgang: 0, Dhuhr: 1, Asr: 0, Maghrib: 0, Isha: 0},
- 12:  {Fajr: 0, Soloppgang: 0, Dhuhr: 1, Asr: 0, Maghrib: 0, Isha: 0},
+// ---------- Norway tuning ----------
+// 1) Baseline per måned (minutter) – justerbare tall
+const NO_BASE_OFFSETS = {
+  1:{Fajr:-6,Soloppgang:0,Dhuhr:-2,Asr:0,Maghrib:-2,Isha:-3},
+  2:{Fajr:-5,Soloppgang:0,Dhuhr:-2,Asr:0,Maghrib:-2,Isha:-3},
+  3:{Fajr:-4,Soloppgang:0,Dhuhr:-2,Asr:0,Maghrib:-1,Isha:-3},
+  4:{Fajr:-3,Soloppgang:0,Dhuhr:-2,Asr:0,Maghrib:-1,Isha:-2},
+  5:{Fajr:-2,Soloppgang:0,Dhuhr:-2,Asr:0,Maghrib:-1,Isha:-2},
+  6:{Fajr:-1,Soloppgang:0,Dhuhr:-2,Asr:0,Maghrib:-1,Isha:-2},
+  7:{Fajr:-1,Soloppgang:0,Dhuhr:-2,Asr:0,Maghrib:-1,Isha:-2},
+  8:{Fajr:-2,Soloppgang:0,Dhuhr:-2,Asr:0,Maghrib:-1,Isha:-2},
+  9:{Fajr:-3,Soloppgang:0,Dhuhr:-2,Asr:0,Maghrib:-1,Isha:-2},
+ 10:{Fajr:-4,Soloppgang:0,Dhuhr:-2,Asr:0,Maghrib:-1,Isha:-3},
+ 11:{Fajr:-5,Soloppgang:0,Dhuhr:-2,Asr:0,Maghrib:-2,Isha:-3},
+ 12:{Fajr:-6,Soloppgang:0,Dhuhr:-2,Asr:0,Maghrib:-2,Isha:-3},
 };
-function applyNoOffsetsByMonth(times, dateObj=new Date()) {
-  const m = (dateObj.getMonth()+1);
-  const o = NO_OFFSETS_BY_MONTH[m] || {};
-  const out = {};
-  for (const k of Object.keys(times||{})) {
-    const d = new Date(times[k]);
-    const off = (o?.[k] ?? 0);
-    d.setMinutes(d.getMinutes() + off);
-    out[k] = d;
-  }
-  return out;
-}
-async function fetchPrayerTimesSmart(lat, lng, when="today", countryCode="") {
-  const inNorway = (countryCode||"").toUpperCase() === "NO";
+// 2) Breddegrads-bånd
+const NO_LAT_ADJ = {
+  south: {Fajr:0, Soloppgang:0, Dhuhr:0, Asr:0, Maghrib:0, Isha:0},       // < 60°N
+  mid:   {Fajr:+1,Soloppgang:0, Dhuhr:0, Asr:0, Maghrib:0, Isha:+1},      // 60–65°N
+  north: {Fajr:+2,Soloppgang:0, Dhuhr:0, Asr:0, Maghrib:0, Isha:+2},      // > 65°N
+};
+// 3) By-overstyringer (substring/regex match på bynavn)
+const NO_CITY_OVERRIDES = [
+  { rx:/oslo/i,        o:{Fajr:-6, Dhuhr:-2, Maghrib:-2, Isha:-3} },
+  { rx:/bergen/i,      o:{Fajr:-5, Dhuhr:-2, Maghrib:-2, Isha:-3} },
+  { rx:/trondheim/i,   o:{Fajr:-4, Dhuhr:-2, Maghrib:-1, Isha:-3} },
+  { rx:/stavanger/i,   o:{Fajr:-5, Dhuhr:-2, Maghrib:-2, Isha:-3} },
+  { rx:/kristiansand/i,o:{Fajr:-5, Dhuhr:-2, Maghrib:-2, Isha:-3} },
+  { rx:/bodø|bodo/i,   o:{Fajr:-3, Dhuhr:-2, Maghrib:-1, Isha:-2} },
+  { rx:/tromsø|tromso/i,o:{Fajr:-2, Dhuhr:-2, Maghrib:-1, Isha:-2} },
+  { rx:/alta/i,        o:{Fajr:-1, Dhuhr:-2, Maghrib:-1, Isha:-2} },
+];
+function getLatBand(lat){ if(lat==null||Number.isNaN(lat))return"south"; if(lat<60)return"south"; if(lat<=65)return"mid"; return"north"; }
+function addMinutes(date,m){ const d=new Date(date); d.setMinutes(d.getMinutes()+m); return d; }
+function mergeOffsets(a={},b={}){ const out={}; for(const k of ["Fajr","Soloppgang","Dhuhr","Asr","Maghrib","Isha"]) out[k]=(a[k]||0)+(b[k]||0); return out; }
+function applyOffsets(times,offs){ const out={}; for(const k of ["Fajr","Soloppgang","Dhuhr","Asr","Maghrib","Isha"]) out[k]=times[k]?addMinutes(times[k],offs[k]||0):times[k]; return out; }
+function pickCityOverride(city){ if(!city) return null; for(const row of NO_CITY_OVERRIDES){ if(row.rx.test(city)) return row.o } return null; }
+
+async function fetchPrayerTimesSmart(lat, lng, when="today", countryCode="", cityName="") {
   const base = await fetchAladhan(lat, lng, when);
-  if (inNorway) return applyNoOffsetsByMonth(base, new Date());
-  return base;
+  const inNorway = (countryCode||"").toUpperCase() === "NO";
+  if (!inNorway) return base;
+
+  const m = (new Date()).getMonth()+1;
+  const band = getLatBand(lat);
+  const oBase = NO_BASE_OFFSETS[m] || {};
+  const oBand = NO_LAT_ADJ[band] || {};
+  const oCity = pickCityOverride(cityName) || {};
+  const merged = mergeOffsets(mergeOffsets(oBase, oBand), oCity);
+  return applyOffsets(base, merged);
 }
 
 // ---------- Countdown ----------
@@ -427,7 +443,7 @@ export default function App(){
   // rotate background
   useEffect(() => { const id = setInterval(()=> setBgIdx(i => (i+1)%BACKGROUNDS.length), 25000); return () => clearInterval(id) }, []);
 
-  // midnight refresh (60s) and smooth countdown (500ms)
+  // midnight refresh + countdown
   useEffect(() => {
     let last = new Date().toDateString();
     const idDay = setInterval(async () => {
@@ -475,10 +491,10 @@ export default function App(){
   async function refreshTimes(lat, lng) {
     try {
       setApiError("");
-      const today = await fetchPrayerTimesSmart(lat, lng, "today", countryCode);
+      const today = await fetchPrayerTimesSmart(lat, lng, "today", countryCode, city);
       const info = nextPrayerInfo(today);
       if (info.tomorrow) {
-        const tomorrow = await fetchPrayerTimesSmart(lat, lng, "tomorrow", countryCode);
+        const tomorrow = await fetchPrayerTimesSmart(lat, lng, "tomorrow", countryCode, city);
         const fajr = tomorrow.Fajr;
         setTimes(today);
         setCountdown({ name: "Fajr", at: fajr, diffText: diffToText(fajr.getTime() - Date.now()), tomorrow: true });
@@ -496,13 +512,7 @@ export default function App(){
   // initial fetch and start watch
   const onUseLocation = () => { requestOnce(); startWatch(); };
 
-  useEffect(() => { if (!coords) return; refreshTimes(coords.latitude, coords.longitude) }, [coords?.latitude, coords?.longitude]);
-
-  // notifications permission helper
-  const ensureNotify = async () => {
-    if (!("Notification" in window)) return;
-    if (Notification.permission === "default") { try { await Notification.requestPermission() } catch {} }
-  };
+  useEffect(() => { if (!coords) return; refreshTimes(coords.latitude, coords.longitude) }, [coords?.latitude, coords?.longitude, countryCode, city]);
 
   const bg = BACKGROUNDS[bgIdx];
 
@@ -591,7 +601,7 @@ export default function App(){
 
                 <div className="row" style={{marginTop:10}}>
                   <button className={remindersOn ? "btn btn-green" : "btn"} onClick={async ()=>{
-                    await ensureNotify();
+                    if ("Notification" in window && Notification.permission === "default") { try { await Notification.requestPermission() } catch {} }
                     try { audioRef.current?.play?.().then(()=>{ audioRef.current.pause(); audioRef.current.currentTime=0; }) } catch {}
                     setRemindersOn(v=>!v);
                   }}>{remindersOn ? "Adhan-varsler: PÅ" : "Adhan-varsler: AV"}</button>
