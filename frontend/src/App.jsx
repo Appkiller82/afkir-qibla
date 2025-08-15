@@ -1,14 +1,12 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 
 /**
- * Afkir Qibla — FIXED: prayer times + countdown (Maliki), 5km auto-refresh, compass + map fallback,
- * adhan in-tab reminders, theme button between title and date.
- *
- * Key fixes in this version:
- * - Robust Aladhan parsing (method=5, school=0). Strips "(CEST)" etc.
- * - Correct countdown using milliseconds → hh:mm:ss (no rounding jumps).
- * - If all today's prayers have passed, auto fetch tomorrow and count down to Fajr.
- * - Auto-refresh when moving > 5 km and at midnight.
+ * Afkir Qibla — FIX 2:
+ * - Robust HH:MM regex parse (prevents all-times-being-09 bug)
+ * - Build Date objects from API calendar date (gregorian) in local TZ
+ * - Smooth countdown hh:mm:ss
+ * - Compass shows degrees delta and turns green when aligned (±3°)
+ * - Auto-refresh: >5km move + midnight
  */
 
 // ---------- Intl ----------
@@ -127,14 +125,22 @@ function qiblaBearing(lat, lng) {
 }
 
 // ---------- Aladhan (Maliki) ----------
-// FIX: build Date objects from API's own calendar date (timestamp) for BOTH today and tomorrow.
+// Robust parse with HH:MM regex; build Date from API's gregorian date (DD-MM-YYYY) in local TZ.
+function ddmmyyyyToYmd(ddmmyyyy) {
+  const [dd, mm, yyyy] = String(ddmmyyyy).split("-").map(v => parseInt(v, 10));
+  const y = String(yyyy);
+  const m = String(mm).padStart(2, "0");
+  const d = String(dd).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
 async function fetchAladhan(lat, lng, when = "today") {
   const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const params = new URLSearchParams({
     latitude: String(lat),
     longitude: String(lng),
-    method: "5",  // Egyptian General Authority (Maliki regions)
-    school: "0",  // Shafi/Maliki
+    method: "5",
+    school: "0",
     timezonestring: tz,
     iso8601: "true"
   });
@@ -143,17 +149,26 @@ async function fetchAladhan(lat, lng, when = "today") {
   if (!res.ok) throw new Error("API feilet");
   const json = await res.json();
   if (json.code !== 200 || !json.data?.timings) throw new Error("Ugyldig API-respons");
-  const t = json.data.timings;
 
-  const clean = (s) => String(s).trim().split(" ")[0]; // "HH:MM (CEST)" -> "HH:MM"
-  // Use the API's calendar date (epoch seconds) as the base to avoid 'tomorrow on today's date' bug
-  const ts = Number(json?.data?.date?.timestamp) * 1000;
-  const baseDate = Number.isFinite(ts) ? new Date(ts) : new Date();
+  const t = json.data.timings;
+  const greg = json?.data?.date?.gregorian?.date; // DD-MM-YYYY
+  const ymd = greg ? ddmmyyyyToYmd(greg) : (() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+  })();
+
+  const extractHM = (s) => {
+    const m = String(s).match(/(\d{1,2}):(\d{2})/);
+    if (!m) throw new Error(`Ukjent tid: ${s}`);
+    const hh = parseInt(m[1], 10);
+    const mm = parseInt(m[2], 10);
+    return { hh, mm };
+  };
 
   const mk = (hm) => {
-    const [h,m] = clean(hm).split(":").map(n=>parseInt(n,10));
-    const d = new Date(baseDate);
-    d.setHours(h||0, m||0, 0, 0);
+    const { hh, mm } = extractHM(hm);
+    const d = new Date(`${ymd}T00:00:00`);
+    d.setHours(hh, mm, 0, 0);
     return d;
   };
 
@@ -170,7 +185,6 @@ async function fetchAladhan(lat, lng, when = "today") {
 // ---------- Countdown ----------
 const ORDER = ["Fajr","Soloppgang","Dhuhr","Asr","Maghrib","Isha"];
 function diffToText(ms) {
-  // FIX: smooth hh:mm:ss
   const totalSec = Math.max(0, Math.floor(ms / 1000));
   const h = Math.floor(totalSec / 3600);
   const m = Math.floor((totalSec % 3600) / 60);
@@ -228,6 +242,9 @@ function ModernCompass({ bearing }) {
   }, []);
 
   const usedHeading = heading == null ? manualHeading : heading;
+  const delta = (bearing == null || usedHeading == null) ? null : (((bearing - usedHeading + 540) % 360) - 180); // -180..180
+  const aligned = delta != null && Math.abs(delta) <= 3;
+
   const needleAngle = (bearing == null || usedHeading == null) ? 0 : ((bearing - usedHeading + 360) % 360);
 
   return (
@@ -241,14 +258,14 @@ function ModernCompass({ bearing }) {
         {/* dial */}
         <div style={{position:"absolute", inset:"20px 0 0 0", borderRadius:"50%",
           background:"radial-gradient(140px 140px at 50% 45%, rgba(255,255,255,.10), rgba(15,23,42,.65))",
-          boxShadow:"inset 0 10px 30px rgba(0,0,0,.5), 0 6px 24px rgba(0,0,0,.35)", border:"1px solid rgba(148,163,184,.35)"}}/>
+          boxShadow:"inset 0 10px 30px rgba(0,0,0,.5), 0 6px 24px rgba(0,0,0,.35)", border:`1px solid ${aligned ? "rgba(16,185,129,.8)" : "rgba(148,163,184,.35)"}`}}/>
         <div style={{position:"absolute", inset:"30px 10px 10px 10px", borderRadius:"50%"}}>
           {[...Array(60)].map((_,i)=>(
             <div key={i} style={{position:"absolute", inset:0, transform:`rotate(${i*6}deg)`}}>
-              <div style={{position:"absolute", top:8, left:"50%", transform:"translateX(-50%)", width: i%5===0 ? 3 : 2, height: i%5===0 ? 16 : 10, background:"#445169", opacity: i%5===0 ? 1 : .7, borderRadius:2}}/>
+              <div style={{position:"absolute", top:8, left:"50%", transform:"translateX(-50%)", width: i%5===0 ? 3 : 2, height: i%5===0 ? 16 : 10, background: aligned ? "#10b981" : "#445169", opacity: i%5===0 ? 1 : .7, borderRadius:2}}/>
             </div>
           ))}
-          <div style={{position:"absolute", inset:0, color:"#a5b4fc", fontWeight:700}}>
+          <div style={{position:"absolute", inset:0, color: aligned ? "#10b981" : "#a5b4fc", fontWeight:700}}>
             <div style={{position:"absolute", top:14, left:"50%", transform:"translateX(-50%)"}}>N</div>
             <div style={{position:"absolute", bottom:14, left:"50%", transform:"translateX(-50%)"}}>S</div>
             <div style={{position:"absolute", top:"50%", left:14, transform:"translateY(-50%)"}}>V</div>
@@ -263,23 +280,25 @@ function ModernCompass({ bearing }) {
         <svg width="280" height="280" style={{position:"absolute", top:20, left:0, right:0, margin:"0 auto", pointerEvents:"none", zIndex:4}} aria-hidden="true">
           <defs>
             <linearGradient id="needle" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="#ef4444"/><stop offset="100%" stopColor="#991b1b"/>
+              <stop offset="0%" stopColor={aligned ? "#10b981" : "#ef4444"}/><stop offset="100%" stopColor={aligned ? "#065f46" : "#991b1b"}/>
             </linearGradient>
             <linearGradient id="tail" x1="0" y1="0" x2="0" y2="1">
               <stop offset="0%" stopColor="#94a3b8"/><stop offset="100%" stopColor="#475569"/>
             </linearGradient>
           </defs>
           <g transform={`rotate(${needleAngle} 140 140)`}>
-            <polygon points="140,40 132,140 148,140" fill="url(#needle)" opacity="0.96"/>
+            <polygon points="140,40 132,140 148,140" fill="url(#needle)" opacity="0.98"/>
             <polygon points="132,140 148,140 140,208" fill="url(#tail)" opacity="0.86"/>
-            <circle cx="140" cy="140" r="8.5" fill="#e5e7eb" stroke="#334155" strokeWidth="2"/>
+            <circle cx="140" cy="140" r="8.5" fill={aligned ? "#10b981" : "#e5e7eb"} stroke={aligned ? "#065f46" : "#334155"} strokeWidth="2"/>
             <circle cx="140" cy="140" r="2.8" fill="#1f2937"/>
           </g>
         </svg>
       </div>
 
       <div style={{textAlign:"center", marginTop:10}}>
-        <div className="hint">Hvis kompasset ikke virker hos deg, åpne undermenyen “Vis Qibla på kart”.</div>
+        <div className="hint">
+          {delta == null ? "Aktiver kompass" : `Avvik: ${Math.abs(Math.round(delta))}° ${aligned ? "✓ På Qibla" : ""}`}
+        </div>
       </div>
 
       {/* Help modal */}
@@ -369,26 +388,21 @@ export default function App(){
   // rotate background
   useEffect(() => { const id = setInterval(()=> setBgIdx(i => (i+1)%BACKGROUNDS.length), 25000); return () => clearInterval(id) }, []);
 
-  // midnight refresh (lightweight, every 60s)
+  // midnight refresh (60s) and smooth countdown (500ms)
   useEffect(() => {
     let last = new Date().toDateString();
-    const id = setInterval(async () => {
+    const idDay = setInterval(async () => {
       const nowStr = new Date().toDateString();
       if (nowStr !== last) {
         last = nowStr;
         if (coords) await refreshTimes(coords.latitude, coords.longitude);
       }
     }, 60000);
-    return () => clearInterval(id);
-  }, [coords?.latitude, coords?.longitude]);
-
-  // smooth countdown tick every 500ms
-  useEffect(() => {
-    const id = setInterval(() => {
+    const idTick = setInterval(() => {
       setCountdown(nextPrayerInfo(times));
     }, 500);
-    return () => clearInterval(id);
-  }, [times?.Fajr?.getTime?.()]);
+    return () => { clearInterval(idDay); clearInterval(idTick) };
+  }, [coords?.latitude, coords?.longitude, times?.Fajr?.getTime?.()]);
 
   // reverse geocode on coords change
   useEffect(() => {
@@ -434,6 +448,7 @@ export default function App(){
         setCountdown(info);
       }
     } catch (e) {
+      console.error(e);
       setApiError("Klarte ikke hente bønnetider (API).");
       setTimes(null);
     }
@@ -473,7 +488,6 @@ export default function App(){
       <div className="container">
         <header style={{marginBottom:10, textAlign:"center"}}>
           <h1>Afkir Qibla</h1>
-          {/* Theme button BETWEEN title and date */}
           <div style={{margin:"6px 0 2px"}}>
             <button className="btn" onClick={()=>{ const d = document.documentElement; d.dataset.theme = (d.dataset.theme==="light"?"dark":"light") }}>
               Tema
@@ -493,7 +507,6 @@ export default function App(){
                 : (permission === "denied" ? "Posisjon er blokkert i nettleseren." : "Gi tilgang for automatisk lokasjon")}
             </span>
           </div>
-          {geoError && <div className="error" style={{marginTop:8}}>{geoError}</div>}
         </section>
 
         {/* Compass + Map + Times */}
