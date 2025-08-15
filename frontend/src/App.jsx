@@ -1,15 +1,14 @@
-
 import React, { useEffect, useMemo, useRef, useState } from "react";
 
 /**
  * Afkir Qibla — FIXED: prayer times + countdown (Maliki), 5km auto-refresh, compass + map fallback,
  * adhan in-tab reminders, theme button between title and date.
  *
- * What I added now (step-by-step safe):
- * - Robust Aladhan parsing (method=5, school=0). Strips "(CEST)" etc. and sets BOTH hour+minute on Date.
- * - Correct countdown using milliseconds → minutes (no "2017 t" bug) with hours + minutes.
+ * Key fixes in this version:
+ * - Robust Aladhan parsing (method=5, school=0). Strips "(CEST)" etc.
+ * - Correct countdown using milliseconds → hh:mm:ss (no rounding jumps).
  * - If all today's prayers have passed, auto fetch tomorrow and count down to Fajr.
- * - Auto-refresh when moving > 5 km and at midnight (kept).
+ * - Auto-refresh when moving > 5 km and at midnight.
  */
 
 // ---------- Intl ----------
@@ -127,9 +126,10 @@ function qiblaBearing(lat, lng) {
   return (brng * 180 / Math.PI + 360) % 360;
 }
 
-// ---------- Aladhan (Maliki) — robust parsing (sets H+M) ----------
+// ---------- Aladhan (Maliki) ----------
+// FIX: build Date objects from API's own calendar date (timestamp) for BOTH today and tomorrow.
 async function fetchAladhan(lat, lng, when = "today") {
-  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || "Europe/Oslo";
+  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const params = new URLSearchParams({
     latitude: String(lat),
     longitude: String(lng),
@@ -146,13 +146,14 @@ async function fetchAladhan(lat, lng, when = "today") {
   const t = json.data.timings;
 
   const clean = (s) => String(s).trim().split(" ")[0]; // "HH:MM (CEST)" -> "HH:MM"
-  // Build Date at local day midnight; set BOTH hour and minute explicitly
-  const mk = (hm, dOff=0) => {
-    const [h, m] = clean(hm).split(":").map(n => parseInt(n, 10));
-    const d = new Date();
-    d.setHours(0, 0, 0, 0);
-    d.setFullYear(d.getFullYear(), d.getMonth(), d.getDate() + dOff);
-    d.setHours((h || 0), (m || 0), 0, 0);
+  // Use the API's calendar date (epoch seconds) as the base to avoid 'tomorrow on today's date' bug
+  const ts = Number(json?.data?.date?.timestamp) * 1000;
+  const baseDate = Number.isFinite(ts) ? new Date(ts) : new Date();
+
+  const mk = (hm) => {
+    const [h,m] = clean(hm).split(":").map(n=>parseInt(n,10));
+    const d = new Date(baseDate);
+    d.setHours(h||0, m||0, 0, 0);
     return d;
   };
 
@@ -169,10 +170,14 @@ async function fetchAladhan(lat, lng, when = "today") {
 // ---------- Countdown ----------
 const ORDER = ["Fajr","Soloppgang","Dhuhr","Asr","Maghrib","Isha"];
 function diffToText(ms) {
-  const totalMin = Math.max(0, Math.floor(ms / 60000));  // ms → minutes (avoid seconds bug)
-  const h = Math.floor(totalMin / 60);
-  const m = totalMin % 60;
-  return h > 0 ? `${h} t ${m} min` : `${m} min`;
+  // FIX: smooth hh:mm:ss
+  const totalSec = Math.max(0, Math.floor(ms / 1000));
+  const h = Math.floor(totalSec / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
+  const s = totalSec % 60;
+  return (h > 0 ? String(h).padStart(2, "0") + ":" : "")
+       + String(m).padStart(2, "0") + ":"
+       + String(s).padStart(2, "0");
 }
 function nextPrayerInfo(times) {
   if (!times) return { name: null, at: null, diffText: null, tomorrow: false };
@@ -180,13 +185,14 @@ function nextPrayerInfo(times) {
   for (const k of ORDER) {
     const t = times[k];
     if (t && t.getTime() > now.getTime()) {
-      return { name: k, at: t, diffText: diffToText(t.getTime() - now.getTime()), tomorrow: false };
+      const ms = t.getTime() - now.getTime();
+      return { name: k, at: t, diffText: diffToText(ms), tomorrow: false };
     }
   }
   return { name: null, at: null, diffText: null, tomorrow: true };
 }
 
-// ---------- Compass (as-is from your best version) ----------
+// ---------- Compass ----------
 function ModernCompass({ bearing }) {
   const [heading, setHeading] = useState(null);
   const [manualHeading, setManualHeading] = useState(0);
@@ -347,12 +353,6 @@ const BACKGROUNDS = [
   "/backgrounds/mecca_exterior.jpg"
 ];
 
-// notifications permission helper (used by reminders button)
-async function ensureNotify() {
-  if (!("Notification" in window)) return;
-  if (Notification.permission === "default") { try { await Notification.requestPermission() } catch {} }
-}
-
 export default function App(){
   const { coords, error: geoError, loading, permission, requestOnce, startWatch } = useGeolocationWatch(5);
   const [city, setCity]   = useLocalStorage("aq_city", "");
@@ -369,7 +369,7 @@ export default function App(){
   // rotate background
   useEffect(() => { const id = setInterval(()=> setBgIdx(i => (i+1)%BACKGROUNDS.length), 25000); return () => clearInterval(id) }, []);
 
-  // midnight refresh + countdown tick (30s)
+  // midnight refresh (lightweight, every 60s)
   useEffect(() => {
     let last = new Date().toDateString();
     const id = setInterval(async () => {
@@ -378,10 +378,17 @@ export default function App(){
         last = nowStr;
         if (coords) await refreshTimes(coords.latitude, coords.longitude);
       }
-      setCountdown(nextPrayerInfo(times));
-    }, 30000);
+    }, 60000);
     return () => clearInterval(id);
-  }, [coords, times?.Fajr?.getTime?.()]);
+  }, [coords?.latitude, coords?.longitude]);
+
+  // smooth countdown tick every 500ms
+  useEffect(() => {
+    const id = setInterval(() => {
+      setCountdown(nextPrayerInfo(times));
+    }, 500);
+    return () => clearInterval(id);
+  }, [times?.Fajr?.getTime?.()]);
 
   // reverse geocode on coords change
   useEffect(() => {
@@ -436,6 +443,12 @@ export default function App(){
   const onUseLocation = () => { requestOnce(); startWatch(); };
 
   useEffect(() => { if (!coords) return; refreshTimes(coords.latitude, coords.longitude) }, [coords?.latitude, coords?.longitude]);
+
+  // notifications permission helper
+  const ensureNotify = async () => {
+    if (!("Notification" in window)) return;
+    if (Notification.permission === "default") { try { await Notification.requestPermission() } catch {} }
+  };
 
   const bg = BACKGROUNDS[bgIdx];
 
