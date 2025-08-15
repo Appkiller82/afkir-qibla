@@ -1,17 +1,16 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 
 /**
- * Afkir Qibla — FIX 3 (IRN for Norway + Norway tuning)
- * ----------------------------------------------------
- * - Auto-switch provider: IRN (bonnetid.no) when in Norway and API key is present.
- * - Fallback to Aladhan with small "Norway tuning" offsets when IRN is unavailable.
- * - Outside Norway: unchanged Aladhan logic.
- * - reverseGeocode now returns {name, countryCode}.
+ * Afkir Qibla — FIX 3 (IRN for Norway + Norway tuning, based on last working FIX 2)
+ * ---------------------------------------------------------------------------------
+ * - Reverse geocode now returns { name, countryCode }.
+ * - If countryCode === "NO" and IRN API key is present -> try IRN (bonnetid.no).
+ * - If IRN is unavailable or key missing -> fallback to Aladhan with small "Norway tuning" offsets.
+ * - Outside Norway -> unchanged Aladhan logic.
  *
- * HOW TO ENABLE IRN:
+ * HOW TO ENABLE IRN LATER:
  *   1) Put your IRN API key in IRN_API_KEY below (keep it empty to disable).
- *   2) Adjust IRN_BASE if your endpoint differs.
- *   3) Build & deploy as usual.
+ *   2) Adjust IRN_BASE if endpoint differs.
  */
 
 // --------- IRN CONFIG (fill these later) ---------
@@ -134,7 +133,7 @@ function qiblaBearing(lat, lng) {
   return (brng * 180 / Math.PI + 360) % 360;
 }
 
-// ---------- Helpers ----------
+// ---------- Aladhan (Maliki) ----------
 function ddmmyyyyToYmd(ddmmyyyy) {
   const [dd, mm, yyyy] = String(ddmmyyyy).split("-").map(v => parseInt(v, 10));
   const y = String(yyyy);
@@ -142,28 +141,14 @@ function ddmmyyyyToYmd(ddmmyyyy) {
   const d = String(dd).padStart(2, "0");
   return `${y}-${m}-${d}`;
 }
-function extractHM(s) {
-  const m = String(s).match(/(\\d{1,2}):(\\d{2})/);
-  if (!m) throw new Error(`Ukjent tid: ${s}`);
-  const hh = parseInt(m[1], 10);
-  const mm = parseInt(m[2], 10);
-  return { hh, mm };
-}
-function mkDateFromYmdHM(ymd, hm) {
-  const { hh, mm } = extractHM(hm);
-  const d = new Date(`${ymd}T00:00:00`);
-  d.setHours(hh, mm, 0, 0);
-  return d;
-}
 
-// ---------- Aladhan (default/maliki) ----------
 async function fetchAladhan(lat, lng, when = "today") {
   const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const params = new URLSearchParams({
     latitude: String(lat),
     longitude: String(lng),
-    method: "5",           // Egyptian
-    school: "0",           // Shafi/Maliki
+    method: "5",
+    school: "0",
     timezonestring: tz,
     iso8601: "true"
   });
@@ -180,21 +165,37 @@ async function fetchAladhan(lat, lng, when = "today") {
     return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
   })();
 
+  const extractHM = (s) => {
+    const m = String(s).match(/(\\d{1,2}):(\\d{2})/);
+    if (!m) throw new Error(`Ukjent tid: ${s}`);
+    const hh = parseInt(m[1], 10);
+    const mm = parseInt(m[2], 10);
+    return { hh, mm };
+  };
+
+  const mk = (hm) => {
+    const { hh, mm } = extractHM(hm);
+    const d = new Date(`${ymd}T00:00:00`);
+    d.setHours(hh, mm, 0, 0);
+    return d;
+  };
+
   return {
-    Fajr:      mkDateFromYmdHM(ymd, t.Fajr),
-    Soloppgang:mkDateFromYmdHM(ymd, t.Sunrise),
-    Dhuhr:     mkDateFromYmdHM(ymd, t.Dhuhr),
-    Asr:       mkDateFromYmdHM(ymd, t.Asr),
-    Maghrib:   mkDateFromYmdHM(ymd, t.Maghrib),
-    Isha:      mkDateFromYmdHM(ymd, t.Isha)
+    Fajr: mk(t.Fajr),
+    Soloppgang: mk(t.Sunrise),
+    Dhuhr: mk(t.Dhuhr),
+    Asr: mk(t.Asr),
+    Maghrib: mk(t.Maghrib),
+    Isha: mk(t.Isha)
   };
 }
 
 // ---------- Norway tuning (small offsets) ----------
 const NORWAY_OFFSETS = { Fajr: 0, Soloppgang: 0, Dhuhr: 1, Asr: 0, Maghrib: 0, Isha: 0 };
 function applyOffsets(times, offsets) {
+  if (!times) return times;
   const out = {};
-  for (const k of Object.keys(times||{})) {
+  for (const k of Object.keys(times)) {
     const d = new Date(times[k]);
     const off = (offsets?.[k] ?? 0);
     d.setMinutes(d.getMinutes() + off);
@@ -204,19 +205,20 @@ function applyOffsets(times, offsets) {
 }
 
 // ---------- IRN (bonnetid.no) ----------
+// NOTE: Exact endpoints can differ between tenants; this implementation assumes
+// a "nearest" lookup and then "timings" by placeId. If unavailable, it will throw
+// and the app will gracefully fallback to Aladhan.
 async function fetchIRNByCoords(lat, lng, when="today") {
   const base = (IRN_BASE || "").replace(/\\/$/, "");
   const key = IRN_API_KEY;
   if (!base || !key) throw new Error("IRN API-konfig mangler");
-  // Example flow (adjust to your actual API routes):
-  // 1) Find nearest/covered place by coords
   const nearestURL = `${base}/v1/nearest?lat=${encodeURIComponent(lat)}&lng=${encodeURIComponent(lng)}`;
   const nearestRes = await fetch(nearestURL, { headers: { "Authorization": `Bearer ${key}` } });
   if (!nearestRes.ok) throw new Error("IRN nearest feilet");
   const nearest = await nearestRes.json();
   const placeId = nearest?.placeId || nearest?.id || nearest?.data?.placeId;
   if (!placeId) throw new Error("IRN: placeId mangler");
-  // 2) Fetch timings
+
   const tRes = await fetch(`${base}/v1/timings?placeId=${encodeURIComponent(placeId)}&when=${encodeURIComponent(when)}`, {
     headers: { "Authorization": `Bearer ${key}` }
   });
@@ -227,14 +229,28 @@ async function fetchIRNByCoords(lat, lng, when="today") {
     return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
   })();
   const T = tJson?.timings || tJson?.data || tJson || {};
+  const pick = (obj, ...keys) => keys.find(k => obj && obj[k] != null && String(obj[k]).trim() !== "");
   return {
-    Fajr: mkDateFromYmdHM(greg, T.Fajr || T.fajr || T.SUBH || T.F),
-    Soloppgang: mkDateFromYmdHM(greg, T.Sunrise || T.sunrise || T.Shurooq || T.SR),
-    Dhuhr: mkDateFromYmdHM(greg, T.Dhuhr || T.Thuhr || T.Zuhr || T.Z),
-    Asr: mkDateFromYmdHM(greg, T.Asr || T.A),
-    Maghrib: mkDateFromYmdHM(greg, T.Maghrib || T.Magrib || T.M),
-    Isha: mkDateFromYmdHM(greg, T.Isha || T.I)
+    Fajr: mkDateFromYmdHM(greg, T[pick(T,"Fajr","fajr","SUBH","F")]),
+    Soloppgang: mkDateFromYmdHM(greg, T[pick(T,"Sunrise","sunrise","Shurooq","SR")]),
+    Dhuhr: mkDateFromYmdHM(greg, T[pick(T,"Dhuhr","Thuhr","Zuhr","Z")]),
+    Asr: mkDateFromYmdHM(greg, T[pick(T,"Asr","A")]),
+    Maghrib: mkDateFromYmdHM(greg, T[pick(T,"Maghrib","Magrib","M")]),
+    Isha: mkDateFromYmdHM(greg, T[pick(T,"Isha","I")])
   };
+}
+function extractHMforBuild(s) {
+  const m = String(s).match(/(\\d{1,2}):(\\d{2})/);
+  if (!m) throw new Error(`Ukjent tid: ${s}`);
+  const hh = parseInt(m[1], 10);
+  const mm = parseInt(m[2], 10);
+  return { hh, mm };
+}
+function mkDateFromYmdHM(ymd, hm) {
+  const { hh, mm } = extractHMforBuild(hm);
+  const d = new Date(`${ymd}T00:00:00`);
+  d.setHours(hh, mm, 0, 0);
+  return d;
 }
 
 // ---------- Countdown ----------
@@ -261,7 +277,122 @@ function nextPrayerInfo(times) {
   return { name: null, at: null, diffText: null, tomorrow: true };
 }
 
-// ---------- Map (Leaflet via CDN) ----------
+// ---------- Compass ----------
+function ModernCompass({ bearing }) {
+  const [heading, setHeading] = useState(null);
+  const [manualHeading, setManualHeading] = useState(0);
+  const [showHelp, setShowHelp] = useState(false);
+
+  const onOrientation = (e) => {
+    let hdg = null;
+    if (typeof e?.webkitCompassHeading === "number") hdg = e.webkitCompassHeading; // iOS
+    else if (typeof e?.alpha === "number") hdg = 360 - e.alpha; // others
+    if (hdg != null && !Number.isNaN(hdg)) setHeading((hdg + 360) % 360);
+  };
+
+  const requestSensors = async () => {
+    try { if (window.DeviceMotionEvent?.requestPermission) await window.DeviceMotionEvent.requestPermission() } catch {}
+    if (window.DeviceOrientationEvent?.requestPermission) {
+      try { const p = await window.DeviceOrientationEvent.requestPermission(); if (p !== "granted") { setShowHelp(true); return false } } catch { setShowHelp(true); return false }
+    }
+    return true;
+  };
+
+  const activateCompass = async () => {
+    let ok = true;
+    if (window.DeviceOrientationEvent?.requestPermission) ok = await requestSensors();
+    if (!ok) { setShowHelp(true); return }
+    window.addEventListener("deviceorientationabsolute", onOrientation, true);
+    window.addEventListener("deviceorientation", onOrientation, true);
+    setTimeout(() => { if (heading == null) setShowHelp(true) }, 3000);
+  };
+
+  useEffect(() => () => {
+    window.removeEventListener("deviceorientationabsolute", onOrientation, true);
+    window.removeEventListener("deviceorientation", onOrientation, true);
+  }, []);
+
+  const usedHeading = heading == null ? manualHeading : heading;
+  const delta = (bearing == null || usedHeading == null) ? null : (((bearing - usedHeading + 540) % 360) - 180); // -180..180
+  const aligned = delta != null && Math.abs(delta) <= 3;
+
+  const needleAngle = (bearing == null || usedHeading == null) ? 0 : ((bearing - usedHeading + 360) % 360);
+
+  return (
+    <div>
+      <div style={{display:"flex", justifyContent:"center", gap:8}}>
+        <button className="btn" onClick={activateCompass}>Tillat kompass</button>
+        <button className="btn" onClick={()=>setShowHelp(true)}>Hjelp</button>
+      </div>
+
+      <div style={{position:"relative", width:280, height:300, margin:"12px auto 0"}}>
+        {/* dial */}
+        <div style={{position:"absolute", inset:"20px 0 0 0", borderRadius:"50%",
+          background:"radial-gradient(140px 140px at 50% 45%, rgba(255,255,255,.10), rgba(15,23,42,.65))",
+          boxShadow:"inset 0 10px 30px rgba(0,0,0,.5), 0 6px 24px rgba(0,0,0,.35)", border:`1px solid ${aligned ? "rgba(16,185,129,.8)" : "rgba(148,163,184,.35)"}`}}/>
+        <div style={{position:"absolute", inset:"30px 10px 10px 10px", borderRadius:"50%"}}>
+          {[...Array(60)].map((_,i)=>(
+            <div key={i} style={{position:"absolute", inset:0, transform:`rotate(${i*6}deg)`}}>
+              <div style={{position:"absolute", top:8, left:"50%", transform:"translateX(-50%)", width: i%5===0 ? 3 : 2, height: i%5===0 ? 16 : 10, background: aligned ? "#10b981" : "#445169", opacity: i%5===0 ? 1 : .7, borderRadius:2}}/>
+            </div>
+          ))}
+          <div style={{position:"absolute", inset:0, color: aligned ? "#10b981" : "#a5b4fc", fontWeight:700}}>
+            <div style={{position:"absolute", top:14, left:"50%", transform:"translateX(-50%)"}}>N</div>
+            <div style={{position:"absolute", bottom:14, left:"50%", transform:"translateX(-50%)"}}>S</div>
+            <div style={{position:"absolute", top:"50%", left:14, transform:"translateY(-50%)"}}>V</div>
+            <div style={{position:"absolute", top:"50%", right:14, transform:"translateY(-50%)"}}>Ø</div>
+          </div>
+        </div>
+        {/* Kaaba fixed */}
+        <div style={{position:"absolute", top:30, left:"50%", transform:"translateX(-50%)", zIndex:3}}>
+          <img src="/icons/kaaba_3d.svg" alt="Kaaba" width={40} height={40} draggable="false" />
+        </div>
+        {/* Needle */}
+        <svg width="280" height="280" style={{position:"absolute", top:20, left:0, right:0, margin:"0 auto", pointerEvents:"none", zIndex:4}} aria-hidden="true">
+          <defs>
+            <linearGradient id="needle" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor={aligned ? "#10b981" : "#ef4444"}/><stop offset="100%" stopColor={aligned ? "#065f46" : "#991b1b"}/>
+            </linearGradient>
+            <linearGradient id="tail" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#94a3b8"/><stop offset="100%" stopColor="#475569"/>
+            </linearGradient>
+          </defs>
+          <g transform={`rotate(${needleAngle} 140 140)`}>
+            <polygon points="140,40 132,140 148,140" fill="url(#needle)" opacity="0.98"/>
+            <polygon points="132,140 148,140 140,208" fill="url(#tail)" opacity="0.86"/>
+            <circle cx="140" cy="140" r="8.5" fill={aligned ? "#10b981" : "#e5e7eb"} stroke={aligned ? "#065f46" : "#334155"} strokeWidth="2"/>
+            <circle cx="140" cy="140" r="2.8" fill="#1f2937"/>
+          </g>
+        </svg>
+      </div>
+
+      <div style={{textAlign:"center", marginTop:10}}>
+        <div className="hint">
+          {delta == null ? "Aktiver kompass" : `Avvik: ${Math.abs(Math.round(delta))}° ${aligned ? "✓ På Qibla" : ""}`}
+        </div>
+      </div>
+
+      {/* Help modal */}
+      {showHelp && (
+        <div style={{position:"fixed", inset:0, background:"rgba(0,0,0,.6)", display:"grid", placeItems:"center", zIndex:50}} onClick={()=>setShowHelp(false)}>
+          <div style={{background:"rgba(11,18,32,.96)", backdropFilter:"blur(8px)", border:"1px solid #334155", borderRadius:12, padding:16, width:"90%", maxWidth:420}} onClick={e=>e.stopPropagation()}>
+            <div style={{display:"flex", justifyContent:"space-between", alignItems:"center"}}>
+              <h3 style={{margin:0}}>Få i gang kompasset</h3>
+              <button className="btn" onClick={()=>setShowHelp(false)}>Lukk</button>
+            </div>
+            <ol style={{margin:"12px 0 0 18px"}}>
+              <li>Trykk <b>Tillat kompass</b> og gi tilgang til bevegelse/orientering.</li>
+              <li>Safari (iPhone): aA → Nettstedsinnstillinger → slå på <b>Bevegelse & orientering</b>.</li>
+              <li>Kalibrer ved å bevege telefonen i en <b>figur-8</b>.</li>
+            </ol>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------- Map fallback (Leaflet via CDN) ----------
 function loadLeafletOnce() {
   if (window.L) return Promise.resolve(window.L);
   return new Promise((resolve, reject) => {
@@ -377,17 +508,18 @@ export default function App(){
 
   const qiblaDeg = useMemo(() => coords ? qiblaBearing(coords.latitude, coords.longitude) : null, [coords?.latitude, coords?.longitude]);
 
-  async function fetchPrayerTimesSmart(lat, lng) {
+  // Unified prayer-time fetcher
+  async function fetchPrayerTimesSmart(lat, lng, when="today") {
     const inNorway = (countryCode || "").toUpperCase() === "NO";
     if (inNorway && IRN_API_KEY) {
       try {
-        const irnTimes = await fetchIRNByCoords(lat, lng, "today");
+        const irnTimes = await fetchIRNByCoords(lat, lng, when);
         return irnTimes;
       } catch (e) {
         console.warn("IRN feilet, bruker Aladhan med Norway tuning.", e);
       }
     }
-    const aa = await fetchAladhan(lat, lng, "today");
+    const aa = await fetchAladhan(lat, lng, when);
     if (inNorway) return applyOffsets(aa, NORWAY_OFFSETS);
     return aa;
   }
@@ -395,18 +527,10 @@ export default function App(){
   async function refreshTimes(lat, lng) {
     try {
       setApiError("");
-      const today = await fetchPrayerTimesSmart(lat, lng);
+      const today = await fetchPrayerTimesSmart(lat, lng, "today");
       const info = nextPrayerInfo(today);
       if (info.tomorrow) {
-        // Fetch tomorrow via same logic (IRN if available; else Aladhan)
-        let tomorrow;
-        const inNorway = (countryCode || "").toUpperCase() === "NO";
-        if (inNorway && IRN_API_KEY) {
-          try { tomorrow = await fetchIRNByCoords(lat, lng, "tomorrow"); }
-          catch { tomorrow = await fetchAladhan(lat, lng, "tomorrow"); }
-        } else {
-          tomorrow = await fetchAladhan(lat, lng, "tomorrow");
-        }
+        const tomorrow = await fetchPrayerTimesSmart(lat, lng, "tomorrow");
         const fajr = tomorrow.Fajr;
         setTimes(today);
         setCountdown({ name: "Fajr", at: fajr, diffText: diffToText(fajr.getTime() - Date.now()), tomorrow: true });
@@ -497,7 +621,7 @@ export default function App(){
           </section>
 
           <section className="card">
-            <h3>Bønnetider</h3>
+            <h3>Bønnetider (Maliki)</h3>
             {apiError && <div className="error" style={{margin:"8px 0"}}>{apiError}</div>}
             {times ? (
               <>
@@ -532,120 +656,6 @@ export default function App(){
           </section>
         </div>
       </div>
-    </div>
-  );
-}
-
-// ---------- Compass (same visuals) ----------
-function ModernCompass({ bearing }) {
-  const [heading, setHeading] = useState(null);
-  const [manualHeading, setManualHeading] = useState(0);
-  const [showHelp, setShowHelp] = useState(false);
-
-  const onOrientation = (e) => {
-    let hdg = null;
-    if (typeof e?.webkitCompassHeading === "number") hdg = e.webkitCompassHeading; // iOS
-    else if (typeof e?.alpha === "number") hdg = 360 - e.alpha; // others
-    if (hdg != null && !Number.isNaN(hdg)) setHeading((hdg + 360) % 360);
-  };
-
-  const requestSensors = async () => {
-    try { if (window.DeviceMotionEvent?.requestPermission) await window.DeviceMotionEvent.requestPermission() } catch {}
-    if (window.DeviceOrientationEvent?.requestPermission) {
-      try { const p = await window.DeviceOrientationEvent.requestPermission(); if (p !== "granted") { setShowHelp(true); return false } } catch { setShowHelp(true); return false }
-    }
-    return true;
-  };
-
-  const activateCompass = async () => {
-    let ok = true;
-    if (window.DeviceOrientationEvent?.requestPermission) ok = await requestSensors();
-    if (!ok) { setShowHelp(true); return }
-    window.addEventListener("deviceorientationabsolute", onOrientation, true);
-    window.addEventListener("deviceorientation", onOrientation, true);
-    setTimeout(() => { if (heading == null) setShowHelp(true) }, 3000);
-  };
-
-  useEffect(() => () => {
-    window.removeEventListener("deviceorientationabsolute", onOrientation, true);
-    window.removeEventListener("deviceorientation", onOrientation, true);
-  }, []);
-
-  const usedHeading = heading == null ? manualHeading : heading;
-  const delta = (bearing == null || usedHeading == null) ? null : (((bearing - usedHeading + 540) % 360) - 180); // -180..180
-  const aligned = delta != null && Math.abs(delta) <= 3;
-  const needleAngle = (bearing == null || usedHeading == null) ? 0 : ((bearing - usedHeading + 360) % 360);
-
-  return (
-    <div>
-      <div style={{display:"flex", justifyContent:"center", gap:8}}>
-        <button className="btn" onClick={activateCompass}>Tillat kompass</button>
-        <button className="btn" onClick={()=>setShowHelp(true)}>Hjelp</button>
-      </div>
-
-      <div style={{position:"relative", width:280, height:300, margin:"12px auto 0"}}>
-        {/* dial */}
-        <div style={{position:"absolute", inset:"20px 0 0 0", borderRadius:"50%",
-          background:"radial-gradient(140px 140px at 50% 45%, rgba(255,255,255,.10), rgba(15,23,42,.65))",
-          boxShadow:"inset 0 10px 30px rgba(0,0,0,.5), 0 6px 24px rgba(0,0,0,.35)", border:`1px solid ${aligned ? "rgba(16,185,129,.8)" : "rgba(148,163,184,.35)"}`}}/>
-        <div style={{position:"absolute", inset:"30px 10px 10px 10px", borderRadius:"50%"}}>
-          {[...Array(60)].map((_,i)=>(
-            <div key={i} style={{position:"absolute", inset:0, transform:`rotate(${i*6}deg)`}}>
-              <div style={{position:"absolute", top:8, left:"50%", transform:"translateX(-50%)", width: i%5===0 ? 3 : 2, height: i%5===0 ? 16 : 10, background: aligned ? "#10b981" : "#445169", opacity: i%5===0 ? 1 : .7, borderRadius:2}}/>
-            </div>
-          ))}
-          <div style={{position:"absolute", inset:0, color: aligned ? "#10b981" : "#a5b4fc", fontWeight:700}}>
-            <div style={{position:"absolute", top:14, left:"50%", transform:"translateX(-50%)"}}>N</div>
-            <div style={{position:"absolute", bottom:14, left:"50%", transform:"translateX(-50%)"}}>S</div>
-            <div style={{position:"absolute", top:"50%", left:14, transform:"translateY(-50%)"}}>V</div>
-            <div style={{position:"absolute", top:"50%", right:14, transform:"translateY(-50%)"}}>Ø</div>
-          </div>
-        </div>
-        {/* Kaaba fixed */}
-        <div style={{position:"absolute", top:30, left:"50%", transform:"translateX(-50%)", zIndex:3}}>
-          <img src="/icons/kaaba_3d.svg" alt="Kaaba" width={40} height={40} draggable="false" />
-        </div>
-        {/* Needle */}
-        <svg width="280" height="280" style={{position:"absolute", top:20, left:0, right:0, margin:"0 auto", pointerEvents:"none", zIndex:4}} aria-hidden="true">
-          <defs>
-            <linearGradient id="needle" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor={aligned ? "#10b981" : "#ef4444"}/><stop offset="100%" stopColor={aligned ? "#065f46" : "#991b1b"}/>
-            </linearGradient>
-            <linearGradient id="tail" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="#94a3b8"/><stop offset="100%" stopColor="#475569"/>
-            </linearGradient>
-          </defs>
-          <g transform={`rotate(${needleAngle} 140 140)`}>
-            <polygon points="140,40 132,140 148,140" fill="url(#needle)" opacity="0.98"/>
-            <polygon points="132,140 148,140 140,208" fill="url(#tail)" opacity="0.86"/>
-            <circle cx="140" cy="140" r="8.5" fill={aligned ? "#10b981" : "#e5e7eb"} stroke={aligned ? "#065f46" : "#334155"} strokeWidth="2"/>
-            <circle cx="140" cy="140" r="2.8" fill="#1f2937"/>
-          </g>
-        </svg>
-      </div>
-
-      <div style={{textAlign:"center", marginTop:10}}>
-        <div className="hint">
-          {delta == null ? "Aktiver kompass" : `Avvik: ${Math.abs(Math.round(delta))}° ${aligned ? "✓ På Qibla" : ""}`}
-        </div>
-      </div>
-
-      {/* Help modal */}
-      {showHelp && (
-        <div style={{position:"fixed", inset:0, background:"rgba(0,0,0,.6)", display:"grid", placeItems:"center", zIndex:50}} onClick={()=>setShowHelp(false)}>
-          <div style={{background:"rgba(11,18,32,.96)", backdropFilter:"blur(8px)", border:"1px solid #334155", borderRadius:12, padding:16, width:"90%", maxWidth:420}} onClick={e=>e.stopPropagation()}>
-            <div style={{display:"flex", justifyContent:"space-between", alignItems:"center"}}>
-              <h3 style={{margin:0}}>Få i gang kompasset</h3>
-              <button className="btn" onClick={()=>setShowHelp(false)}>Lukk</button>
-            </div>
-            <ol style={{margin:"12px 0 0 18px"}}>
-              <li>Trykk <b>Tillat kompass</b> og gi tilgang til bevegelse/orientering.</li>
-              <li>Safari (iPhone): aA → Nettstedsinnstillinger → slå på <b>Bevegelse & orientering</b>.</li>
-              <li>Kalibrer ved å bevege telefonen i en <b>figur-8</b>.</li>
-            </ol>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
