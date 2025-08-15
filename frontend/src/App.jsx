@@ -1,21 +1,13 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 
 /**
- * Afkir Qibla — FIX 3 (IRN for Norway + Norway tuning, based on last working FIX 2)
- * ---------------------------------------------------------------------------------
- * - Reverse geocode now returns { name, countryCode }.
- * - If countryCode === "NO" and IRN API key is present -> try IRN (bonnetid.no).
- * - If IRN is unavailable or key missing -> fallback to Aladhan with small "Norway tuning" offsets.
- * - Outside Norway -> unchanged Aladhan logic.
- *
- * HOW TO ENABLE IRN LATER:
- *   1) Put your IRN API key in IRN_API_KEY below (keep it empty to disable).
- *   2) Adjust IRN_BASE if endpoint differs.
+ * Afkir Qibla — FIX 2:
+ * - Robust HH:MM regex parse (prevents all-times-being-09 bug)
+ * - Build Date objects from API calendar date (gregorian) in local TZ
+ * - Smooth countdown hh:mm:ss
+ * - Compass shows degrees delta and turns green when aligned (±3°)
+ * - Auto-refresh: >5km move + midnight
  */
-
-// --------- IRN CONFIG (fill these later) ---------
-const IRN_BASE = "https://api.bonnetid.no"; // adjust if you have a tenant-specific base
-const IRN_API_KEY = ""; // <-- paste API key here to enable IRN in Norway
 
 // ---------- Intl ----------
 const NB_TIME = new Intl.DateTimeFormat("nb-NO", { hour: "2-digit", minute: "2-digit" });
@@ -115,9 +107,8 @@ async function reverseGeocode(lat, lng) {
     const data = await res.json();
     const a = data.address || {};
     const name = a.city || a.town || a.village || a.municipality || a.suburb || a.state || a.county || a.country;
-    const countryCode = (a.country_code || "").toUpperCase();
-    return { name: name || "", countryCode };
-  } catch { return { name: "", countryCode: "" } }
+    return name || "";
+  } catch { return "" }
 }
 
 // ---------- Qibla bearing ----------
@@ -134,6 +125,7 @@ function qiblaBearing(lat, lng) {
 }
 
 // ---------- Aladhan (Maliki) ----------
+// Robust parse with HH:MM regex; build Date from API's gregorian date (DD-MM-YYYY) in local TZ.
 function ddmmyyyyToYmd(ddmmyyyy) {
   const [dd, mm, yyyy] = String(ddmmyyyy).split("-").map(v => parseInt(v, 10));
   const y = String(yyyy);
@@ -154,9 +146,9 @@ async function fetchAladhan(lat, lng, when = "today") {
   });
   const url = `https://api.aladhan.com/v1/timings/${when}?${params.toString()}`;
   const res = await fetch(url);
-  if (!res.ok) throw new Error("API feilet (Aladhan)");
+  if (!res.ok) throw new Error("API feilet");
   const json = await res.json();
-  if (json.code !== 200 || !json.data?.timings) throw new Error("Ugyldig API-respons (Aladhan)");
+  if (json.code !== 200 || !json.data?.timings) throw new Error("Ugyldig API-respons");
 
   const t = json.data.timings;
   const greg = json?.data?.date?.gregorian?.date; // DD-MM-YYYY
@@ -166,7 +158,7 @@ async function fetchAladhan(lat, lng, when = "today") {
   })();
 
   const extractHM = (s) => {
-    const m = String(s).match(/(\\d{1,2}):(\\d{2})/);
+    const m = String(s).match(/(\d{1,2}):(\d{2})/);
     if (!m) throw new Error(`Ukjent tid: ${s}`);
     const hh = parseInt(m[1], 10);
     const mm = parseInt(m[2], 10);
@@ -188,69 +180,6 @@ async function fetchAladhan(lat, lng, when = "today") {
     Maghrib: mk(t.Maghrib),
     Isha: mk(t.Isha)
   };
-}
-
-// ---------- Norway tuning (small offsets) ----------
-const NORWAY_OFFSETS = { Fajr: 0, Soloppgang: 0, Dhuhr: 1, Asr: 0, Maghrib: 0, Isha: 0 };
-function applyOffsets(times, offsets) {
-  if (!times) return times;
-  const out = {};
-  for (const k of Object.keys(times)) {
-    const d = new Date(times[k]);
-    const off = (offsets?.[k] ?? 0);
-    d.setMinutes(d.getMinutes() + off);
-    out[k] = d;
-  }
-  return out;
-}
-
-// ---------- IRN (bonnetid.no) ----------
-// NOTE: Exact endpoints can differ between tenants; this implementation assumes
-// a "nearest" lookup and then "timings" by placeId. If unavailable, it will throw
-// and the app will gracefully fallback to Aladhan.
-async function fetchIRNByCoords(lat, lng, when="today") {
-  const base = (IRN_BASE || "").replace(/\\/$/, "");
-  const key = IRN_API_KEY;
-  if (!base || !key) throw new Error("IRN API-konfig mangler");
-  const nearestURL = `${base}/v1/nearest?lat=${encodeURIComponent(lat)}&lng=${encodeURIComponent(lng)}`;
-  const nearestRes = await fetch(nearestURL, { headers: { "Authorization": `Bearer ${key}` } });
-  if (!nearestRes.ok) throw new Error("IRN nearest feilet");
-  const nearest = await nearestRes.json();
-  const placeId = nearest?.placeId || nearest?.id || nearest?.data?.placeId;
-  if (!placeId) throw new Error("IRN: placeId mangler");
-
-  const tRes = await fetch(`${base}/v1/timings?placeId=${encodeURIComponent(placeId)}&when=${encodeURIComponent(when)}`, {
-    headers: { "Authorization": `Bearer ${key}` }
-  });
-  if (!tRes.ok) throw new Error("IRN timings feilet");
-  const tJson = await tRes.json();
-  const greg = tJson?.dateYMD || (() => {
-    const d = new Date();
-    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
-  })();
-  const T = tJson?.timings || tJson?.data || tJson || {};
-  const pick = (obj, ...keys) => keys.find(k => obj && obj[k] != null && String(obj[k]).trim() !== "");
-  return {
-    Fajr: mkDateFromYmdHM(greg, T[pick(T,"Fajr","fajr","SUBH","F")]),
-    Soloppgang: mkDateFromYmdHM(greg, T[pick(T,"Sunrise","sunrise","Shurooq","SR")]),
-    Dhuhr: mkDateFromYmdHM(greg, T[pick(T,"Dhuhr","Thuhr","Zuhr","Z")]),
-    Asr: mkDateFromYmdHM(greg, T[pick(T,"Asr","A")]),
-    Maghrib: mkDateFromYmdHM(greg, T[pick(T,"Maghrib","Magrib","M")]),
-    Isha: mkDateFromYmdHM(greg, T[pick(T,"Isha","I")])
-  };
-}
-function extractHMforBuild(s) {
-  const m = String(s).match(/(\\d{1,2}):(\\d{2})/);
-  if (!m) throw new Error(`Ukjent tid: ${s}`);
-  const hh = parseInt(m[1], 10);
-  const mm = parseInt(m[2], 10);
-  return { hh, mm };
-}
-function mkDateFromYmdHM(ymd, hm) {
-  const { hh, mm } = extractHMforBuild(hm);
-  const d = new Date(`${ymd}T00:00:00`);
-  d.setHours(hh, mm, 0, 0);
-  return d;
 }
 
 // ---------- Countdown ----------
@@ -446,7 +375,6 @@ const BACKGROUNDS = [
 export default function App(){
   const { coords, error: geoError, loading, permission, requestOnce, startWatch } = useGeolocationWatch(5);
   const [city, setCity]   = useLocalStorage("aq_city", "");
-  const [countryCode, setCountryCode] = useLocalStorage("aq_country", "");
   const [times, setTimes] = useState(null);
   const [apiError, setApiError] = useState("");
   const [bgIdx, setBgIdx] = useState(0);
@@ -479,10 +407,7 @@ export default function App(){
   // reverse geocode on coords change
   useEffect(() => {
     if (!coords) return;
-    reverseGeocode(coords.latitude, coords.longitude).then(({name, countryCode}) => {
-      if (name) setCity(name);
-      if (countryCode) setCountryCode(countryCode);
-    });
+    reverseGeocode(coords.latitude, coords.longitude).then(n => n && setCity(n));
   }, [coords?.latitude, coords?.longitude]);
 
   // schedule reminders (tab-only)
@@ -508,29 +433,13 @@ export default function App(){
 
   const qiblaDeg = useMemo(() => coords ? qiblaBearing(coords.latitude, coords.longitude) : null, [coords?.latitude, coords?.longitude]);
 
-  // Unified prayer-time fetcher
-  async function fetchPrayerTimesSmart(lat, lng, when="today") {
-    const inNorway = (countryCode || "").toUpperCase() === "NO";
-    if (inNorway && IRN_API_KEY) {
-      try {
-        const irnTimes = await fetchIRNByCoords(lat, lng, when);
-        return irnTimes;
-      } catch (e) {
-        console.warn("IRN feilet, bruker Aladhan med Norway tuning.", e);
-      }
-    }
-    const aa = await fetchAladhan(lat, lng, when);
-    if (inNorway) return applyOffsets(aa, NORWAY_OFFSETS);
-    return aa;
-  }
-
   async function refreshTimes(lat, lng) {
     try {
       setApiError("");
-      const today = await fetchPrayerTimesSmart(lat, lng, "today");
+      const today = await fetchAladhan(lat, lng, "today");
       const info = nextPrayerInfo(today);
       if (info.tomorrow) {
-        const tomorrow = await fetchPrayerTimesSmart(lat, lng, "tomorrow");
+        const tomorrow = await fetchAladhan(lat, lng, "tomorrow");
         const fajr = tomorrow.Fajr;
         setTimes(today);
         setCountdown({ name: "Fajr", at: fajr, diffText: diffToText(fajr.getTime() - Date.now()), tomorrow: true });
@@ -540,7 +449,7 @@ export default function App(){
       }
     } catch (e) {
       console.error(e);
-      setApiError("Klarte ikke hente bønnetider (IRN/Aladhan).");
+      setApiError("Klarte ikke hente bønnetider (API).");
       setTimes(null);
     }
   }
@@ -548,7 +457,7 @@ export default function App(){
   // initial fetch and start watch
   const onUseLocation = () => { requestOnce(); startWatch(); };
 
-  useEffect(() => { if (!coords) return; refreshTimes(coords.latitude, coords.longitude) }, [coords?.latitude, coords?.longitude, countryCode]);
+  useEffect(() => { if (!coords) return; refreshTimes(coords.latitude, coords.longitude) }, [coords?.latitude, coords?.longitude]);
 
   // notifications permission helper
   const ensureNotify = async () => {
@@ -594,7 +503,7 @@ export default function App(){
             <button className="btn" onClick={onUseLocation} disabled={loading}>{loading ? "Henter…" : "Bruk stedstjenester"}</button>
             <span className="hint">
               {coords
-                ? ((city ? city + (countryCode?` (${countryCode})`:"") + " • " : "") + coords.latitude.toFixed(4) + ", " + coords.longitude.toFixed(4))
+                ? ((city ? city + " • " : "") + coords.latitude.toFixed(4) + ", " + coords.longitude.toFixed(4))
                 : (permission === "denied" ? "Posisjon er blokkert i nettleseren." : "Gi tilgang for automatisk lokasjon")}
             </span>
           </div>
