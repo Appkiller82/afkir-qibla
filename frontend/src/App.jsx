@@ -1,11 +1,12 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 
 /**
- * Afkir Qibla — Norway IRN emulation (no key)
- * - Reverse geocode fixed (one template string)
- * - Norway tuning: month baseline + latitude bands + city overrides
- * - Global (outside NO): Aladhan (Maliki) unchanged
- * - Robust HH:MM parsing, local Date construction, smooth countdown, compass + map
+ * Afkir Qibla — Norway IRN-like without API (stable)
+ * - Norway (countryCode === "NO"): use Aladhan custom method=99 with Fajr/Isha angles and AngleBased high-lat rule.
+ *   * fajr=17.5°, isha=17.5°, school=0 (Maliki), latitudeAdjustmentMethod=3 (AngleBased)
+ *   * small roundings: Dhuhr -3m, Maghrib -2m (typical IRN practice)
+ * - Rest of world: Aladhan method=5 (Egyptian) as before.
+ * - Robust HH:MM parsing; local-date build; smooth countdown; compass + map.
  */
 
 // ---------- Intl ----------
@@ -37,7 +38,6 @@ function haversineKm(a, b) {
 // ---------- Geolocation + watch >5km ----------
 function useGeolocationWatch(minKm = 5) {
   const [coords, setCoords] = useState(null);
-  const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
   const [permission, setPermission] = useState("prompt");
   const lastCoords = useRef(null);
@@ -58,17 +58,11 @@ function useGeolocationWatch(minKm = 5) {
   }, []);
 
   const requestOnce = () => {
-    if (!("geolocation" in navigator)) { setError("Stedstjenester er ikke tilgjengelig i denne nettleseren."); return }
-    setLoading(true); setError(null);
+    if (!("geolocation" in navigator)) { alert("Stedstjenester er ikke tilgjengelig i denne nettleseren."); return }
+    setLoading(true);
     navigator.geolocation.getCurrentPosition(
       (pos) => { const c = { latitude: pos.coords.latitude, longitude: pos.coords.longitude }; lastCoords.current = c; setCoords(c); setLoading(false) },
-      (err) => {
-        let msg = err?.message || "Kunne ikke hente posisjon.";
-        if (err?.code === 1) msg = "Tilgang til posisjon ble nektet. aA → Nettstedsinnstillinger → Sted = Tillat.";
-        if (err?.code === 2) msg = "Posisjon utilgjengelig. Prøv nær et vindu.";
-        if (err?.code === 3) msg = "Tidsavbrudd. Prøv igjen.";
-        setError(msg); setLoading(false);
-      },
+      (err) => { console.warn(err); setLoading(false) },
       { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
     );
   };
@@ -81,21 +75,21 @@ function useGeolocationWatch(minKm = 5) {
         const c = { latitude: pos.coords.latitude, longitude: pos.coords.longitude };
         if (!lastCoords.current) { lastCoords.current = c; setCoords(c); return; }
         const km = haversineKm(lastCoords.current, c);
-        if (km >= minKm) { lastCoords.current = c; setCoords(c); } // trigger updates
+        if (km >= minKm) { lastCoords.current = c; setCoords(c); }
       },
       () => {},
       { enableHighAccuracy: true, maximumAge: 15000, timeout: 20000 }
     );
   };
 
-  useEffect(() => () => { // cleanup
+  useEffect(() => () => {
     if (watchId.current != null && navigator.geolocation?.clearWatch) {
       navigator.geolocation.clearWatch(watchId.current);
       watchId.current = null;
     }
   }, []);
 
-  return { coords, error, loading, permission, requestOnce, startWatch };
+  return { coords, loading, permission, requestOnce, startWatch };
 }
 
 // ---------- Reverse geocode ----------
@@ -126,7 +120,7 @@ function qiblaBearing(lat, lng) {
   return (brng * 180 / Math.PI + 360) % 360;
 }
 
-// ---------- Aladhan (Maliki) ----------
+// ---------- Helpers ----------
 function ddmmyyyyToYmd(ddmmyyyy) {
   const [dd, mm, yyyy] = String(ddmmyyyy).split("-").map(v => parseInt(v, 10));
   const y = String(yyyy);
@@ -135,44 +129,19 @@ function ddmmyyyyToYmd(ddmmyyyy) {
   return `${y}-${m}-${d}`;
 }
 
-async function fetchAladhan(lat, lng, when = "today") {
-  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-  const params = new URLSearchParams({
-    latitude: String(lat),
-    longitude: String(lng),
-    method: "5",
-    school: "0",
-    timezonestring: tz,
-    iso8601: "true"
-  });
-  const url = `https://api.aladhan.com/v1/timings/${when}?${params.toString()}`;
-  const res = await fetch(url);
-  if (!res.ok) throw new Error("API feilet");
-  const json = await res.json();
-  if (json.code !== 200 || !json.data?.timings) throw new Error("Ugyldig API-respons");
-
+// Parse Aladhan response and return Date objects for local day
+function parseAladhanToDates(json) {
   const t = json.data.timings;
   const greg = json?.data?.date?.gregorian?.date; // DD-MM-YYYY
   const ymd = greg ? ddmmyyyyToYmd(greg) : (() => {
     const d = new Date();
     return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
   })();
-
-  const extractHM = (s) => {
-    const m = String(s).match(/(\d{1,2}):(\d{2})/);
-    if (!m) throw new Error(`Ukjent tid: ${s}`);
-    const hh = parseInt(m[1], 10);
-    const mm = parseInt(m[2], 10);
-    return { hh, mm };
+  const mk = (hhmm) => {
+    const m = String(hhmm).match(/(\d{1,2}):(\d{2})/);
+    const hh = parseInt(m[1],10), mm = parseInt(m[2],10);
+    const d = new Date(`${ymd}T00:00:00`); d.setHours(hh,mm,0,0); return d;
   };
-
-  const mk = (hm) => {
-    const { hh, mm } = extractHM(hm);
-    const d = new Date(`${ymd}T00:00:00`);
-    d.setHours(hh, mm, 0, 0);
-    return d;
-  };
-
   return {
     Fajr: mk(t.Fajr),
     Soloppgang: mk(t.Sunrise),
@@ -182,58 +151,63 @@ async function fetchAladhan(lat, lng, when = "today") {
     Isha: mk(t.Isha)
   };
 }
+const addMinutes = (d, m) => { const x = new Date(d); x.setMinutes(x.getMinutes()+m); return x; };
 
-// ---------- Norway tuning ----------
-// 1) Baseline per måned (minutter) – justerbare tall
-const NO_BASE_OFFSETS = {
-  1:{Fajr:-6,Soloppgang:0,Dhuhr:-2,Asr:0,Maghrib:-2,Isha:-3},
-  2:{Fajr:-5,Soloppgang:0,Dhuhr:-2,Asr:0,Maghrib:-2,Isha:-3},
-  3:{Fajr:-4,Soloppgang:0,Dhuhr:-2,Asr:0,Maghrib:-1,Isha:-3},
-  4:{Fajr:-3,Soloppgang:0,Dhuhr:-2,Asr:0,Maghrib:-1,Isha:-2},
-  5:{Fajr:-2,Soloppgang:0,Dhuhr:-2,Asr:0,Maghrib:-1,Isha:-2},
-  6:{Fajr:-1,Soloppgang:0,Dhuhr:-2,Asr:0,Maghrib:-1,Isha:-2},
-  7:{Fajr:-1,Soloppgang:0,Dhuhr:-2,Asr:0,Maghrib:-1,Isha:-2},
-  8:{Fajr:-2,Soloppgang:0,Dhuhr:-2,Asr:0,Maghrib:-1,Isha:-2},
-  9:{Fajr:-3,Soloppgang:0,Dhuhr:-2,Asr:0,Maghrib:-1,Isha:-2},
- 10:{Fajr:-4,Soloppgang:0,Dhuhr:-2,Asr:0,Maghrib:-1,Isha:-3},
- 11:{Fajr:-5,Soloppgang:0,Dhuhr:-2,Asr:0,Maghrib:-2,Isha:-3},
- 12:{Fajr:-6,Soloppgang:0,Dhuhr:-2,Asr:0,Maghrib:-2,Isha:-3},
-};
-// 2) Breddegrads-bånd
-const NO_LAT_ADJ = {
-  south: {Fajr:0, Soloppgang:0, Dhuhr:0, Asr:0, Maghrib:0, Isha:0},       // < 60°N
-  mid:   {Fajr:+1,Soloppgang:0, Dhuhr:0, Asr:0, Maghrib:0, Isha:+1},      // 60–65°N
-  north: {Fajr:+2,Soloppgang:0, Dhuhr:0, Asr:0, Maghrib:0, Isha:+2},      // > 65°N
-};
-// 3) By-overstyringer (substring/regex match på bynavn)
-const NO_CITY_OVERRIDES = [
-  { rx:/oslo/i,        o:{Fajr:-6, Dhuhr:-2, Maghrib:-2, Isha:-3} },
-  { rx:/bergen/i,      o:{Fajr:-5, Dhuhr:-2, Maghrib:-2, Isha:-3} },
-  { rx:/trondheim/i,   o:{Fajr:-4, Dhuhr:-2, Maghrib:-1, Isha:-3} },
-  { rx:/stavanger/i,   o:{Fajr:-5, Dhuhr:-2, Maghrib:-2, Isha:-3} },
-  { rx:/kristiansand/i,o:{Fajr:-5, Dhuhr:-2, Maghrib:-2, Isha:-3} },
-  { rx:/bodø|bodo/i,   o:{Fajr:-3, Dhuhr:-2, Maghrib:-1, Isha:-2} },
-  { rx:/tromsø|tromso/i,o:{Fajr:-2, Dhuhr:-2, Maghrib:-1, Isha:-2} },
-  { rx:/alta/i,        o:{Fajr:-1, Dhuhr:-2, Maghrib:-1, Isha:-2} },
-];
-function getLatBand(lat){ if(lat==null||Number.isNaN(lat))return"south"; if(lat<60)return"south"; if(lat<=65)return"mid"; return"north"; }
-function addMinutes(date,m){ const d=new Date(date); d.setMinutes(d.getMinutes()+m); return d; }
-function mergeOffsets(a={},b={}){ const out={}; for(const k of ["Fajr","Soloppgang","Dhuhr","Asr","Maghrib","Isha"]) out[k]=(a[k]||0)+(b[k]||0); return out; }
-function applyOffsets(times,offs){ const out={}; for(const k of ["Fajr","Soloppgang","Dhuhr","Asr","Maghrib","Isha"]) out[k]=times[k]?addMinutes(times[k],offs[k]||0):times[k]; return out; }
-function pickCityOverride(city){ if(!city) return null; for(const row of NO_CITY_OVERRIDES){ if(row.rx.test(city)) return row.o } return null; }
+// ---------- Aladhan calls ----------
+async function fetchAladhan(lat, lng, when = "today") {
+  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const params = new URLSearchParams({
+    latitude: String(lat),
+    longitude: String(lng),
+    method: "5",            // Egyptian (global default)
+    school: "0",            // Maliki
+    timezonestring: tz,
+    iso8601: "true"
+  });
+  const url = `https://api.aladhan.com/v1/timings/${when}?${params.toString()}`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error("API feilet");
+  const json = await res.json();
+  if (json.code !== 200 || !json.data?.timings) throw new Error("Ugyldig API-respons");
+  return parseAladhanToDates(json);
+}
 
-async function fetchPrayerTimesSmart(lat, lng, when="today", countryCode="", cityName="") {
-  const base = await fetchAladhan(lat, lng, when);
+async function fetchAladhanCustomNO(lat, lng, when = "today") {
+  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const params = new URLSearchParams({
+    latitude: String(lat),
+    longitude: String(lng),
+    method: "99",                  // custom
+    fajr: "17.5",                  // degrees
+    isha: "17.5",                  // degrees
+    school: "0",                   // Maliki
+    latitudeAdjustmentMethod: "3", // AngleBased
+    timezonestring: tz,
+    iso8601: "true"
+  });
+  const url = `https://api.aladhan.com/v1/timings/${when}?${params.toString()}`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error("API feilet");
+  const json = await res.json();
+  if (json.code !== 200 || !json.data?.timings) throw new Error("Ugyldig API-respons");
+
+  const base = parseAladhanToDates(json);
+  // Small IRN-like roundings
+  return {
+    Fajr: base.Fajr,
+    Soloppgang: base.Soloppgang,
+    Dhuhr: addMinutes(base.Dhuhr, -3),
+    Asr: base.Asr,
+    Maghrib: addMinutes(base.Maghrib, -2),
+    Isha: base.Isha
+  };
+}
+
+// ---------- Switch ----------
+async function fetchPrayerTimesSmart(lat, lng, when="today", countryCode="") {
   const inNorway = (countryCode||"").toUpperCase() === "NO";
-  if (!inNorway) return base;
-
-  const m = (new Date()).getMonth()+1;
-  const band = getLatBand(lat);
-  const oBase = NO_BASE_OFFSETS[m] || {};
-  const oBand = NO_LAT_ADJ[band] || {};
-  const oCity = pickCityOverride(cityName) || {};
-  const merged = mergeOffsets(mergeOffsets(oBase, oBand), oCity);
-  return applyOffsets(base, merged);
+  if (inNorway) return await fetchAladhanCustomNO(lat, lng, when);
+  return await fetchAladhan(lat, lng, when);
 }
 
 // ---------- Countdown ----------
@@ -263,7 +237,6 @@ function nextPrayerInfo(times) {
 // ---------- Compass ----------
 function ModernCompass({ bearing }) {
   const [heading, setHeading] = useState(null);
-  const [manualHeading, setManualHeading] = useState(0);
   const [showHelp, setShowHelp] = useState(false);
 
   const onOrientation = (e) => {
@@ -295,11 +268,9 @@ function ModernCompass({ bearing }) {
     window.removeEventListener("deviceorientation", onOrientation, true);
   }, []);
 
-  const usedHeading = heading == null ? manualHeading : heading;
-  const delta = (bearing == null || usedHeading == null) ? null : (((bearing - usedHeading + 540) % 360) - 180); // -180..180
+  const needleAngle = (bearing == null || heading == null) ? 0 : ((bearing - heading + 360) % 360);
+  const delta = (bearing == null || heading == null) ? null : (((bearing - heading + 540) % 360) - 180);
   const aligned = delta != null && Math.abs(delta) <= 3;
-
-  const needleAngle = (bearing == null || usedHeading == null) ? 0 : ((bearing - usedHeading + 360) % 360);
 
   return (
     <div>
@@ -427,13 +398,12 @@ const BACKGROUNDS = [
 ];
 
 export default function App(){
-  const { coords, error: geoError, loading, permission, requestOnce, startWatch } = useGeolocationWatch(5);
+  const { coords, loading, permission, requestOnce, startWatch } = useGeolocationWatch(5);
   const [city, setCity]   = useLocalStorage("aq_city", "");
   const [countryCode, setCountryCode] = useLocalStorage("aq_country", "");
   const [times, setTimes] = useState(null);
   const [apiError, setApiError] = useState("");
   const [bgIdx, setBgIdx] = useState(0);
-  const [theme, setTheme] = useLocalStorage("aq_theme", "dark");
   const [countdown, setCountdown] = useState({ name: null, at: null, diffText: null, tomorrow: false });
   const [remindersOn, setRemindersOn] = useLocalStorage("aq_reminders_on", false);
   const [showMap, setShowMap] = useState(false);
@@ -443,7 +413,7 @@ export default function App(){
   // rotate background
   useEffect(() => { const id = setInterval(()=> setBgIdx(i => (i+1)%BACKGROUNDS.length), 25000); return () => clearInterval(id) }, []);
 
-  // midnight refresh + countdown
+  // midnight refresh (60s) and smooth countdown (500ms)
   useEffect(() => {
     let last = new Date().toDateString();
     const idDay = setInterval(async () => {
@@ -453,16 +423,17 @@ export default function App(){
         if (coords) await refreshTimes(coords.latitude, coords.longitude);
       }
     }, 60000);
-    const idTick = setInterval(() => {
-      setCountdown(nextPrayerInfo(times));
-    }, 500);
+    const idTick = setInterval(() => { setCountdown(nextPrayerInfo(times)); }, 500);
     return () => { clearInterval(idDay); clearInterval(idTick) };
   }, [coords?.latitude, coords?.longitude, times?.Fajr?.getTime?.()]);
 
   // reverse geocode on coords change
   useEffect(() => {
     if (!coords) return;
-    reverseGeocode(coords.latitude, coords.longitude).then(r => { if (r?.name) setCity(r.name); if (r?.countryCode) setCountryCode(r.countryCode); });
+    reverseGeocode(coords.latitude, coords.longitude).then(r => {
+      if (r?.name) setCity(r.name);
+      if (r?.countryCode) setCountryCode(r.countryCode);
+    });
   }, [coords?.latitude, coords?.longitude]);
 
   // schedule reminders (tab-only)
@@ -491,10 +462,10 @@ export default function App(){
   async function refreshTimes(lat, lng) {
     try {
       setApiError("");
-      const today = await fetchPrayerTimesSmart(lat, lng, "today", countryCode, city);
+      const today = await fetchPrayerTimesSmart(lat, lng, "today", countryCode);
       const info = nextPrayerInfo(today);
       if (info.tomorrow) {
-        const tomorrow = await fetchPrayerTimesSmart(lat, lng, "tomorrow", countryCode, city);
+        const tomorrow = await fetchPrayerTimesSmart(lat, lng, "tomorrow", countryCode);
         const fajr = tomorrow.Fajr;
         setTimes(today);
         setCountdown({ name: "Fajr", at: fajr, diffText: diffToText(fajr.getTime() - Date.now()), tomorrow: true });
@@ -511,8 +482,7 @@ export default function App(){
 
   // initial fetch and start watch
   const onUseLocation = () => { requestOnce(); startWatch(); };
-
-  useEffect(() => { if (!coords) return; refreshTimes(coords.latitude, coords.longitude) }, [coords?.latitude, coords?.longitude, countryCode, city]);
+  useEffect(() => { if (!coords) return; refreshTimes(coords.latitude, coords.longitude) }, [coords?.latitude, coords?.longitude, countryCode]);
 
   const bg = BACKGROUNDS[bgIdx];
 
