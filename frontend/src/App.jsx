@@ -1,12 +1,15 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 
 /**
- * Afkir Qibla — FIX 2:
- * - Robust HH:MM regex parse (prevents all-times-being-09 bug)
- * - Build Date objects from API calendar date (gregorian) in local TZ
- * - Smooth countdown hh:mm:ss
- * - Compass shows degrees delta and turns green when aligned (±3°)
- * - Auto-refresh: >5km move + midnight
+ * Afkir Qibla — FIX 3 (IRN switch for Norway):
+ * - Provider auto-switch: IRN (bonnetid.no API) for Norway when API key is present; else Aladhan.
+ * - If in Norway but no IRN key, optionally apply "Norway tuning" offsets to Aladhan to better resemble IRN.
+ * - Reverse geocode now returns {name, countryCode}.
+ * - Settings: toggle IRN-in-Norway and input for IRN API key (stored locally).
+ *
+ * NOTE on IRN API:
+ * IRN's API (api.bonnetid.no) requires an API key. You can paste it in Settings.
+ * If no key is provided, the app will fall back to Aladhan everywhere, with a mild Norway tuning when in NO.
  */
 
 // ---------- Intl ----------
@@ -107,8 +110,9 @@ async function reverseGeocode(lat, lng) {
     const data = await res.json();
     const a = data.address || {};
     const name = a.city || a.town || a.village || a.municipality || a.suburb || a.state || a.county || a.country;
-    return name || "";
-  } catch { return "" }
+    const countryCode = (a.country_code || "").toUpperCase();
+    return { name: name || "", countryCode };
+  } catch { return { name: "", countryCode: "" } }
 }
 
 // ---------- Qibla bearing ----------
@@ -124,8 +128,7 @@ function qiblaBearing(lat, lng) {
   return (brng * 180 / Math.PI + 360) % 360;
 }
 
-// ---------- Aladhan (Maliki) ----------
-// Robust parse with HH:MM regex; build Date from API's gregorian date (DD-MM-YYYY) in local TZ.
+// ---------- Helpers ----------
 function ddmmyyyyToYmd(ddmmyyyy) {
   const [dd, mm, yyyy] = String(ddmmyyyy).split("-").map(v => parseInt(v, 10));
   const y = String(yyyy);
@@ -133,22 +136,36 @@ function ddmmyyyyToYmd(ddmmyyyy) {
   const d = String(dd).padStart(2, "0");
   return `${y}-${m}-${d}`;
 }
+function extractHM(s) {
+  const m = String(s).match(/(\\d{1,2}):(\\d{2})/);
+  if (!m) throw new Error(`Ukjent tid: ${s}`);
+  const hh = parseInt(m[1], 10);
+  const mm = parseInt(m[2], 10);
+  return { hh, mm };
+}
+function mkDateFromYmdHM(ymd, hm) {
+  const { hh, mm } = extractHM(hm);
+  const d = new Date(`${ymd}T00:00:00`);
+  d.setHours(hh, mm, 0, 0);
+  return d;
+}
 
+// ---------- Aladhan (default/maliki) ----------
 async function fetchAladhan(lat, lng, when = "today") {
   const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const params = new URLSearchParams({
     latitude: String(lat),
     longitude: String(lng),
-    method: "5",
-    school: "0",
+    method: "5",           // Egyptian
+    school: "0",           // Shafi/Maliki
     timezonestring: tz,
     iso8601: "true"
   });
   const url = `https://api.aladhan.com/v1/timings/${when}?${params.toString()}`;
   const res = await fetch(url);
-  if (!res.ok) throw new Error("API feilet");
+  if (!res.ok) throw new Error("API feilet (Aladhan)");
   const json = await res.json();
-  if (json.code !== 200 || !json.data?.timings) throw new Error("Ugyldig API-respons");
+  if (json.code !== 200 || !json.data?.timings) throw new Error("Ugyldig API-respons (Aladhan)");
 
   const t = json.data.timings;
   const greg = json?.data?.date?.gregorian?.date; // DD-MM-YYYY
@@ -157,29 +174,85 @@ async function fetchAladhan(lat, lng, when = "today") {
     return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
   })();
 
-  const extractHM = (s) => {
-    const m = String(s).match(/(\d{1,2}):(\d{2})/);
-    if (!m) throw new Error(`Ukjent tid: ${s}`);
-    const hh = parseInt(m[1], 10);
-    const mm = parseInt(m[2], 10);
-    return { hh, mm };
-  };
-
-  const mk = (hm) => {
-    const { hh, mm } = extractHM(hm);
-    const d = new Date(`${ymd}T00:00:00`);
-    d.setHours(hh, mm, 0, 0);
-    return d;
-  };
-
   return {
-    Fajr: mk(t.Fajr),
-    Soloppgang: mk(t.Sunrise),
-    Dhuhr: mk(t.Dhuhr),
-    Asr: mk(t.Asr),
-    Maghrib: mk(t.Maghrib),
-    Isha: mk(t.Isha)
+    Fajr:      mkDateFromYmdHM(ymd, t.Fajr),
+    Soloppgang:mkDateFromYmdHM(ymd, t.Sunrise),
+    Dhuhr:     mkDateFromYmdHM(ymd, t.Dhuhr),
+    Asr:       mkDateFromYmdHM(ymd, t.Asr),
+    Maghrib:   mkDateFromYmdHM(ymd, t.Maghrib),
+    Isha:      mkDateFromYmdHM(ymd, t.Isha)
   };
+}
+
+// ---------- Aladhan "Norway tuning" (small offsets) ----------
+// These minimal offsets (in minutes) can make Aladhan look closer to IRN without changing method globally.
+const NORWAY_OFFSETS = { Fajr: 0, Soloppgang: 0, Dhuhr: 1, Asr: 0, Maghrib: 0, Isha: 0 };
+function applyOffsets(times, offsets) {
+  const out = {};
+  for (const k of Object.keys(times||{})) {
+    const d = new Date(times[k]);
+    const off = (offsets?.[k] ?? 0);
+    d.setMinutes(d.getMinutes() + off);
+    out[k] = d;
+  }
+  return out;
+}
+
+// ---------- IRN (bonnetid.no) ----------
+// This function expects an API base and key. Because IRN's API isn't public without a key, we keep it configurable.
+async function fetchIRNByCoords(lat, lng, when="today", irnCfg) {
+  // You can customize these with your deployment details:
+  const base = (irnCfg?.base || "https://api.bonnetid.no").replace(/\\/$/, "");
+  const key  = irnCfg?.key || "";
+  if (!key) throw new Error("IRN API-nøkkel mangler");
+
+  // Strategy: round to nearest covered place by sending coords to a 'nearest' endpoint (if available),
+  // otherwise, project-specific mapping must be supplied.
+  // Example endpoints (you may need to adjust to your tenant/version):
+  //  - GET `${base}/v1/nearest?lat=${lat}&lng=${lng}` → { placeId }
+  //  - GET `${base}/v1/timings/${when}?placeId=...` with `Authorization: Bearer <key>`
+  // Since exact routes vary, we implement a flexible attempt list.
+  const candidates = [
+    // Hypothetical endpoints — replace with your exact ones if different:
+    { url: `${base}/v1/nearest?lat=${encodeURIComponent(lat)}&lng=${encodeURIComponent(lng)}`, headers: { "Authorization": `Bearer ${key}` } },
+  ];
+
+  let placeId = null;
+  for (const c of candidates) {
+    try {
+      const res = await fetch(c.url, { headers: c.headers });
+      if (res.ok) {
+        const j = await res.json();
+        placeId = j?.placeId || j?.id || j?.data?.placeId || null;
+        if (placeId) break;
+      }
+    } catch {}
+  }
+  if (!placeId) throw new Error("IRN: fant ikke nærmeste by/ID");
+
+  const params = new URLSearchParams({ when });
+  const tRes = await fetch(`${base}/v1/timings?placeId=${encodeURIComponent(placeId)}&${params.toString()}`, {
+    headers: { "Authorization": `Bearer ${key}` }
+  });
+  if (!tRes.ok) throw new Error("IRN: klarte ikke hente bønnetider");
+  const tJson = await tRes.json();
+
+  // Expected shape: times as "HH:MM"
+  const greg = tJson?.dateYMD || (() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+  })();
+
+  const T = tJson?.timings || tJson?.data || tJson || {};
+  const out = {
+    Fajr: mkDateFromYmdHM(greg, T.Fajr || T.fajr || T.SUBH || T.F),
+    Soloppgang: mkDateFromYmdHM(greg, T.Sunrise || T.sunrise || T.Shurooq || T.SR),
+    Dhuhr: mkDateFromYmdHM(greg, T.Dhuhr || T.Thuhr || T.Zuhr || T.Z),
+    Asr: mkDateFromYmdHM(greg, T.Asr || T.A),
+    Maghrib: mkDateFromYmdHM(greg, T.Maghrib || T.Magrib || T.M),
+    Isha: mkDateFromYmdHM(greg, T.Isha || T.I)
+  };
+  return out;
 }
 
 // ---------- Countdown ----------
@@ -206,7 +279,326 @@ function nextPrayerInfo(times) {
   return { name: null, at: null, diffText: null, tomorrow: true };
 }
 
-// ---------- Compass ----------
+// ---------- Map (Leaflet via CDN) ----------
+function loadLeafletOnce() {
+  if (window.L) return Promise.resolve(window.L);
+  return new Promise((resolve, reject) => {
+    const css = document.createElement("link");
+    css.rel = "stylesheet";
+    css.href = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css";
+    const js = document.createElement("script");
+    js.src = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js";
+    js.async = true;
+    js.onload = () => resolve(window.L);
+    js.onerror = reject;
+    document.head.appendChild(css);
+    document.body.appendChild(js);
+  });
+}
+
+function QiblaMap({ coords }) {
+  const mapRef = useRef(null);
+  const divRef = useRef(null);
+
+  useEffect(() => {
+    let map;
+    if (!coords) return;
+    let cancelled = false;
+    loadLeafletOnce().then((L) => {
+      if (cancelled || !divRef.current) return;
+      const mecca = [21.4225, 39.8262];
+      map = L.map(divRef.current, { zoomControl: true, attributionControl: true }).setView([coords.latitude, coords.longitude], 5);
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19 }).addTo(map);
+      L.marker([coords.latitude, coords.longitude]).addTo(map).bindPopup("Din posisjon");
+      L.marker(mecca).addTo(map).bindPopup("Kaaba (Mekka)");
+      const line = L.polyline([[coords.latitude, coords.longitude], mecca], { color: "#ef4444", weight: 3 }).addTo(map);
+      map.fitBounds(line.getBounds(), { padding: [24,24] });
+      mapRef.current = map;
+    }).catch(()=>{});
+    return () => { cancelled = true; if (mapRef.current) { mapRef.current.remove(); mapRef.current = null; } };
+  }, [coords?.latitude, coords?.longitude]);
+
+  return <div ref={divRef} style={{width:"100%", height:320, borderRadius:12, overflow:"hidden"}} />;
+}
+
+// ---------- App ----------
+const BACKGROUNDS = [
+  "/backgrounds/mecca_panorama.jpg",
+  "/backgrounds/kaaba_2024.jpg",
+  "/backgrounds/mecca_aerial.jpg",
+  "/backgrounds/mecca_city_panorama.jpg",
+  "/backgrounds/mecca_exterior.jpg"
+];
+
+export default function App(){
+  const { coords, error: geoError, loading, permission, requestOnce, startWatch } = useGeolocationWatch(5);
+  const [city, setCity]   = useLocalStorage("aq_city", "");
+  const [countryCode, setCountryCode] = useLocalStorage("aq_country", "");
+  const [times, setTimes] = useState(null);
+  const [apiError, setApiError] = useState("");
+  const [bgIdx, setBgIdx] = useState(0);
+  const [theme, setTheme] = useLocalStorage("aq_theme", "dark");
+  const [countdown, setCountdown] = useState({ name: null, at: null, diffText: null, tomorrow: false });
+  const [remindersOn, setRemindersOn] = useLocalStorage("aq_reminders_on", false);
+  const [showMap, setShowMap] = useState(false);
+
+  // New: Provider settings
+  const [useIrnInNorway, setUseIrnInNorway] = useLocalStorage("aq_irn_use_no", true);
+  const [irnApiKey, setIrnApiKey] = useLocalStorage("aq_irn_api_key", "");
+  const [irnBase, setIrnBase] = useLocalStorage("aq_irn_base", "https://api.bonnetid.no");
+  const [applyNoOffsets, setApplyNoOffsets] = useLocalStorage("aq_no_offsets", true);
+
+  const audioRef = useRef(null);
+  const timersRef = useRef([]);
+
+  // rotate background
+  useEffect(() => { const id = setInterval(()=> setBgIdx(i => (i+1)%BACKGROUNDS.length), 25000); return () => clearInterval(id) }, []);
+
+  // midnight refresh (60s) and smooth countdown (500ms)
+  useEffect(() => {
+    let last = new Date().toDateString();
+    const idDay = setInterval(async () => {
+      const nowStr = new Date().toDateString();
+      if (nowStr !== last) {
+        last = nowStr;
+        if (coords) await refreshTimes(coords.latitude, coords.longitude);
+      }
+    }, 60000);
+    const idTick = setInterval(() => {
+      setCountdown(nextPrayerInfo(times));
+    }, 500);
+    return () => { clearInterval(idDay); clearInterval(idTick) };
+  }, [coords?.latitude, coords?.longitude, times?.Fajr?.getTime?.()]);
+
+  // reverse geocode on coords change
+  useEffect(() => {
+    if (!coords) return;
+    reverseGeocode(coords.latitude, coords.longitude).then(({name, countryCode}) => {
+      if (name) setCity(name);
+      if (countryCode) setCountryCode(countryCode);
+    });
+  }, [coords?.latitude, coords?.longitude]);
+
+  // schedule reminders (tab-only)
+  useEffect(() => {
+    timersRef.current.forEach(id => clearTimeout(id));
+    timersRef.current = [];
+    if (!remindersOn || !times) return;
+    const now = Date.now();
+    ORDER.forEach(name => {
+      const t = times[name];
+      if (!(t instanceof Date)) return;
+      const ms = t.getTime() - now;
+      if (ms > 1000) {
+        const id = setTimeout(() => {
+          try { audioRef.current?.play?.() } catch {}
+          try { if ("Notification" in window && Notification.permission === "granted") new Notification(`Tid for ${name}`) } catch {}
+        }, ms);
+        timersRef.current.push(id);
+      }
+    });
+    return () => { timersRef.current.forEach(id => clearTimeout(id)); timersRef.current = [] };
+  }, [remindersOn, times?.Fajr?.getTime?.()]);
+
+  const qiblaDeg = useMemo(() => coords ? qiblaBearing(coords.latitude, coords.longitude) : null, [coords?.latitude, coords?.longitude]);
+
+  // Unified prayer-time fetcher
+  async function fetchPrayerTimesSmart(lat, lng) {
+    const inNorway = (countryCode || "").toUpperCase() === "NO";
+    // Try IRN first if in Norway and enabled & key present
+    if (inNorway && useIrnInNorway && irnApiKey) {
+      try {
+        const irnTimes = await fetchIRNByCoords(lat, lng, "today", { base: irnBase, key: irnApiKey });
+        return irnTimes;
+      } catch (e) {
+        console.warn("IRN feilet, faller tilbake til Aladhan.", e);
+        // fall through to Aladhan (with optional offsets)
+      }
+    }
+    // Fallback: Aladhan (optionally with Norway offsets)
+    const aa = await fetchAladhan(lat, lng, "today");
+    if (inNorway && applyNoOffsets) return applyOffsets(aa, NORWAY_OFFSETS);
+    return aa;
+  }
+
+  async function refreshTimes(lat, lng) {
+    try {
+      setApiError("");
+      const today = await fetchPrayerTimesSmart(lat, lng);
+      const info = nextPrayerInfo(today);
+      if (info.tomorrow) {
+        const tomorrowProvider = async () => {
+          // For consistency, we fetch "tomorrow" the same way
+          // Using Aladhan for tomorrow is acceptable even if IRN failed on today.
+          try {
+            if ((countryCode||"").toUpperCase()==="NO" && useIrnInNorway && irnApiKey) {
+              const tmr = await fetchIRNByCoords(lat, lng, "tomorrow", { base: irnBase, key: irnApiKey });
+              return tmr;
+            }
+          } catch {}
+          return await fetchAladhan(lat, lng, "tomorrow");
+        };
+        const tomorrow = await tomorrowProvider();
+        const fajr = tomorrow.Fajr;
+        setTimes(today);
+        setCountdown({ name: "Fajr", at: fajr, diffText: diffToText(fajr.getTime() - Date.now()), tomorrow: true });
+      } else {
+        setTimes(today);
+        setCountdown(info);
+      }
+    } catch (e) {
+      console.error(e);
+      setApiError("Klarte ikke hente bønnetider (IRN/Aladhan).");
+      setTimes(null);
+    }
+  }
+
+  // initial fetch and start watch
+  const onUseLocation = () => { requestOnce(); startWatch(); };
+
+  useEffect(() => { if (!coords) return; refreshTimes(coords.latitude, coords.longitude) }, [coords?.latitude, coords?.longitude, countryCode, useIrnInNorway, irnApiKey, irnBase, applyNoOffsets]);
+
+  // notifications permission helper
+  const ensureNotify = async () => {
+    if (!("Notification" in window)) return;
+    if (Notification.permission === "default") { try { await Notification.requestPermission() } catch {} }
+  };
+
+  const bg = BACKGROUNDS[bgIdx];
+
+  return (
+    <div style={{minHeight:"100dvh", color:"var(--fg)", backgroundSize:"cover", backgroundPosition:"center", backgroundImage:`linear-gradient(rgba(4,6,12,.65), rgba(4,6,12,.65)), url(${bg})`, transition:"background-image .8s ease"}}>
+      <style>{`
+        :root { --fg:#e5e7eb; --muted:#cbd5e1; --card:rgba(15,23,42,.78); --border:#334155; --btn:#0b1220; --accent:#16a34a; }
+        :root[data-theme="light"] { --fg:#0f172a; --muted:#475569; --card:rgba(255,255,255,.93); --border:#d1d5db; --btn:#f8fafc; --accent:#16a34a; }
+        .container { padding: calc(env(safe-area-inset-top) + 14px) 16px 16px; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+        .card { border:1px solid var(--border); border-radius: 16px; padding: 14px; background: var(--card); backdrop-filter: blur(10px); }
+        .btn { padding:10px 14px; border-radius:12px; border:1px solid var(--border); background: var(--btn); color: var(--fg); cursor:pointer; }
+        .btn:hover { opacity:.95 }
+        .btn-green { background: var(--accent); border-color: var(--accent); color: white; }
+        .hint { color: var(--muted); font-size: 13px; }
+        .row { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+        h1 { margin:0 0 6px 0; font-size: 28px; line-height:1.15 }
+        ul.times { list-style:none; padding:0; margin:0 }
+        .time-item { display:flex; justify-content:space-between; padding:8px 0; border-bottom:1px dashed var(--border); font-size:16px }
+        .error { color:#fecaca; background:rgba(239,68,68,.12); border:1px solid rgba(239,68,68,.35); padding:10px; border-radius:12px; }
+        .switch { display:inline-flex; align-items:center; gap:8px; cursor:pointer; user-select:none; }
+        .switch input { width:1.2em; height:1.2em; }
+        input[type="text"] { padding:8px 10px; border-radius:10px; border:1px solid var(--border); background:var(--btn); color:var(--fg); }
+        .grid { display:grid; gap:12px; }
+      `}</style>
+
+      <div className="container">
+        <header style={{marginBottom:10, textAlign:"center"}}>
+          <h1>Afkir Qibla</h1>
+          <div style={{margin:"6px 0 2px"}}>
+            <button className="btn" onClick={()=>{ const d = document.documentElement; d.dataset.theme = (d.dataset.theme==="light"?"dark":"light") }}>
+              Tema
+            </button>
+          </div>
+          <div className="hint">{NB_DAY.format(new Date())}</div>
+        </header>
+
+        {/* Location */}
+        <section className="card">
+          <h3>Plassering</h3>
+          <div className="row" style={{marginTop:8}}>
+            <button className="btn" onClick={onUseLocation} disabled={loading}>{loading ? "Henter…" : "Bruk stedstjenester"}</button>
+            <span className="hint">
+              {coords
+                ? ((city ? city + (countryCode?` (${countryCode})`:"") + " • " : "") + coords.latitude.toFixed(4) + ", " + coords.longitude.toFixed(4))
+                : (permission === "denied" ? "Posisjon er blokkert i nettleseren." : "Gi tilgang for automatisk lokasjon")}
+            </span>
+          </div>
+        </section>
+
+        {/* Settings for Provider */}
+        <section className="card" style={{marginTop:12}}>
+          <h3>Innstillinger for bønnetider</h3>
+          <div className="grid">
+            <label className="switch">
+              <input type="checkbox" checked={useIrnInNorway} onChange={e=>setUseIrnInNorway(e.target.checked)} />
+              Bruk IRN i Norge (hvis API-nøkkel er satt)
+            </label>
+            <label className="switch">
+              <input type="checkbox" checked={applyNoOffsets} onChange={e=>setApplyNoOffsets(e.target.checked)} />
+              Justér Aladhan litt i Norge (for å ligne IRN)
+            </label>
+            <div className="row">
+              <span className="hint" style={{minWidth:88}}>IRN base:</span>
+              <input type="text" value={irnBase} onChange={e=>setIrnBase(e.target.value)} style={{flex:1}} placeholder="https://api.bonnetid.no" />
+            </div>
+            <div className="row">
+              <span className="hint" style={{minWidth:88}}>IRN nøkkel:</span>
+              <input type="text" value={irnApiKey} onChange={e=>setIrnApiKey(e.target.value)} style={{flex:1}} placeholder="lim inn API key her" />
+            </div>
+            <div className="hint">
+              Tips: Aktiver posisjon og lagre innstillingene. Hvis IRN feiler, faller appen automatisk tilbake til Aladhan.
+            </div>
+          </div>
+        </section>
+
+        {/* Compass + Map + Times */}
+        <div style={{display:"grid", gap:12, marginTop:12}}>
+          <section className="card">
+            <div style={{display:"flex", justifyContent:"space-between", alignItems:"center"}}>
+              <h3>Qibla-retning</h3>
+              <button className="btn" onClick={()=>setShowMap(v=>!v)}>{showMap ? "Skjul kart" : "Vis Qibla på kart"}</button>
+            </div>
+            {coords ? (
+              <>
+                <ModernCompass bearing={qiblaDeg ?? 0} />
+                {showMap && (
+                  <div style={{marginTop:12}}>
+                    <QiblaMap coords={coords} />
+                    <div className="hint" style={{marginTop:6}}>Linjen viser retningen fra din posisjon til Kaaba (Mekka).</div>
+                  </div>
+                )}
+              </>
+            ) : <div className="hint">Velg/bekreft posisjon for å vise Qibla og kart.</div>}
+          </section>
+
+          <section className="card">
+            <h3>Bønnetider</h3>
+            {apiError && <div className="error" style={{margin:"8px 0"}}>{apiError}</div>}
+            {times ? (
+              <>
+                <ul className="times">
+                  <li className="time-item"><span>Fajr</span><span>{NB_TIME.format(times.Fajr)}</span></li>
+                  <li className="time-item"><span>Soloppgang</span><span>{NB_TIME.format(times.Soloppgang)}</span></li>
+                  <li className="time-item"><span>Dhuhr</span><span>{NB_TIME.format(times.Dhuhr)}</span></li>
+                  <li className="time-item"><span>Asr</span><span>{NB_TIME.format(times.Asr)}</span></li>
+                  <li className="time-item"><span>Maghrib</span><span>{NB_TIME.format(times.Maghrib)}</span></li>
+                  <li className="time-item"><span>Isha</span><span>{NB_TIME.format(times.Isha)}</span></li>
+                </ul>
+
+                <div style={{marginTop:10, fontSize:15}}>
+                  {countdown?.name
+                    ? <>Neste bønn: <b>{countdown.name}</b> kl <b>{NB_TIME.format(countdown.at)}</b> (<span className="hint">{countdown.diffText}</span>)</>
+                    : <span className="hint">Alle dagens bønner er passert – oppdateres ved midnatt.</span>
+                  }
+                </div>
+
+                <div className="row" style={{marginTop:10}}>
+                  <button className={remindersOn ? "btn btn-green" : "btn"} onClick={async ()=>{
+                    await ensureNotify();
+                    try { audioRef.current?.play?.().then(()=>{ audioRef.current.pause(); audioRef.current.currentTime=0; }) } catch {}
+                    setRemindersOn(v=>!v);
+                  }}>{remindersOn ? "Adhan-varsler: PÅ" : "Adhan-varsler: AV"}</button>
+
+                  <button className="btn" onClick={()=>{ const a = audioRef.current; if (a) { a.currentTime=0; a.play().catch(()=>{}) } }}>Test Adhan</button>
+                  <audio ref={audioRef} preload="auto" src="/audio/adhan.mp3"></audio>
+                </div>
+              </>
+            ) : <div className="hint">Henter bønnetider…</div>}
+          </section>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------- Compass (from previous version, unchanged visuals) ----------
 function ModernCompass({ bearing }) {
   const [heading, setHeading] = useState(null);
   const [manualHeading, setManualHeading] = useState(0);
@@ -244,7 +636,6 @@ function ModernCompass({ bearing }) {
   const usedHeading = heading == null ? manualHeading : heading;
   const delta = (bearing == null || usedHeading == null) ? null : (((bearing - usedHeading + 540) % 360) - 180); // -180..180
   const aligned = delta != null && Math.abs(delta) <= 3;
-
   const needleAngle = (bearing == null || usedHeading == null) ? 0 : ((bearing - usedHeading + 360) % 360);
 
   return (
@@ -317,254 +708,6 @@ function ModernCompass({ bearing }) {
           </div>
         </div>
       )}
-    </div>
-  );
-}
-
-// ---------- Map fallback (Leaflet via CDN) ----------
-function loadLeafletOnce() {
-  if (window.L) return Promise.resolve(window.L);
-  return new Promise((resolve, reject) => {
-    const css = document.createElement("link");
-    css.rel = "stylesheet";
-    css.href = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css";
-    const js = document.createElement("script");
-    js.src = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js";
-    js.async = true;
-    js.onload = () => resolve(window.L);
-    js.onerror = reject;
-    document.head.appendChild(css);
-    document.body.appendChild(js);
-  });
-}
-
-function QiblaMap({ coords }) {
-  const mapRef = useRef(null);
-  const divRef = useRef(null);
-
-  useEffect(() => {
-    let map;
-    if (!coords) return;
-    let cancelled = false;
-    loadLeafletOnce().then((L) => {
-      if (cancelled || !divRef.current) return;
-      const mecca = [21.4225, 39.8262];
-      map = L.map(divRef.current, { zoomControl: true, attributionControl: true }).setView([coords.latitude, coords.longitude], 5);
-      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19 }).addTo(map);
-      L.marker([coords.latitude, coords.longitude]).addTo(map).bindPopup("Din posisjon");
-      L.marker(mecca).addTo(map).bindPopup("Kaaba (Mekka)");
-      const line = L.polyline([[coords.latitude, coords.longitude], mecca], { color: "#ef4444", weight: 3 }).addTo(map);
-      map.fitBounds(line.getBounds(), { padding: [24,24] });
-      mapRef.current = map;
-    }).catch(()=>{});
-    return () => { cancelled = true; if (mapRef.current) { mapRef.current.remove(); mapRef.current = null; } };
-  }, [coords?.latitude, coords?.longitude]);
-
-  return <div ref={divRef} style={{width:"100%", height:320, borderRadius:12, overflow:"hidden"}} />;
-}
-
-// ---------- App ----------
-const BACKGROUNDS = [
-  "/backgrounds/mecca_panorama.jpg",
-  "/backgrounds/kaaba_2024.jpg",
-  "/backgrounds/mecca_aerial.jpg",
-  "/backgrounds/mecca_city_panorama.jpg",
-  "/backgrounds/mecca_exterior.jpg"
-];
-
-export default function App(){
-  const { coords, error: geoError, loading, permission, requestOnce, startWatch } = useGeolocationWatch(5);
-  const [city, setCity]   = useLocalStorage("aq_city", "");
-  const [times, setTimes] = useState(null);
-  const [apiError, setApiError] = useState("");
-  const [bgIdx, setBgIdx] = useState(0);
-  const [theme, setTheme] = useLocalStorage("aq_theme", "dark");
-  const [countdown, setCountdown] = useState({ name: null, at: null, diffText: null, tomorrow: false });
-  const [remindersOn, setRemindersOn] = useLocalStorage("aq_reminders_on", false);
-  const [showMap, setShowMap] = useState(false);
-  const audioRef = useRef(null);
-  const timersRef = useRef([]);
-
-  // rotate background
-  useEffect(() => { const id = setInterval(()=> setBgIdx(i => (i+1)%BACKGROUNDS.length), 25000); return () => clearInterval(id) }, []);
-
-  // midnight refresh (60s) and smooth countdown (500ms)
-  useEffect(() => {
-    let last = new Date().toDateString();
-    const idDay = setInterval(async () => {
-      const nowStr = new Date().toDateString();
-      if (nowStr !== last) {
-        last = nowStr;
-        if (coords) await refreshTimes(coords.latitude, coords.longitude);
-      }
-    }, 60000);
-    const idTick = setInterval(() => {
-      setCountdown(nextPrayerInfo(times));
-    }, 500);
-    return () => { clearInterval(idDay); clearInterval(idTick) };
-  }, [coords?.latitude, coords?.longitude, times?.Fajr?.getTime?.()]);
-
-  // reverse geocode on coords change
-  useEffect(() => {
-    if (!coords) return;
-    reverseGeocode(coords.latitude, coords.longitude).then(n => n && setCity(n));
-  }, [coords?.latitude, coords?.longitude]);
-
-  // schedule reminders (tab-only)
-  useEffect(() => {
-    timersRef.current.forEach(id => clearTimeout(id));
-    timersRef.current = [];
-    if (!remindersOn || !times) return;
-    const now = Date.now();
-    ORDER.forEach(name => {
-      const t = times[name];
-      if (!(t instanceof Date)) return;
-      const ms = t.getTime() - now;
-      if (ms > 1000) {
-        const id = setTimeout(() => {
-          try { audioRef.current?.play?.() } catch {}
-          try { if ("Notification" in window && Notification.permission === "granted") new Notification(`Tid for ${name}`) } catch {}
-        }, ms);
-        timersRef.current.push(id);
-      }
-    });
-    return () => { timersRef.current.forEach(id => clearTimeout(id)); timersRef.current = [] };
-  }, [remindersOn, times?.Fajr?.getTime?.()]);
-
-  const qiblaDeg = useMemo(() => coords ? qiblaBearing(coords.latitude, coords.longitude) : null, [coords?.latitude, coords?.longitude]);
-
-  async function refreshTimes(lat, lng) {
-    try {
-      setApiError("");
-      const today = await fetchAladhan(lat, lng, "today");
-      const info = nextPrayerInfo(today);
-      if (info.tomorrow) {
-        const tomorrow = await fetchAladhan(lat, lng, "tomorrow");
-        const fajr = tomorrow.Fajr;
-        setTimes(today);
-        setCountdown({ name: "Fajr", at: fajr, diffText: diffToText(fajr.getTime() - Date.now()), tomorrow: true });
-      } else {
-        setTimes(today);
-        setCountdown(info);
-      }
-    } catch (e) {
-      console.error(e);
-      setApiError("Klarte ikke hente bønnetider (API).");
-      setTimes(null);
-    }
-  }
-
-  // initial fetch and start watch
-  const onUseLocation = () => { requestOnce(); startWatch(); };
-
-  useEffect(() => { if (!coords) return; refreshTimes(coords.latitude, coords.longitude) }, [coords?.latitude, coords?.longitude]);
-
-  // notifications permission helper
-  const ensureNotify = async () => {
-    if (!("Notification" in window)) return;
-    if (Notification.permission === "default") { try { await Notification.requestPermission() } catch {} }
-  };
-
-  const bg = BACKGROUNDS[bgIdx];
-
-  return (
-    <div style={{minHeight:"100dvh", color:"var(--fg)", backgroundSize:"cover", backgroundPosition:"center", backgroundImage:`linear-gradient(rgba(4,6,12,.65), rgba(4,6,12,.65)), url(${bg})`, transition:"background-image .8s ease"}}>
-      <style>{`
-        :root { --fg:#e5e7eb; --muted:#cbd5e1; --card:rgba(15,23,42,.78); --border:#334155; --btn:#0b1220; --accent:#16a34a; }
-        :root[data-theme="light"] { --fg:#0f172a; --muted:#475569; --card:rgba(255,255,255,.93); --border:#d1d5db; --btn:#f8fafc; --accent:#16a34a; }
-        .container { padding: calc(env(safe-area-inset-top) + 14px) 16px 16px; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
-        .card { border:1px solid var(--border); border-radius: 16px; padding: 14px; background: var(--card); backdrop-filter: blur(10px); }
-        .btn { padding:10px 14px; border-radius:12px; border:1px solid var(--border); background: var(--btn); color: var(--fg); cursor:pointer; }
-        .btn:hover { opacity:.95 }
-        .btn-green { background: var(--accent); border-color: var(--accent); color: white; }
-        .hint { color: var(--muted); font-size: 13px; }
-        .row { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
-        h1 { margin:0 0 6px 0; font-size: 28px; line-height:1.15 }
-        ul.times { list-style:none; padding:0; margin:0 }
-        .time-item { display:flex; justify-content:space-between; padding:8px 0; border-bottom:1px dashed var(--border); font-size:16px }
-        .error { color:#fecaca; background:rgba(239,68,68,.12); border:1px solid rgba(239,68,68,.35); padding:10px; border-radius:12px; }
-      `}</style>
-
-      <div className="container">
-        <header style={{marginBottom:10, textAlign:"center"}}>
-          <h1>Afkir Qibla</h1>
-          <div style={{margin:"6px 0 2px"}}>
-            <button className="btn" onClick={()=>{ const d = document.documentElement; d.dataset.theme = (d.dataset.theme==="light"?"dark":"light") }}>
-              Tema
-            </button>
-          </div>
-          <div className="hint">{NB_DAY.format(new Date())}</div>
-        </header>
-
-        {/* Location */}
-        <section className="card">
-          <h3>Plassering</h3>
-          <div className="row" style={{marginTop:8}}>
-            <button className="btn" onClick={onUseLocation} disabled={loading}>{loading ? "Henter…" : "Bruk stedstjenester"}</button>
-            <span className="hint">
-              {coords
-                ? ((city ? city + " • " : "") + coords.latitude.toFixed(4) + ", " + coords.longitude.toFixed(4))
-                : (permission === "denied" ? "Posisjon er blokkert i nettleseren." : "Gi tilgang for automatisk lokasjon")}
-            </span>
-          </div>
-        </section>
-
-        {/* Compass + Map + Times */}
-        <div style={{display:"grid", gap:12, marginTop:12}}>
-          <section className="card">
-            <div style={{display:"flex", justifyContent:"space-between", alignItems:"center"}}>
-              <h3>Qibla-retning</h3>
-              <button className="btn" onClick={()=>setShowMap(v=>!v)}>{showMap ? "Skjul kart" : "Vis Qibla på kart"}</button>
-            </div>
-            {coords ? (
-              <>
-                <ModernCompass bearing={qiblaDeg ?? 0} />
-                {showMap && (
-                  <div style={{marginTop:12}}>
-                    <QiblaMap coords={coords} />
-                    <div className="hint" style={{marginTop:6}}>Linjen viser retningen fra din posisjon til Kaaba (Mekka).</div>
-                  </div>
-                )}
-              </>
-            ) : <div className="hint">Velg/bekreft posisjon for å vise Qibla og kart.</div>}
-          </section>
-
-          <section className="card">
-            <h3>Bønnetider (Maliki)</h3>
-            {apiError && <div className="error" style={{margin:"8px 0"}}>{apiError}</div>}
-            {times ? (
-              <>
-                <ul className="times">
-                  <li className="time-item"><span>Fajr</span><span>{NB_TIME.format(times.Fajr)}</span></li>
-                  <li className="time-item"><span>Soloppgang</span><span>{NB_TIME.format(times.Soloppgang)}</span></li>
-                  <li className="time-item"><span>Dhuhr</span><span>{NB_TIME.format(times.Dhuhr)}</span></li>
-                  <li className="time-item"><span>Asr</span><span>{NB_TIME.format(times.Asr)}</span></li>
-                  <li className="time-item"><span>Maghrib</span><span>{NB_TIME.format(times.Maghrib)}</span></li>
-                  <li className="time-item"><span>Isha</span><span>{NB_TIME.format(times.Isha)}</span></li>
-                </ul>
-
-                <div style={{marginTop:10, fontSize:15}}>
-                  {countdown?.name
-                    ? <>Neste bønn: <b>{countdown.name}</b> kl <b>{NB_TIME.format(countdown.at)}</b> (<span className="hint">{countdown.diffText}</span>)</>
-                    : <span className="hint">Alle dagens bønner er passert – oppdateres ved midnatt.</span>
-                  }
-                </div>
-
-                <div className="row" style={{marginTop:10}}>
-                  <button className={remindersOn ? "btn btn-green" : "btn"} onClick={async ()=>{
-                    await ensureNotify();
-                    try { audioRef.current?.play?.().then(()=>{ audioRef.current.pause(); audioRef.current.currentTime=0; }) } catch {}
-                    setRemindersOn(v=>!v);
-                  }}>{remindersOn ? "Adhan-varsler: PÅ" : "Adhan-varsler: AV"}</button>
-
-                  <button className="btn" onClick={()=>{ const a = audioRef.current; if (a) { a.currentTime=0; a.play().catch(()=>{}) } }}>Test Adhan</button>
-                  <audio ref={audioRef} preload="auto" src="/audio/adhan.mp3"></audio>
-                </div>
-              </>
-            ) : <div className="hint">Henter bønnetider…</div>}
-          </section>
-        </div>
-      </div>
     </div>
   );
 }
