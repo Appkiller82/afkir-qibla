@@ -1,30 +1,18 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 
 /**
- * Afkir Qibla — IRN-in-Oslo provider + Aladhan fallback worldwide
- * - Uses IRN/Bønnetid provider ONLY when user is in Oslo (city = "Oslo" or within ~60 km of Oslo center)
- * - Else falls back to Aladhan (method=5, school=0 Maliki)
- * - Robust parsing: build Date objects from API's own day (no HH="09" bug)
- * - Countdown hh:mm:ss (smooth 500ms)
- * - Compass shows degrees; turns green within ±3° of Qibla
- * - Auto-refresh: >5 km movement, midnight
- *
- * To enable IRN:
- *  - Add .env: VITE_IRN_API_BASE, VITE_IRN_API_KEY (format depends on your IRN/Bønnetid access)
- *  - This component will try IRN only when in Oslo; if it fails/missing -> Aladhan
+ * Afkir Qibla — FIX 2:
+ * - Robust HH:MM regex parse (prevents all-times-being-09 bug)
+ * - Build Date objects from API calendar date (gregorian) in local TZ
+ * - Smooth countdown hh:mm:ss
+ * - Compass shows degrees delta and turns green when aligned (±3°)
+ * - Auto-refresh: >5km move + midnight
  */
 
 // ---------- Intl ----------
 const NB_TIME = new Intl.DateTimeFormat("nb-NO", { hour: "2-digit", minute: "2-digit" });
 const NB_DAY  = new Intl.DateTimeFormat("nb-NO", { weekday: "long", day: "2-digit", month: "long" });
 
-// ---------- ENV (Vite-style) ----------
-const IRN_API_BASE = import.meta?.env?.VITE_IRN_API_BASE || "";
-const IRN_API_KEY  = import.meta?.env?.VITE_IRN_API_KEY  || "";
-// STEP 1 (forenkling): tvang Aladhan overalt. Sett til true senere når vi vil aktivere IRN i Oslo igjen.
-const IRN_ENABLED = false; // !!(IRN_API_BASE && IRN_API_KEY);
-
-// ---------- Helpers ----------
 function useLocalStorage(key, init) {
   const [v, setV] = useState(() => {
     try { const j = localStorage.getItem(key); return j ? JSON.parse(j) : init } catch { return init }
@@ -33,55 +21,21 @@ function useLocalStorage(key, init) {
   return [v, setV];
 }
 
-function toRad(d){ return d*Math.PI/180 }
-function toDeg(r){ return r*180/Math.PI }
-function normalize(deg){ return ((deg%360)+360)%360 }
-
-// Haversine distance (km)
+// ---------- Distance (km) ----------
 function haversineKm(a, b) {
   if (!a || !b) return 0;
   const R = 6371;
-  const dLat = toRad(b.latitude - a.latitude);
-  const dLon = toRad(b.longitude - a.longitude);
-  const lat1 = toRad(a.latitude);
-  const lat2 = toRad(b.latitude);
-  const t = Math.sin(dLat/2)**2 + Math.cos(lat1)*Math.cos(lat2)*Math.sin(dLon/2)**2;
-  return 2 * R * Math.atan2(Math.sqrt(t), Math.sqrt(1-t));
+  const dLat = (b.latitude - a.latitude) * Math.PI/180;
+  const dLon = (b.longitude - a.longitude) * Math.PI/180;
+  const lat1 = a.latitude * Math.PI/180;
+  const lat2 = b.latitude * Math.PI/180;
+  const sinDLat = Math.sin(dLat/2), sinDLon = Math.sin(dLon/2);
+  const t = sinDLat*sinDLat + Math.cos(lat1)*Math.cos(lat2)*sinDLon*sinDLon;
+  const c = 2 * Math.atan2(Math.sqrt(t), Math.sqrt(1-t));
+  return R * c;
 }
 
-// Oslo center + geofence ~60 km
-const OSLO_CENTER = { latitude: 59.9139, longitude: 10.7522 };
-function isInOslo(coords, cityName) {
-  if (!coords) return false;
-  if ((cityName||"").toLowerCase().includes("oslo")) return true;
-  return haversineKm(coords, OSLO_CENTER) <= 60;
-}
-
-// Reverse geocode (Nominatim)
-async function reverseGeocode(lat, lng) {
-  try {
-    const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lng}&accept-language=nb&zoom=10&addressdetails=1`;
-    const res = await fetch(url, { headers: { "Accept": "application/json" } });
-    const data = await res.json();
-    const a = data.address || {};
-    const name = a.city || a.town || a.village || a.municipality || a.suburb || a.state || a.county || a.country;
-    return name || "";
-  } catch { return "" }
-}
-
-// Qibla bearing
-function qiblaBearing(lat, lon) {
-  const kaabaLat = toRad(21.4225);
-  const kaabaLon = toRad(39.8262);
-  const φ1 = toRad(lat||0);
-  const λ1 = toRad(lon||0);
-  const Δλ = kaabaLon - λ1;
-  const y = Math.sin(Δλ) * Math.cos(kaabaLat);
-  const x = Math.cos(φ1)*Math.sin(kaabaLat) - Math.sin(φ1)*Math.cos(kaabaLat)*Math.cos(Δλ);
-  return normalize(toDeg(Math.atan2(y, x)));
-}
-
-// ---------- Geolocation watch (>5km refresh) ----------
+// ---------- Geolocation + watch >5km ----------
 function useGeolocationWatch(minKm = 5) {
   const [coords, setCoords] = useState(null);
   const [error, setError] = useState(null);
@@ -135,7 +89,7 @@ function useGeolocationWatch(minKm = 5) {
     );
   };
 
-  useEffect(() => () => {
+  useEffect(() => () => { // cleanup
     if (watchId.current != null && navigator.geolocation?.clearWatch) {
       navigator.geolocation.clearWatch(watchId.current);
       watchId.current = null;
@@ -145,104 +99,87 @@ function useGeolocationWatch(minKm = 5) {
   return { coords, error, loading, permission, requestOnce, startWatch };
 }
 
-// ---------- Prayer time providers ----------
-
-// Parse HH:MM -> Date using base day (Date object of that day in local tz)
-function hhmmToDate(hhmm, baseDay) {
-  const clean = String(hhmm).replace(/\(.*?\)/g, "").trim(); // strip "(CEST)" etc
-  const m = /^(\d{1,2})\s*:\s*(\d{2})$/.exec(clean);
-  if (!m) return null;
-  const H = Math.min(23, Math.max(0, parseInt(m[1],10)));
-  const M = Math.min(59, Math.max(0, parseInt(m[2],10)));
-  const d = new Date(baseDay);
-  d.setHours(H, M, 0, 0);
-  return d;
+// ---------- Reverse geocode ----------
+async function reverseGeocode(lat, lng) {
+  try {
+    const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lng}&accept-language=nb&zoom=10&addressdetails=1`;
+    const res = await fetch(url, { headers: { "Accept": "application/json" } });
+    const data = await res.json();
+    const a = data.address || {};
+    const name = a.city || a.town || a.village || a.municipality || a.suburb || a.state || a.county || a.country;
+    return name || "";
+  } catch { return "" }
 }
 
-// Build base day from epoch seconds or ISO string
-function baseFromApiTimestamp(tsSecOrIso) {
-  if (typeof tsSecOrIso === "number") return new Date(tsSecOrIso * 1000);
-  if (typeof tsSecOrIso === "string") {
-    const dt = new Date(tsSecOrIso.length <= 10 ? `${tsSecOrIso}T00:00:00` : tsSecOrIso);
-    if (!isNaN(+dt)) return dt;
-  }
-  return new Date();
+// ---------- Qibla bearing ----------
+function qiblaBearing(lat, lng) {
+  const kaabaLat = 21.4225 * Math.PI / 180;
+  const kaabaLon = 39.8262 * Math.PI / 180;
+  const alat = (lat||0) * Math.PI / 180;
+  const alon = (lng||0) * Math.PI / 180;
+  const dlon = kaabaLon - alon;
+  const y = Math.sin(dlon) * Math.cos(kaabaLat);
+  const x = Math.cos(alat) * Math.sin(kaabaLat) - Math.sin(alat) * Math.cos(kaabaLat) * Math.cos(dlon);
+  const brng = Math.atan2(y, x);
+  return (brng * 180 / Math.PI + 360) % 360;
 }
 
-// IRN provider (requires env). Example endpoint structure is placeholder; replace with your IRN path.
-// Expected JSON shape example:
-// { date: "2025-08-15", timings: { Fajr:"03:18", Sunrise:"05:30", Dhuhr:"13:31", Asr:"18:31", Maghrib:"21:15", Isha:"22:29" } }
-async function fetchTimesFromIRN({ city = "oslo", date = "today" }) {
-  if (!IRN_ENABLED) throw new Error("IRN not configured");
-  let ymd;
-  if (date === "today" || date === "tomorrow") {
-    const d = new Date();
-    if (date === "tomorrow") d.setDate(d.getDate() + 1);
-    ymd = d.toISOString().slice(0,10);
-  } else ymd = date;
-
-  const url = `${IRN_API_BASE}?city=${encodeURIComponent(city)}&date=${encodeURIComponent(ymd)}`;
-  const res = await fetch(url, { headers: { "Authorization": `Bearer ${IRN_API_KEY}` } });
-  if (!res.ok) throw new Error("IRN request failed");
-  const j = await res.json();
-  const baseDay = baseFromApiTimestamp(j?.date ?? ymd);
-  const t = j?.timings || {};
-  return {
-    Fajr:     hhmmToDate(t.Fajr, baseDay),
-    Soloppgang: hhmmToDate(t.Sunrise, baseDay),
-    Dhuhr:    hhmmToDate(t.Dhuhr, baseDay),
-    Asr:      hhmmToDate(t.Asr, baseDay),
-    Maghrib:  hhmmToDate(t.Maghrib, baseDay),
-    Isha:     hhmmToDate(t.Isha, baseDay),
-  };
+// ---------- Aladhan (Maliki) ----------
+// Robust parse with HH:MM regex; build Date from API's gregorian date (DD-MM-YYYY) in local TZ.
+function ddmmyyyyToYmd(ddmmyyyy) {
+  const [dd, mm, yyyy] = String(ddmmyyyy).split("-").map(v => parseInt(v, 10));
+  const y = String(yyyy);
+  const m = String(mm).padStart(2, "0");
+  const d = String(dd).padStart(2, "0");
+  return `${y}-${m}-${d}`;
 }
 
-// Aladhan provider (Maliki/Shafi'i school=0, method=5). Uses API timestamp for the base day.
-async function fetchTimesFromAladhan({ lat, lon, date = "today" }) {
+async function fetchAladhan(lat, lng, when = "today") {
   const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const params = new URLSearchParams({
     latitude: String(lat),
-    longitude: String(lon),
-    // IRN-nær uten API-nøkkel:
-    // - method=99 (custom)
-    // - methodSettings = FajrAngle, null, IshaAngle
-    // - latitudeAdjustmentMethod=3 (Angle-Based) for høyere breddegrader
-    method: "99",
-    methodSettings: "18,null,17",
-    latitudeAdjustmentMethod: "3",
-    // Asr: 1x skygge (Maliki/Shafi'i)
+    longitude: String(lng),
+    method: "5",
     school: "0",
     timezonestring: tz,
     iso8601: "true"
   });
-  const url = `https://api.aladhan.com/v1/timings/${date}?${params.toString()}`;
+  const url = `https://api.aladhan.com/v1/timings/${when}?${params.toString()}`;
   const res = await fetch(url);
-  if (!res.ok) throw new Error("Aladhan failed");
-  const j = await res.json();
-  if (j?.code !== 200 || !j?.data?.timings) throw new Error("Aladhan invalid");
-  const baseDay = baseFromApiTimestamp(Number(j?.data?.date?.timestamp));
-  const t = j.data.timings;
-  return {
-    Fajr:       hhmmToDate(t.Fajr, baseDay),
-    Soloppgang: hhmmToDate(t.Sunrise, baseDay),
-    Dhuhr:      hhmmToDate(t.Dhuhr, baseDay),
-    Asr:        hhmmToDate(t.Asr, baseDay),
-    Maghrib:    hhmmToDate(t.Maghrib, baseDay),
-    Isha:       hhmmToDate(t.Isha, baseDay),
-  };
-}
+  if (!res.ok) throw new Error("API feilet");
+  const json = await res.json();
+  if (json.code !== 200 || !json.data?.timings) throw new Error("Ugyldig API-respons");
 
-// Unified provider: IRN in Oslo (if configured) else Aladhan
-async function fetchPrayerTimes({ lat, lon, cityName, date = "today" }) {
-  const inOslo = isInOslo({ latitude: lat, longitude: lon }, cityName);
-  if (inOslo && IRN_ENABLED) {
-    try {
-      return await fetchTimesFromIRN({ city: "oslo", date });
-    } catch (e) {
-      console.warn("IRN lookup failed, falling back to Aladhan:", e?.message || e);
-    }
-  }
-  return await fetchTimesFromAladhan({ lat, lon, date });
+  const t = json.data.timings;
+  const greg = json?.data?.date?.gregorian?.date; // DD-MM-YYYY
+  const ymd = greg ? ddmmyyyyToYmd(greg) : (() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+  })();
+
+  const extractHM = (s) => {
+    const m = String(s).match(/(\d{1,2}):(\d{2})/);
+    if (!m) throw new Error(`Ukjent tid: ${s}`);
+    const hh = parseInt(m[1], 10);
+    const mm = parseInt(m[2], 10);
+    return { hh, mm };
+  };
+
+  const mk = (hm) => {
+    const { hh, mm } = extractHM(hm);
+    const d = new Date(`${ymd}T00:00:00`);
+    d.setHours(hh, mm, 0, 0);
+    return d;
+  };
+
+  return {
+    Fajr: mk(t.Fajr),
+    Soloppgang: mk(t.Sunrise),
+    Dhuhr: mk(t.Dhuhr),
+    Asr: mk(t.Asr),
+    Maghrib: mk(t.Maghrib),
+    Isha: mk(t.Isha)
+  };
 }
 
 // ---------- Countdown ----------
@@ -252,7 +189,9 @@ function diffToText(ms) {
   const h = Math.floor(totalSec / 3600);
   const m = Math.floor((totalSec % 3600) / 60);
   const s = totalSec % 60;
-  return (h > 0 ? String(h).padStart(2, "0") + ":" : "") + String(m).padStart(2, "0") + ":" + String(s).padStart(2, "0");
+  return (h > 0 ? String(h).padStart(2, "0") + ":" : "")
+       + String(m).padStart(2, "0") + ":"
+       + String(s).padStart(2, "0");
 }
 function nextPrayerInfo(times) {
   if (!times) return { name: null, at: null, diffText: null, tomorrow: false };
@@ -267,29 +206,34 @@ function nextPrayerInfo(times) {
   return { name: null, at: null, diffText: null, tomorrow: true };
 }
 
-// ---------- Compass (shows delta°, green within ±3°) ----------
-function ModernCompass({ targetBearing }) {
+// ---------- Compass ----------
+function ModernCompass({ bearing }) {
   const [heading, setHeading] = useState(null);
+  const [manualHeading, setManualHeading] = useState(0);
   const [showHelp, setShowHelp] = useState(false);
 
   const onOrientation = (e) => {
     let hdg = null;
     if (typeof e?.webkitCompassHeading === "number") hdg = e.webkitCompassHeading; // iOS
     else if (typeof e?.alpha === "number") hdg = 360 - e.alpha; // others
-    if (hdg != null && !Number.isNaN(hdg)) setHeading(normalize(hdg));
+    if (hdg != null && !Number.isNaN(hdg)) setHeading((hdg + 360) % 360);
+  };
+
+  const requestSensors = async () => {
+    try { if (window.DeviceMotionEvent?.requestPermission) await window.DeviceMotionEvent.requestPermission() } catch {}
+    if (window.DeviceOrientationEvent?.requestPermission) {
+      try { const p = await window.DeviceOrientationEvent.requestPermission(); if (p !== "granted") { setShowHelp(true); return false } } catch { setShowHelp(true); return false }
+    }
+    return true;
   };
 
   const activateCompass = async () => {
-    try {
-      if (window.DeviceMotionEvent?.requestPermission) await window.DeviceMotionEvent.requestPermission();
-      if (window.DeviceOrientationEvent?.requestPermission) {
-        const p = await window.DeviceOrientationEvent.requestPermission();
-        if (p !== "granted") setShowHelp(true);
-      }
-    } catch {}
+    let ok = true;
+    if (window.DeviceOrientationEvent?.requestPermission) ok = await requestSensors();
+    if (!ok) { setShowHelp(true); return }
     window.addEventListener("deviceorientationabsolute", onOrientation, true);
     window.addEventListener("deviceorientation", onOrientation, true);
-    setTimeout(()=>{ if (heading == null) setShowHelp(true) }, 2500);
+    setTimeout(() => { if (heading == null) setShowHelp(true) }, 3000);
   };
 
   useEffect(() => () => {
@@ -297,14 +241,11 @@ function ModernCompass({ targetBearing }) {
     window.removeEventListener("deviceorientation", onOrientation, true);
   }, []);
 
-  const delta = useMemo(() => {
-    if (heading == null || targetBearing == null) return null;
-    let d = targetBearing - heading;
-    d = ((d + 540) % 360) - 180; // map to [-180, 180]
-    return d;
-  }, [heading, targetBearing]);
+  const usedHeading = heading == null ? manualHeading : heading;
+  const delta = (bearing == null || usedHeading == null) ? null : (((bearing - usedHeading + 540) % 360) - 180); // -180..180
+  const aligned = delta != null && Math.abs(delta) <= 3;
 
-  const onTarget = delta != null && Math.abs(delta) <= 3;
+  const needleAngle = (bearing == null || usedHeading == null) ? 0 : ((bearing - usedHeading + 360) % 360);
 
   return (
     <div>
@@ -313,22 +254,20 @@ function ModernCompass({ targetBearing }) {
         <button className="btn" onClick={()=>setShowHelp(true)}>Hjelp</button>
       </div>
 
-      <div style={{position:"relative", width:280, height:320, margin:"12px auto 0"}}>
+      <div style={{position:"relative", width:280, height:300, margin:"12px auto 0"}}>
         {/* dial */}
         <div style={{position:"absolute", inset:"20px 0 0 0", borderRadius:"50%",
-          background: onTarget
-            ? "radial-gradient(140px 140px at 50% 45%, rgba(34,197,94,.25), rgba(15,23,42,.65))"
-            : "radial-gradient(140px 140px at 50% 45%, rgba(255,255,255,.10), rgba(15,23,42,.65))",
-          boxShadow:"inset 0 10px 30px rgba(0,0,0,.5), 0 6px 24px rgba(0,0,0,.35)", border:"1px solid rgba(148,163,184,.35)"}}/>
-        <div style={{position:"absolute", inset:"30px 10px 34px 10px", borderRadius:"50%"}}>
+          background:"radial-gradient(140px 140px at 50% 45%, rgba(255,255,255,.10), rgba(15,23,42,.65))",
+          boxShadow:"inset 0 10px 30px rgba(0,0,0,.5), 0 6px 24px rgba(0,0,0,.35)", border:`1px solid ${aligned ? "rgba(16,185,129,.8)" : "rgba(148,163,184,.35)"}`}}/>
+        <div style={{position:"absolute", inset:"30px 10px 10px 10px", borderRadius:"50%"}}>
           {[...Array(60)].map((_,i)=>(
             <div key={i} style={{position:"absolute", inset:0, transform:`rotate(${i*6}deg)`}}>
-              <div style={{position:"absolute", top:8, left:"50%", transform:"translateX(-50%)", width: i%5===0 ? 3 : 2, height: i%5===0 ? 16 : 10, background:"#445169", opacity: i%5===0 ? 1 : .7, borderRadius:2}}/>
+              <div style={{position:"absolute", top:8, left:"50%", transform:"translateX(-50%)", width: i%5===0 ? 3 : 2, height: i%5===0 ? 16 : 10, background: aligned ? "#10b981" : "#445169", opacity: i%5===0 ? 1 : .7, borderRadius:2}}/>
             </div>
           ))}
-          <div style={{position:"absolute", inset:0, color:onTarget ? "#22c55e" : "#a5b4fc", fontWeight:700}}>
+          <div style={{position:"absolute", inset:0, color: aligned ? "#10b981" : "#a5b4fc", fontWeight:700}}>
             <div style={{position:"absolute", top:14, left:"50%", transform:"translateX(-50%)"}}>N</div>
-            <div style={{position:"absolute", bottom:46, left:"50%", transform:"translateX(-50%)"}}>S</div>
+            <div style={{position:"absolute", bottom:14, left:"50%", transform:"translateX(-50%)"}}>S</div>
             <div style={{position:"absolute", top:"50%", left:14, transform:"translateY(-50%)"}}>V</div>
             <div style={{position:"absolute", top:"50%", right:14, transform:"translateY(-50%)"}}>Ø</div>
           </div>
@@ -337,39 +276,28 @@ function ModernCompass({ targetBearing }) {
         <div style={{position:"absolute", top:30, left:"50%", transform:"translateX(-50%)", zIndex:3}}>
           <img src="/icons/kaaba_3d.svg" alt="Kaaba" width={40} height={40} draggable="false" />
         </div>
-        {/* Needle – rotate to target bearing relative to heading */}
+        {/* Needle */}
         <svg width="280" height="280" style={{position:"absolute", top:20, left:0, right:0, margin:"0 auto", pointerEvents:"none", zIndex:4}} aria-hidden="true">
           <defs>
             <linearGradient id="needle" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor={onTarget ? "#22c55e" : "#ef4444"}/>
-              <stop offset="100%" stopColor={onTarget ? "#15803d" : "#991b1b"}/>
+              <stop offset="0%" stopColor={aligned ? "#10b981" : "#ef4444"}/><stop offset="100%" stopColor={aligned ? "#065f46" : "#991b1b"}/>
             </linearGradient>
             <linearGradient id="tail" x1="0" y1="0" x2="0" y2="1">
               <stop offset="0%" stopColor="#94a3b8"/><stop offset="100%" stopColor="#475569"/>
             </linearGradient>
           </defs>
-          <g transform={`rotate(${normalize(targetBearing ?? 0)} 140 140)`}>
-            {/* Static arrow to target bearing */}
-            <polygon points="140,40 132,140 148,140" fill="url(#needle)" opacity="0.96"/>
+          <g transform={`rotate(${needleAngle} 140 140)`}>
+            <polygon points="140,40 132,140 148,140" fill="url(#needle)" opacity="0.98"/>
             <polygon points="132,140 148,140 140,208" fill="url(#tail)" opacity="0.86"/>
-            <circle cx="140" cy="140" r="8.5" fill="#e5e7eb" stroke="#334155" strokeWidth="2"/>
+            <circle cx="140" cy="140" r="8.5" fill={aligned ? "#10b981" : "#e5e7eb"} stroke={aligned ? "#065f46" : "#334155"} strokeWidth="2"/>
             <circle cx="140" cy="140" r="2.8" fill="#1f2937"/>
           </g>
-          {/* Heading needle (blue) */}
-          {typeof window !== "undefined" && (
-            <g transform={`rotate(${normalize(heading ?? 0)} 140 140)`}>
-              <polygon points="140,50 135,140 145,140" fill="#3b82f6" opacity="0.9"/>
-              <polygon points="135,140 145,140 140,205" fill="#1e40af" opacity="0.8"/>
-            </g>
-          )}
         </svg>
-        {/* Delta readout */}
-        <div style={{position:"absolute", bottom:6, left:0, right:0, textAlign:"center", fontSize:14}}>
-          {delta == null
-            ? <span className="hint">Tillat kompass for å se avvik i grader</span>
-            : onTarget
-              ? <span style={{color:"#22c55e"}}>✓ På Qibla (Δ {Math.abs(delta).toFixed(0)}°)</span>
-              : <span>Avvik Δ {Math.abs(delta).toFixed(0)}° ({delta > 0 ? "sving høyre" : "sving venstre"})</span>}
+      </div>
+
+      <div style={{textAlign:"center", marginTop:10}}>
+        <div className="hint">
+          {delta == null ? "Aktiver kompass" : `Avvik: ${Math.abs(Math.round(delta))}° ${aligned ? "✓ På Qibla" : ""}`}
         </div>
       </div>
 
@@ -393,7 +321,7 @@ function ModernCompass({ targetBearing }) {
   );
 }
 
-// ---------- Map (Leaflet via CDN) ----------
+// ---------- Map fallback (Leaflet via CDN) ----------
 function loadLeafletOnce() {
   if (window.L) return Promise.resolve(window.L);
   return new Promise((resolve, reject) => {
@@ -450,6 +378,7 @@ export default function App(){
   const [times, setTimes] = useState(null);
   const [apiError, setApiError] = useState("");
   const [bgIdx, setBgIdx] = useState(0);
+  const [theme, setTheme] = useLocalStorage("aq_theme", "dark");
   const [countdown, setCountdown] = useState({ name: null, at: null, diffText: null, tomorrow: false });
   const [remindersOn, setRemindersOn] = useLocalStorage("aq_reminders_on", false);
   const [showMap, setShowMap] = useState(false);
@@ -459,24 +388,21 @@ export default function App(){
   // rotate background
   useEffect(() => { const id = setInterval(()=> setBgIdx(i => (i+1)%BACKGROUNDS.length), 25000); return () => clearInterval(id) }, []);
 
-  // midnight refresh (check every 60s)
+  // midnight refresh (60s) and smooth countdown (500ms)
   useEffect(() => {
     let last = new Date().toDateString();
-    const id = setInterval(async () => {
+    const idDay = setInterval(async () => {
       const nowStr = new Date().toDateString();
       if (nowStr !== last) {
         last = nowStr;
-        if (coords) await refreshTimes("today");
+        if (coords) await refreshTimes(coords.latitude, coords.longitude);
       }
     }, 60000);
-    return () => clearInterval(id);
-  }, [coords?.latitude, coords?.longitude, city]);
-
-  // smooth countdown tick every 500ms
-  useEffect(() => {
-    const id = setInterval(() => setCountdown(nextPrayerInfo(times)), 500);
-    return () => clearInterval(id);
-  }, [times?.Fajr?.getTime?.()]);
+    const idTick = setInterval(() => {
+      setCountdown(nextPrayerInfo(times));
+    }, 500);
+    return () => { clearInterval(idDay); clearInterval(idTick) };
+  }, [coords?.latitude, coords?.longitude, times?.Fajr?.getTime?.()]);
 
   // reverse geocode on coords change
   useEffect(() => {
@@ -507,30 +433,31 @@ export default function App(){
 
   const qiblaDeg = useMemo(() => coords ? qiblaBearing(coords.latitude, coords.longitude) : null, [coords?.latitude, coords?.longitude]);
 
-  async function refreshTimes(date = "today") {
-    if (!coords) return;
+  async function refreshTimes(lat, lng) {
     try {
       setApiError("");
-      const todays = await fetchPrayerTimes({ lat: coords.latitude, lon: coords.longitude, cityName: city, date });
-      const info = nextPrayerInfo(todays);
+      const today = await fetchAladhan(lat, lng, "today");
+      const info = nextPrayerInfo(today);
       if (info.tomorrow) {
-        const tm = await fetchPrayerTimes({ lat: coords.latitude, lon: coords.longitude, cityName: city, date: "tomorrow" });
-        const fajr = tm.Fajr;
-        setTimes(todays);
+        const tomorrow = await fetchAladhan(lat, lng, "tomorrow");
+        const fajr = tomorrow.Fajr;
+        setTimes(today);
         setCountdown({ name: "Fajr", at: fajr, diffText: diffToText(fajr.getTime() - Date.now()), tomorrow: true });
       } else {
-        setTimes(todays);
+        setTimes(today);
         setCountdown(info);
       }
     } catch (e) {
-      setApiError("Klarte ikke hente bønnetider.");
+      console.error(e);
+      setApiError("Klarte ikke hente bønnetider (API).");
       setTimes(null);
     }
   }
 
   // initial fetch and start watch
   const onUseLocation = () => { requestOnce(); startWatch(); };
-  useEffect(() => { if (!coords) return; refreshTimes("today") }, [coords?.latitude, coords?.longitude, city]);
+
+  useEffect(() => { if (!coords) return; refreshTimes(coords.latitude, coords.longitude) }, [coords?.latitude, coords?.longitude]);
 
   // notifications permission helper
   const ensureNotify = async () => {
@@ -561,6 +488,11 @@ export default function App(){
       <div className="container">
         <header style={{marginBottom:10, textAlign:"center"}}>
           <h1>Afkir Qibla</h1>
+          <div style={{margin:"6px 0 2px"}}>
+            <button className="btn" onClick={()=>{ const d = document.documentElement; d.dataset.theme = (d.dataset.theme==="light"?"dark":"light") }}>
+              Tema
+            </button>
+          </div>
           <div className="hint">{NB_DAY.format(new Date())}</div>
         </header>
 
@@ -575,7 +507,6 @@ export default function App(){
                 : (permission === "denied" ? "Posisjon er blokkert i nettleseren." : "Gi tilgang for automatisk lokasjon")}
             </span>
           </div>
-          {geoError && <div className="error" style={{marginTop:8}}>{geoError}</div>}
         </section>
 
         {/* Compass + Map + Times */}
@@ -587,7 +518,7 @@ export default function App(){
             </div>
             {coords ? (
               <>
-                <ModernCompass targetBearing={qiblaDeg ?? 0} />
+                <ModernCompass bearing={qiblaDeg ?? 0} />
                 {showMap && (
                   <div style={{marginTop:12}}>
                     <QiblaMap coords={coords} />
@@ -599,11 +530,7 @@ export default function App(){
           </section>
 
           <section className="card">
-            <div style={{display:"flex", justifyContent:"space-between", alignItems:"center"}}>
-            <h3>Bønnetider</h3>
-            <button className="btn" onClick={()=>refreshTimes("today")} title="Hent tider på nytt">Oppdater tider</button>
-          </div>
-          <div className="hint">Kilde: Aladhan (tilpasset: method=99 + vinkel-basert; IRN-nær uten API-nøkkel)</div>
+            <h3>Bønnetider (Maliki)</h3>
             {apiError && <div className="error" style={{margin:"8px 0"}}>{apiError}</div>}
             {times ? (
               <>
@@ -625,14 +552,12 @@ export default function App(){
 
                 <div className="row" style={{marginTop:10}}>
                   <button className={remindersOn ? "btn btn-green" : "btn"} onClick={async ()=>{
-                    if (!("Notification" in window)) return; if (Notification.permission === "default") { try { await Notification.requestPermission() } catch {} }
-                    // toggle
-                    const next = !remindersOn; 
-                    if (!next) { /* clearing happens in effect cleanup */ }
-                    else { /* schedule happens in effect above */ }
-                    setRemindersOn(next);
+                    await ensureNotify();
+                    try { audioRef.current?.play?.().then(()=>{ audioRef.current.pause(); audioRef.current.currentTime=0; }) } catch {}
+                    setRemindersOn(v=>!v);
                   }}>{remindersOn ? "Adhan-varsler: PÅ" : "Adhan-varsler: AV"}</button>
 
+                  <button className="btn" onClick={()=>{ const a = audioRef.current; if (a) { a.currentTime=0; a.play().catch(()=>{}) } }}>Test Adhan</button>
                   <audio ref={audioRef} preload="auto" src="/audio/adhan.mp3"></audio>
                 </div>
               </>
