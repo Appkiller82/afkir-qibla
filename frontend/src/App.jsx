@@ -1,12 +1,11 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 
 /**
- * Afkir Qibla — FIX 2:
- * - Robust HH:MM regex parse (prevents all-times-being-09 bug)
- * - Build Date objects from API calendar date (gregorian) in local TZ
- * - Smooth countdown hh:mm:ss
- * - Compass shows degrees delta and turns green when aligned (±3°)
- * - Auto-refresh: >5km move + midnight
+ * Afkir Qibla — FIX 3 (build-safe):
+ * - FIX: reverseGeocode template string (unexpected "&" build error)
+ * - Keep: HH:MM regex parse; local Date from API gregorian date
+ * - Smooth countdown hh:mm:ss; compass; auto-refresh >5km + midnight
+ * - Norway: "IRN uten nøkkel" via small offsets (Norway tuning)
  */
 
 // ---------- Intl ----------
@@ -109,14 +108,9 @@ async function reverseGeocode(lat, lng) {
     const name = a.city || a.town || a.village || a.municipality || a.suburb || a.state || a.county || a.country;
     const countryCode = (a.country_code || "").toUpperCase();
     return { name: name || "", countryCode };
-  } catch { return { name: "", countryCode: "" } }
-}&lon=${lng}&accept-language=nb&zoom=10&addressdetails=1`;
-    const res = await fetch(url, { headers: { "Accept": "application/json" } });
-    const data = await res.json();
-    const a = data.address || {};
-    const name = a.city || a.town || a.village || a.municipality || a.suburb || a.state || a.county || a.country;
-    return name || "";
-  } catch { return "" }
+  } catch {
+    return { name: "", countryCode: "" };
+  }
 }
 
 // ---------- Qibla bearing ----------
@@ -190,25 +184,22 @@ async function fetchAladhan(lat, lng, when = "today") {
   };
 }
 
-
 // ---------- "IRN uten nøkkel" for Norge ----------
-// Vi kan ikke kalle bonnetider.no direkte uten nøkkel (CORS/API), så for Norge
-// emulerer vi IRN ved små, justerbare offset-minutter per bønn og måned.
-// Dette matcher praksis ok i norske byer uten å endre resten av verden.
+// Emuler IRN ved små, justerbare offset-minutter per bønn og måned.
 const NO_OFFSETS_BY_MONTH = {
   // m:  Fajr, Sunrise, Dhuhr, Asr, Maghrib, Isha   (i minutter)
-  1:  {Fajr:  0, Soloppgang: 0, Dhuhr: 1, Asr: 0, Maghrib: 0, Isha: 0},
-  2:  {Fajr:  0, Soloppgang: 0, Dhuhr: 1, Asr: 0, Maghrib: 0, Isha: 0},
-  3:  {Fajr:  0, Soloppgang: 0, Dhuhr: 1, Asr: 0, Maghrib: 0, Isha: 0},
-  4:  {Fajr:  0, Soloppgang: 0, Dhuhr: 1, Asr: 0, Maghrib: 0, Isha: 0},
-  5:  {Fajr:  0, Soloppgang: 0, Dhuhr: 1, Asr: 0, Maghrib: 0, Isha: 0},
-  6:  {Fajr:  0, Soloppgang: 0, Dhuhr: 1, Asr: 0, Maghrib: 0, Isha: 0},
-  7:  {Fajr:  0, Soloppgang: 0, Dhuhr: 1, Asr: 0, Maghrib: 0, Isha: 0},
-  8:  {Fajr:  0, Soloppgang: 0, Dhuhr: 1, Asr: 0, Maghrib: 0, Isha: 0},
-  9:  {Fajr:  0, Soloppgang: 0, Dhuhr: 1, Asr: 0, Maghrib: 0, Isha: 0},
- 10:  {Fajr:  0, Soloppgang: 0, Dhuhr: 1, Asr: 0, Maghrib: 0, Isha: 0},
- 11:  {Fajr:  0, Soloppgang: 0, Dhuhr: 1, Asr: 0, Maghrib: 0, Isha: 0},
- 12:  {Fajr:  0, Soloppgang: 0, Dhuhr: 1, Asr: 0, Maghrib: 0, Isha: 0},
+  1:  {Fajr: 0, Soloppgang: 0, Dhuhr: 1, Asr: 0, Maghrib: 0, Isha: 0},
+  2:  {Fajr: 0, Soloppgang: 0, Dhuhr: 1, Asr: 0, Maghrib: 0, Isha: 0},
+  3:  {Fajr: 0, Soloppgang: 0, Dhuhr: 1, Asr: 0, Maghrib: 0, Isha: 0},
+  4:  {Fajr: 0, Soloppgang: 0, Dhuhr: 1, Asr: 0, Maghrib: 0, Isha: 0},
+  5:  {Fajr: 0, Soloppgang: 0, Dhuhr: 1, Asr: 0, Maghrib: 0, Isha: 0},
+  6:  {Fajr: 0, Soloppgang: 0, Dhuhr: 1, Asr: 0, Maghrib: 0, Isha: 0},
+  7:  {Fajr: 0, Soloppgang: 0, Dhuhr: 1, Asr: 0, Maghrib: 0, Isha: 0},
+  8:  {Fajr: 0, Soloppgang: 0, Dhuhr: 1, Asr: 0, Maghrib: 0, Isha: 0},
+  9:  {Fajr: 0, Soloppgang: 0, Dhuhr: 1, Asr: 0, Maghrib: 0, Isha: 0},
+ 10:  {Fajr: 0, Soloppgang: 0, Dhuhr: 1, Asr: 0, Maghrib: 0, Isha: 0},
+ 11:  {Fajr: 0, Soloppgang: 0, Dhuhr: 1, Asr: 0, Maghrib: 0, Isha: 0},
+ 12:  {Fajr: 0, Soloppgang: 0, Dhuhr: 1, Asr: 0, Maghrib: 0, Isha: 0},
 };
 function applyNoOffsetsByMonth(times, dateObj=new Date()) {
   const m = (dateObj.getMonth()+1);
@@ -228,7 +219,6 @@ async function fetchPrayerTimesSmart(lat, lng, when="today", countryCode="") {
   if (inNorway) return applyNoOffsetsByMonth(base, new Date());
   return base;
 }
-
 
 // ---------- Countdown ----------
 const ORDER = ["Fajr","Soloppgang","Dhuhr","Asr","Maghrib","Isha"];
@@ -345,7 +335,7 @@ function ModernCompass({ bearing }) {
 
       <div style={{textAlign:"center", marginTop:10}}>
         <div className="hint">
-          {delta == null ? "Aktiver kompass" : `Avvik: ${Math.abs(Math.round(delta))}° ${aligned ? "✓ På Qibla" : ""}`}
+          {aligned === null ? "Aktiver kompass" : `Avvik: ${Math.abs(Math.round(delta))}° ${aligned ? "✓ På Qibla" : ""}`}
         </div>
       </div>
 
@@ -496,12 +486,6 @@ export default function App(){
         setTimes(today);
         setCountdown(info);
       }
-    } catch (e) {
-      console.error(e);
-      setApiError("Klarte ikke hente bønnetider (API).");
-      setTimes(null);
-    }
-  }
     } catch (e) {
       console.error(e);
       setApiError("Klarte ikke hente bønnetider (API).");
