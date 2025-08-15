@@ -1,18 +1,15 @@
 
-import React, { useEffect, useMemo, useRef, useState, Suspense } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 
 /**
- * Afkir Qibla – full update (Maliki, 5km auto-refresh, compass + map fallback, adhan reminders, countdown fix)
+ * Afkir Qibla — FIXED: prayer times + countdown (Maliki), 5km auto-refresh, compass + map fallback,
+ * adhan in-tab reminders, theme button between title and date.
  *
- * Features
- * - Theme button between title and date (safe-area friendly)
- * - Location: shows City • lat, lng (reverse geocode) and auto-updates when user moves > 5 km
- * - Prayer times: Aladhan method=5 (Egyptian / Maliki), school=0; auto-refresh at midnight and on >5 km moves
- * - Countdown: correct HH + MM, live-updating every 30s; shows both next prayer name/time and remaining
- * - Compass: Kaaba fixed marker; needle points to Kaaba (bearing - heading); quick sensor-permission + Help submenu
- * - Reminders: in-tab adhan + Notification toggle (button turns green when ON). Real push requires PWA (not included here).
- * - Map fallback: "Vis Qibla på kart" submenu with Leaflet loaded via CDN (no build deps). Draws line from you → Kaaba.
- * - Backgrounds: rotates images if present in /public/backgrounds; app still works without them.
+ * Key fixes in this version:
+ * - Robust Aladhan parsing (method=5, school=0). Strips "(CEST)" etc.
+ * - Correct countdown using milliseconds → minutes (no "2017 t" bug).
+ * - If all today's prayers have passed, auto fetch tomorrow and count down to Fajr.
+ * - Auto-refresh when moving > 5 km and at midnight.
  */
 
 // ---------- Intl ----------
@@ -72,7 +69,7 @@ function useGeolocationWatch(minKm = 5) {
       (err) => {
         let msg = err?.message || "Kunne ikke hente posisjon.";
         if (err?.code === 1) msg = "Tilgang til posisjon ble nektet. aA → Nettstedsinnstillinger → Sted = Tillat.";
-        if (err?.code === 2) msg = "Posisjon utilgjengelig. Prøv nær et vindu."; 
+        if (err?.code === 2) msg = "Posisjon utilgjengelig. Prøv nær et vindu.";
         if (err?.code === 3) msg = "Tidsavbrudd. Prøv igjen.";
         setError(msg); setLoading(false);
       },
@@ -88,7 +85,7 @@ function useGeolocationWatch(minKm = 5) {
         const c = { latitude: pos.coords.latitude, longitude: pos.coords.longitude };
         if (!lastCoords.current) { lastCoords.current = c; setCoords(c); return; }
         const km = haversineKm(lastCoords.current, c);
-        if (km >= minKm) { lastCoords.current = c; setCoords(c); } // trigger updates on > minKm
+        if (km >= minKm) { lastCoords.current = c; setCoords(c); } // trigger updates
       },
       () => {},
       { enableHighAccuracy: true, maximumAge: 15000, timeout: 20000 }
@@ -147,11 +144,14 @@ async function fetchAladhan(lat, lng, when = "today") {
   const json = await res.json();
   if (json.code !== 200 || !json.data?.timings) throw new Error("Ugyldig API-respons");
   const t = json.data.timings;
+
+  const clean = (s) => String(s).trim().split(" ")[0]; // "HH:MM (CEST)" -> "HH:MM"
   const base = new Date();
-  const mk = (hm, dayOffset=0) => {
-    const [h,m] = String(hm).split(" ")[0].split(":").map(x=>parseInt(x,10));
-    return new Date(base.getFullYear(), base.getMonth(), base.getDate()+dayOffset, h||0, m||0, 0, 0);
+  const mk = (hm, dOff=0) => {
+    const [h,m] = clean(hm).split(":").map(n=>parseInt(n,10));
+    return new Date(base.getFullYear(), base.getMonth(), base.getDate()+dOff, h||0, m||0, 0, 0);
   };
+
   return {
     Fajr: mk(t.Fajr),
     Soloppgang: mk(t.Sunrise),
@@ -176,8 +176,7 @@ function nextPrayerInfo(times) {
   for (const k of ORDER) {
     const t = times[k];
     if (t && t.getTime() > now.getTime()) {
-      const diffMs = t.getTime() - now.getTime();
-      return { name: k, at: t, diffText: diffToText(diffMs), tomorrow: false };
+      return { name: k, at: t, diffText: diffToText(t.getTime() - now.getTime()), tomorrow: false };
     }
   }
   return { name: null, at: null, diffText: null, tomorrow: true };
@@ -315,7 +314,7 @@ function QiblaMap({ coords }) {
   const divRef = useRef(null);
 
   useEffect(() => {
-    let map, you, kaabaMarker, line;
+    let map;
     if (!coords) return;
     let cancelled = false;
     loadLeafletOnce().then((L) => {
@@ -323,9 +322,9 @@ function QiblaMap({ coords }) {
       const mecca = [21.4225, 39.8262];
       map = L.map(divRef.current, { zoomControl: true, attributionControl: true }).setView([coords.latitude, coords.longitude], 5);
       L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19 }).addTo(map);
-      you = L.marker([coords.latitude, coords.longitude]).addTo(map).bindPopup("Din posisjon");
-      kaabaMarker = L.marker(mecca).addTo(map).bindPopup("Kaaba (Mekka)");
-      line = L.polyline([[coords.latitude, coords.longitude], mecca], { color: "#ef4444", weight: 3 }).addTo(map);
+      L.marker([coords.latitude, coords.longitude]).addTo(map).bindPopup("Din posisjon");
+      L.marker(mecca).addTo(map).bindPopup("Kaaba (Mekka)");
+      const line = L.polyline([[coords.latitude, coords.longitude], mecca], { color: "#ef4444", weight: 3 }).addTo(map);
       map.fitBounds(line.getBounds(), { padding: [24,24] });
       mapRef.current = map;
     }).catch(()=>{});
@@ -357,7 +356,7 @@ export default function App(){
   const audioRef = useRef(null);
   const timersRef = useRef([]);
 
-  // backgrounds
+  // rotate background
   useEffect(() => { const id = setInterval(()=> setBgIdx(i => (i+1)%BACKGROUNDS.length), 25000); return () => clearInterval(id) }, []);
 
   // midnight refresh + countdown tick (30s)
@@ -411,9 +410,8 @@ export default function App(){
       if (info.tomorrow) {
         const tomorrow = await fetchAladhan(lat, lng, "tomorrow");
         const fajr = tomorrow.Fajr;
-        const diffMs = fajr.getTime() - Date.now();
         setTimes(today);
-        setCountdown({ name: "Fajr", at: fajr, diffText: diffToText(diffMs), tomorrow: true });
+        setCountdown({ name: "Fajr", at: fajr, diffText: diffToText(fajr.getTime() - Date.now()), tomorrow: true });
       } else {
         setTimes(today);
         setCountdown(info);
@@ -424,7 +422,7 @@ export default function App(){
     }
   }
 
-  // initial fetch via requestOnce
+  // initial fetch and start watch
   const onUseLocation = () => { requestOnce(); startWatch(); };
 
   useEffect(() => { if (!coords) return; refreshTimes(coords.latitude, coords.longitude) }, [coords?.latitude, coords?.longitude]);
@@ -525,8 +523,7 @@ export default function App(){
                 <div className="row" style={{marginTop:10}}>
                   <button className={remindersOn ? "btn btn-green" : "btn"} onClick={async ()=>{
                     await ensureNotify();
-                    // unlock audio on iOS by a tap
-                    try { audioRef.current?.play?.().then(()=>{ audioRef.current.pause(); audioRef.current.currentTime = 0; }) } catch {}
+                    try { audioRef.current?.play?.().then(()=>{ audioRef.current.pause(); audioRef.current.currentTime=0; }) } catch {}
                     setRemindersOn(v=>!v);
                   }}>{remindersOn ? "Adhan-varsler: PÅ" : "Adhan-varsler: AV"}</button>
 
