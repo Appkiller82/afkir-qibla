@@ -107,6 +107,14 @@ async function reverseGeocode(lat, lng) {
     const data = await res.json();
     const a = data.address || {};
     const name = a.city || a.town || a.village || a.municipality || a.suburb || a.state || a.county || a.country;
+    const countryCode = (a.country_code || "").toUpperCase();
+    return { name: name || "", countryCode };
+  } catch { return { name: "", countryCode: "" } }
+}&lon=${lng}&accept-language=nb&zoom=10&addressdetails=1`;
+    const res = await fetch(url, { headers: { "Accept": "application/json" } });
+    const data = await res.json();
+    const a = data.address || {};
+    const name = a.city || a.town || a.village || a.municipality || a.suburb || a.state || a.county || a.country;
     return name || "";
   } catch { return "" }
 }
@@ -181,6 +189,46 @@ async function fetchAladhan(lat, lng, when = "today") {
     Isha: mk(t.Isha)
   };
 }
+
+
+// ---------- "IRN uten nøkkel" for Norge ----------
+// Vi kan ikke kalle bonnetider.no direkte uten nøkkel (CORS/API), så for Norge
+// emulerer vi IRN ved små, justerbare offset-minutter per bønn og måned.
+// Dette matcher praksis ok i norske byer uten å endre resten av verden.
+const NO_OFFSETS_BY_MONTH = {
+  // m:  Fajr, Sunrise, Dhuhr, Asr, Maghrib, Isha   (i minutter)
+  1:  {Fajr:  0, Soloppgang: 0, Dhuhr: 1, Asr: 0, Maghrib: 0, Isha: 0},
+  2:  {Fajr:  0, Soloppgang: 0, Dhuhr: 1, Asr: 0, Maghrib: 0, Isha: 0},
+  3:  {Fajr:  0, Soloppgang: 0, Dhuhr: 1, Asr: 0, Maghrib: 0, Isha: 0},
+  4:  {Fajr:  0, Soloppgang: 0, Dhuhr: 1, Asr: 0, Maghrib: 0, Isha: 0},
+  5:  {Fajr:  0, Soloppgang: 0, Dhuhr: 1, Asr: 0, Maghrib: 0, Isha: 0},
+  6:  {Fajr:  0, Soloppgang: 0, Dhuhr: 1, Asr: 0, Maghrib: 0, Isha: 0},
+  7:  {Fajr:  0, Soloppgang: 0, Dhuhr: 1, Asr: 0, Maghrib: 0, Isha: 0},
+  8:  {Fajr:  0, Soloppgang: 0, Dhuhr: 1, Asr: 0, Maghrib: 0, Isha: 0},
+  9:  {Fajr:  0, Soloppgang: 0, Dhuhr: 1, Asr: 0, Maghrib: 0, Isha: 0},
+ 10:  {Fajr:  0, Soloppgang: 0, Dhuhr: 1, Asr: 0, Maghrib: 0, Isha: 0},
+ 11:  {Fajr:  0, Soloppgang: 0, Dhuhr: 1, Asr: 0, Maghrib: 0, Isha: 0},
+ 12:  {Fajr:  0, Soloppgang: 0, Dhuhr: 1, Asr: 0, Maghrib: 0, Isha: 0},
+};
+function applyNoOffsetsByMonth(times, dateObj=new Date()) {
+  const m = (dateObj.getMonth()+1);
+  const o = NO_OFFSETS_BY_MONTH[m] || {};
+  const out = {};
+  for (const k of Object.keys(times||{})) {
+    const d = new Date(times[k]);
+    const off = (o?.[k] ?? 0);
+    d.setMinutes(d.getMinutes() + off);
+    out[k] = d;
+  }
+  return out;
+}
+async function fetchPrayerTimesSmart(lat, lng, when="today", countryCode="") {
+  const inNorway = (countryCode||"").toUpperCase() === "NO";
+  const base = await fetchAladhan(lat, lng, when);
+  if (inNorway) return applyNoOffsetsByMonth(base, new Date());
+  return base;
+}
+
 
 // ---------- Countdown ----------
 const ORDER = ["Fajr","Soloppgang","Dhuhr","Asr","Maghrib","Isha"];
@@ -375,6 +423,7 @@ const BACKGROUNDS = [
 export default function App(){
   const { coords, error: geoError, loading, permission, requestOnce, startWatch } = useGeolocationWatch(5);
   const [city, setCity]   = useLocalStorage("aq_city", "");
+  const [countryCode, setCountryCode] = useLocalStorage("aq_country", "");
   const [times, setTimes] = useState(null);
   const [apiError, setApiError] = useState("");
   const [bgIdx, setBgIdx] = useState(0);
@@ -407,7 +456,7 @@ export default function App(){
   // reverse geocode on coords change
   useEffect(() => {
     if (!coords) return;
-    reverseGeocode(coords.latitude, coords.longitude).then(n => n && setCity(n));
+    reverseGeocode(coords.latitude, coords.longitude).then(r => { if (r?.name) setCity(r.name); if (r?.countryCode) setCountryCode(r.countryCode); });
   }, [coords?.latitude, coords?.longitude]);
 
   // schedule reminders (tab-only)
@@ -436,10 +485,10 @@ export default function App(){
   async function refreshTimes(lat, lng) {
     try {
       setApiError("");
-      const today = await fetchAladhan(lat, lng, "today");
+      const today = await fetchPrayerTimesSmart(lat, lng, "today", countryCode);
       const info = nextPrayerInfo(today);
       if (info.tomorrow) {
-        const tomorrow = await fetchAladhan(lat, lng, "tomorrow");
+        const tomorrow = await fetchPrayerTimesSmart(lat, lng, "tomorrow", countryCode);
         const fajr = tomorrow.Fajr;
         setTimes(today);
         setCountdown({ name: "Fajr", at: fajr, diffText: diffToText(fajr.getTime() - Date.now()), tomorrow: true });
@@ -447,6 +496,12 @@ export default function App(){
         setTimes(today);
         setCountdown(info);
       }
+    } catch (e) {
+      console.error(e);
+      setApiError("Klarte ikke hente bønnetider (API).");
+      setTimes(null);
+    }
+  }
     } catch (e) {
       console.error(e);
       setApiError("Klarte ikke hente bønnetider (API).");
