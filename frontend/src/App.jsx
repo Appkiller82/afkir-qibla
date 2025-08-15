@@ -2,14 +2,14 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 
 /**
- * Afkir Qibla — Prayer-hours HOTFIX (Maliki, countdown correct)
- * Fixes:
- *  - Parse Aladhan times robustly and set BOTH hours and minutes explicitly.
- *  - Correct hh:mm countdown (ms → minutes → hours).
- *  - If today is finished, fetch tomorrow and count down to Fajr.
- *  - Keeps earlier features (5km auto-refresh, compass+map optional, adhan test, theme).
+ * Afkir Qibla — FIXED: prayer times + countdown (Maliki), 5km auto-refresh, compass + map fallback,
+ * adhan in-tab reminders, theme button between title and date.
  *
- * NOTE: This file focuses on fixing prayer hours + countdown.
+ * Key fixes in this version:
+ * - Robust Aladhan parsing (method=5, school=0). Strips "(CEST)" etc.
+ * - Correct countdown using milliseconds → minutes (no "2017 t" bug).
+ * - If all today's prayers have passed, auto fetch tomorrow and count down to Fajr.
+ * - Auto-refresh when moving > 5 km and at midnight.
  */
 
 // ---------- Intl ----------
@@ -17,7 +17,9 @@ const NB_TIME = new Intl.DateTimeFormat("nb-NO", { hour: "2-digit", minute: "2-d
 const NB_DAY  = new Intl.DateTimeFormat("nb-NO", { weekday: "long", day: "2-digit", month: "long" });
 
 function useLocalStorage(key, init) {
-  const [v, setV] = useState(() => { try { const j = localStorage.getItem(key); return j ? JSON.parse(j) : init } catch { return init } });
+  const [v, setV] = useState(() => {
+    try { const j = localStorage.getItem(key); return j ? JSON.parse(j) : init } catch { return init }
+  });
   useEffect(() => { try { localStorage.setItem(key, JSON.stringify(v)) } catch {} }, [key, v]);
   return [v, setV];
 }
@@ -36,7 +38,7 @@ function haversineKm(a, b) {
   return R * c;
 }
 
-// ---------- Geolocation watch (>5km) ----------
+// ---------- Geolocation + watch >5km ----------
 function useGeolocationWatch(minKm = 5) {
   const [coords, setCoords] = useState(null);
   const [error, setError] = useState(null);
@@ -90,7 +92,7 @@ function useGeolocationWatch(minKm = 5) {
     );
   };
 
-  useEffect(() => () => {
+  useEffect(() => () => { // cleanup
     if (watchId.current != null && navigator.geolocation?.clearWatch) {
       navigator.geolocation.clearWatch(watchId.current);
       watchId.current = null;
@@ -143,16 +145,11 @@ async function fetchAladhan(lat, lng, when = "today") {
   if (json.code !== 200 || !json.data?.timings) throw new Error("Ugyldig API-respons");
   const t = json.data.timings;
 
-  // Robust parse: strip "(CEST)"; set BOTH H and M explicitly
-  const clean = (s) => String(s).trim().split(" ")[0];
-  const mk = (hm, dOff = 0) => {
-    const first = clean(hm);
-    const [h, m] = first.split(":").map(n => parseInt(n, 10));
-    const d = new Date();
-    d.setHours(0, 0, 0, 0);                                     // start at midnight today
-    d.setFullYear(d.getFullYear(), d.getMonth(), d.getDate()+dOff);
-    d.setHours((h||0), (m||0), 0, 0);                           // set BOTH hour and minute
-    return d;
+  const clean = (s) => String(s).trim().split(" ")[0]; // "HH:MM (CEST)" -> "HH:MM"
+  const base = new Date();
+  const mk = (hm, dOff=0) => {
+    const [h,m] = clean(hm).split(":").map(n=>parseInt(n,10));
+    return new Date(base.getFullYear(), base.getMonth(), base.getDate()+dOff, h||0, m||0, 0, 0);
   };
 
   return {
@@ -168,7 +165,7 @@ async function fetchAladhan(lat, lng, when = "today") {
 // ---------- Countdown ----------
 const ORDER = ["Fajr","Soloppgang","Dhuhr","Asr","Maghrib","Isha"];
 function diffToText(ms) {
-  const totalMin = Math.max(0, Math.floor(ms / 60000));  // ms → minutes (no seconds bug)
+  const totalMin = Math.max(0, Math.floor(ms / 60000));  // ms → minutes (fixes seconds bug)
   const h = Math.floor(totalMin / 60);
   const m = totalMin % 60;
   return h > 0 ? `${h} t ${m} min` : `${m} min`;
@@ -185,15 +182,182 @@ function nextPrayerInfo(times) {
   return { name: null, at: null, diffText: null, tomorrow: true };
 }
 
-// ---------- App (minimal UI to verify times) ----------
+// ---------- Compass ----------
+function ModernCompass({ bearing }) {
+  const [heading, setHeading] = useState(null);
+  const [manualHeading, setManualHeading] = useState(0);
+  const [showHelp, setShowHelp] = useState(false);
+
+  const onOrientation = (e) => {
+    let hdg = null;
+    if (typeof e?.webkitCompassHeading === "number") hdg = e.webkitCompassHeading; // iOS
+    else if (typeof e?.alpha === "number") hdg = 360 - e.alpha; // others
+    if (hdg != null && !Number.isNaN(hdg)) setHeading((hdg + 360) % 360);
+  };
+
+  const requestSensors = async () => {
+    try { if (window.DeviceMotionEvent?.requestPermission) await window.DeviceMotionEvent.requestPermission() } catch {}
+    if (window.DeviceOrientationEvent?.requestPermission) {
+      try { const p = await window.DeviceOrientationEvent.requestPermission(); if (p !== "granted") { setShowHelp(true); return false } } catch { setShowHelp(true); return false }
+    }
+    return true;
+  };
+
+  const activateCompass = async () => {
+    let ok = true;
+    if (window.DeviceOrientationEvent?.requestPermission) ok = await requestSensors();
+    if (!ok) { setShowHelp(true); return }
+    window.addEventListener("deviceorientationabsolute", onOrientation, true);
+    window.addEventListener("deviceorientation", onOrientation, true);
+    setTimeout(() => { if (heading == null) setShowHelp(true) }, 3000);
+  };
+
+  useEffect(() => () => {
+    window.removeEventListener("deviceorientationabsolute", onOrientation, true);
+    window.removeEventListener("deviceorientation", onOrientation, true);
+  }, []);
+
+  const usedHeading = heading == null ? manualHeading : heading;
+  const needleAngle = (bearing == null || usedHeading == null) ? 0 : ((bearing - usedHeading + 360) % 360);
+
+  return (
+    <div>
+      <div style={{display:"flex", justifyContent:"center", gap:8}}>
+        <button className="btn" onClick={activateCompass}>Tillat kompass</button>
+        <button className="btn" onClick={()=>setShowHelp(true)}>Hjelp</button>
+      </div>
+
+      <div style={{position:"relative", width:280, height:300, margin:"12px auto 0"}}>
+        {/* dial */}
+        <div style={{position:"absolute", inset:"20px 0 0 0", borderRadius:"50%",
+          background:"radial-gradient(140px 140px at 50% 45%, rgba(255,255,255,.10), rgba(15,23,42,.65))",
+          boxShadow:"inset 0 10px 30px rgba(0,0,0,.5), 0 6px 24px rgba(0,0,0,.35)", border:"1px solid rgba(148,163,184,.35)"}}/>
+        <div style={{position:"absolute", inset:"30px 10px 10px 10px", borderRadius:"50%"}}>
+          {[...Array(60)].map((_,i)=>(
+            <div key={i} style={{position:"absolute", inset:0, transform:`rotate(${i*6}deg)`}}>
+              <div style={{position:"absolute", top:8, left:"50%", transform:"translateX(-50%)", width: i%5===0 ? 3 : 2, height: i%5===0 ? 16 : 10, background:"#445169", opacity: i%5===0 ? 1 : .7, borderRadius:2}}/>
+            </div>
+          ))}
+          <div style={{position:"absolute", inset:0, color:"#a5b4fc", fontWeight:700}}>
+            <div style={{position:"absolute", top:14, left:"50%", transform:"translateX(-50%)"}}>N</div>
+            <div style={{position:"absolute", bottom:14, left:"50%", transform:"translateX(-50%)"}}>S</div>
+            <div style={{position:"absolute", top:"50%", left:14, transform:"translateY(-50%)"}}>V</div>
+            <div style={{position:"absolute", top:"50%", right:14, transform:"translateY(-50%)"}}>Ø</div>
+          </div>
+        </div>
+        {/* Kaaba fixed */}
+        <div style={{position:"absolute", top:30, left:"50%", transform:"translateX(-50%)", zIndex:3}}>
+          <img src="/icons/kaaba_3d.svg" alt="Kaaba" width={40} height={40} draggable="false" />
+        </div>
+        {/* Needle */}
+        <svg width="280" height="280" style={{position:"absolute", top:20, left:0, right:0, margin:"0 auto", pointerEvents:"none", zIndex:4}} aria-hidden="true">
+          <defs>
+            <linearGradient id="needle" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#ef4444"/><stop offset="100%" stopColor="#991b1b"/>
+            </linearGradient>
+            <linearGradient id="tail" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#94a3b8"/><stop offset="100%" stopColor="#475569"/>
+            </linearGradient>
+          </defs>
+          <g transform={`rotate(${needleAngle} 140 140)`}>
+            <polygon points="140,40 132,140 148,140" fill="url(#needle)" opacity="0.96"/>
+            <polygon points="132,140 148,140 140,208" fill="url(#tail)" opacity="0.86"/>
+            <circle cx="140" cy="140" r="8.5" fill="#e5e7eb" stroke="#334155" strokeWidth="2"/>
+            <circle cx="140" cy="140" r="2.8" fill="#1f2937"/>
+          </g>
+        </svg>
+      </div>
+
+      <div style={{textAlign:"center", marginTop:10}}>
+        <div className="hint">Hvis kompasset ikke virker hos deg, åpne undermenyen “Vis Qibla på kart”.</div>
+      </div>
+
+      {/* Help modal */}
+      {showHelp && (
+        <div style={{position:"fixed", inset:0, background:"rgba(0,0,0,.6)", display:"grid", placeItems:"center", zIndex:50}} onClick={()=>setShowHelp(false)}>
+          <div style={{background:"rgba(11,18,32,.96)", backdropFilter:"blur(8px)", border:"1px solid #334155", borderRadius:12, padding:16, width:"90%", maxWidth:420}} onClick={e=>e.stopPropagation()}>
+            <div style={{display:"flex", justifyContent:"space-between", alignItems:"center"}}>
+              <h3 style={{margin:0}}>Få i gang kompasset</h3>
+              <button className="btn" onClick={()=>setShowHelp(false)}>Lukk</button>
+            </div>
+            <ol style={{margin:"12px 0 0 18px"}}>
+              <li>Trykk <b>Tillat kompass</b> og gi tilgang til bevegelse/orientering.</li>
+              <li>Safari (iPhone): aA → Nettstedsinnstillinger → slå på <b>Bevegelse & orientering</b>.</li>
+              <li>Kalibrer ved å bevege telefonen i en <b>figur-8</b>.</li>
+            </ol>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------- Map fallback (Leaflet via CDN) ----------
+function loadLeafletOnce() {
+  if (window.L) return Promise.resolve(window.L);
+  return new Promise((resolve, reject) => {
+    const css = document.createElement("link");
+    css.rel = "stylesheet";
+    css.href = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css";
+    const js = document.createElement("script");
+    js.src = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js";
+    js.async = true;
+    js.onload = () => resolve(window.L);
+    js.onerror = reject;
+    document.head.appendChild(css);
+    document.body.appendChild(js);
+  });
+}
+
+function QiblaMap({ coords }) {
+  const mapRef = useRef(null);
+  const divRef = useRef(null);
+
+  useEffect(() => {
+    let map;
+    if (!coords) return;
+    let cancelled = false;
+    loadLeafletOnce().then((L) => {
+      if (cancelled || !divRef.current) return;
+      const mecca = [21.4225, 39.8262];
+      map = L.map(divRef.current, { zoomControl: true, attributionControl: true }).setView([coords.latitude, coords.longitude], 5);
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19 }).addTo(map);
+      L.marker([coords.latitude, coords.longitude]).addTo(map).bindPopup("Din posisjon");
+      L.marker(mecca).addTo(map).bindPopup("Kaaba (Mekka)");
+      const line = L.polyline([[coords.latitude, coords.longitude], mecca], { color: "#ef4444", weight: 3 }).addTo(map);
+      map.fitBounds(line.getBounds(), { padding: [24,24] });
+      mapRef.current = map;
+    }).catch(()=>{});
+    return () => { cancelled = true; if (mapRef.current) { mapRef.current.remove(); mapRef.current = null; } };
+  }, [coords?.latitude, coords?.longitude]);
+
+  return <div ref={divRef} style={{width:"100%", height:320, borderRadius:12, overflow:"hidden"}} />;
+}
+
+// ---------- App ----------
+const BACKGROUNDS = [
+  "/backgrounds/mecca_panorama.jpg",
+  "/backgrounds/kaaba_2024.jpg",
+  "/backgrounds/mecca_aerial.jpg",
+  "/backgrounds/mecca_city_panorama.jpg",
+  "/backgrounds/mecca_exterior.jpg"
+];
+
 export default function App(){
   const { coords, error: geoError, loading, permission, requestOnce, startWatch } = useGeolocationWatch(5);
   const [city, setCity]   = useLocalStorage("aq_city", "");
   const [times, setTimes] = useState(null);
   const [apiError, setApiError] = useState("");
+  const [bgIdx, setBgIdx] = useState(0);
   const [theme, setTheme] = useLocalStorage("aq_theme", "dark");
   const [countdown, setCountdown] = useState({ name: null, at: null, diffText: null, tomorrow: false });
+  const [remindersOn, setRemindersOn] = useLocalStorage("aq_reminders_on", false);
+  const [showMap, setShowMap] = useState(false);
   const audioRef = useRef(null);
+  const timersRef = useRef([]);
+
+  // rotate background
+  useEffect(() => { const id = setInterval(()=> setBgIdx(i => (i+1)%BACKGROUNDS.length), 25000); return () => clearInterval(id) }, []);
 
   // midnight refresh + countdown tick (30s)
   useEffect(() => {
@@ -215,6 +379,29 @@ export default function App(){
     reverseGeocode(coords.latitude, coords.longitude).then(n => n && setCity(n));
   }, [coords?.latitude, coords?.longitude]);
 
+  // schedule reminders (tab-only)
+  useEffect(() => {
+    timersRef.current.forEach(id => clearTimeout(id));
+    timersRef.current = [];
+    if (!remindersOn || !times) return;
+    const now = Date.now();
+    ORDER.forEach(name => {
+      const t = times[name];
+      if (!(t instanceof Date)) return;
+      const ms = t.getTime() - now;
+      if (ms > 1000) {
+        const id = setTimeout(() => {
+          try { audioRef.current?.play?.() } catch {}
+          try { if ("Notification" in window && Notification.permission === "granted") new Notification(`Tid for ${name}`) } catch {}
+        }, ms);
+        timersRef.current.push(id);
+      }
+    });
+    return () => { timersRef.current.forEach(id => clearTimeout(id)); timersRef.current = [] };
+  }, [remindersOn, times?.Fajr?.getTime?.()]);
+
+  const qiblaDeg = useMemo(() => coords ? qiblaBearing(coords.latitude, coords.longitude) : null, [coords?.latitude, coords?.longitude]);
+
   async function refreshTimes(lat, lng) {
     try {
       setApiError("");
@@ -235,56 +422,117 @@ export default function App(){
     }
   }
 
+  // initial fetch and start watch
   const onUseLocation = () => { requestOnce(); startWatch(); };
 
   useEffect(() => { if (!coords) return; refreshTimes(coords.latitude, coords.longitude) }, [coords?.latitude, coords?.longitude]);
 
+  // notifications permission helper
+  const ensureNotify = async () => {
+    if (!("Notification" in window)) return;
+    if (Notification.permission === "default") { try { await Notification.requestPermission() } catch {} }
+  };
+
+  const bg = BACKGROUNDS[bgIdx];
+
   return (
-    <div style={{minHeight:"100dvh", color:"#e5e7eb", background:"#0b1220"}}>
-      <div style={{padding:"18px 16px"}}>
-        <h1 style={{margin:0}}>Afkir Qibla</h1>
-        <div style={{margin:"8px 0 14px", color:"#93a4b8"}}>{NB_DAY.format(new Date())}</div>
+    <div style={{minHeight:"100dvh", color:"var(--fg)", backgroundSize:"cover", backgroundPosition:"center", backgroundImage:`linear-gradient(rgba(4,6,12,.65), rgba(4,6,12,.65)), url(${bg})`, transition:"background-image .8s ease"}}>
+      <style>{`
+        :root { --fg:#e5e7eb; --muted:#cbd5e1; --card:rgba(15,23,42,.78); --border:#334155; --btn:#0b1220; --accent:#16a34a; }
+        :root[data-theme="light"] { --fg:#0f172a; --muted:#475569; --card:rgba(255,255,255,.93); --border:#d1d5db; --btn:#f8fafc; --accent:#16a34a; }
+        .container { padding: calc(env(safe-area-inset-top) + 14px) 16px 16px; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+        .card { border:1px solid var(--border); border-radius: 16px; padding: 14px; background: var(--card); backdrop-filter: blur(10px); }
+        .btn { padding:10px 14px; border-radius:12px; border:1px solid var(--border); background: var(--btn); color: var(--fg); cursor:pointer; }
+        .btn:hover { opacity:.95 }
+        .btn-green { background: var(--accent); border-color: var(--accent); color: white; }
+        .hint { color: var(--muted); font-size: 13px; }
+        .row { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+        h1 { margin:0 0 6px 0; font-size: 28px; line-height:1.15 }
+        ul.times { list-style:none; padding:0; margin:0 }
+        .time-item { display:flex; justify-content:space-between; padding:8px 0; border-bottom:1px dashed var(--border); font-size:16px }
+        .error { color:#fecaca; background:rgba(239,68,68,.12); border:1px solid rgba(239,68,68,.35); padding:10px; border-radius:12px; }
+      `}</style>
 
-        <div style={{marginBottom:12}}>
-          <button onClick={()=>{ const d=document.documentElement; d.dataset.theme=(d.dataset.theme==="light"?"dark":"light") }}>
-            Tema
-          </button>
-        </div>
-
-        <div style={{border:"1px solid #334155", borderRadius:12, padding:12, background:"#121a2b"}}>
-          <h3 style={{marginTop:0}}>Plassering</h3>
-          <button onClick={onUseLocation} disabled={loading}>{loading ? "Henter…" : "Bruk stedstjenester"}</button>
-          <div style={{marginTop:8, color:"#93a4b8"}}>
-            {coords ? ((city ? city + " • " : "") + coords.latitude.toFixed(4) + ", " + coords.longitude.toFixed(4))
-                    : (permission === "denied" ? "Posisjon blokkert i nettleser" : "Gi tilgang for automatisk lokasjon")}
+      <div className="container">
+        <header style={{marginBottom:10, textAlign:"center"}}>
+          <h1>Afkir Qibla</h1>
+          {/* Theme button BETWEEN title and date */}
+          <div style={{margin:"6px 0 2px"}}>
+            <button className="btn" onClick={()=>{ const d = document.documentElement; d.dataset.theme = (d.dataset.theme==="light"?"dark":"light") }}>
+              Tema
+            </button>
           </div>
-          {geoError && <div style={{color:"#fecaca", marginTop:6}}>{geoError}</div>}
-        </div>
+          <div className="hint">{NB_DAY.format(new Date())}</div>
+        </header>
 
-        <div style={{marginTop:12, border:"1px solid #334155", borderRadius:12, padding:12, background:"#121a2b"}}>
-          <h3 style={{marginTop:0}}>Bønnetider (Maliki)</h3>
-          {apiError && <div style={{color:"#fecaca"}}>{apiError}</div>}
-          {times ? (
-            <>
-              <ul style={{listStyle:"none", padding:0, margin:0}}>
-                <li style={{display:"flex", justifyContent:"space-between", padding:"8px 0", borderBottom:"1px dashed #334155"}}><span>Fajr</span><span>{NB_TIME.format(times.Fajr)}</span></li>
-                <li style={{display:"flex", justifyContent:"space-between", padding:"8px 0", borderBottom:"1px dashed #334155"}}><span>Soloppgang</span><span>{NB_TIME.format(times.Soloppgang)}</span></li>
-                <li style={{display:"flex", justifyContent:"space-between", padding:"8px 0", borderBottom:"1px dashed #334155"}}><span>Dhuhr</span><span>{NB_TIME.format(times.Dhuhr)}</span></li>
-                <li style={{display:"flex", justifyContent:"space-between", padding:"8px 0", borderBottom:"1px dashed #334155"}}><span>Asr</span><span>{NB_TIME.format(times.Asr)}</span></li>
-                <li style={{display:"flex", justifyContent:"space-between", padding:"8px 0", borderBottom:"1px dashed #334155"}}><span>Maghrib</span><span>{NB_TIME.format(times.Maghrib)}</span></li>
-                <li style={{display:"flex", justifyContent:"space-between", padding:"8px 0"}}><span>Isha</span><span>{NB_TIME.format(times.Isha)}</span></li>
-              </ul>
-              <div style={{marginTop:10}}>
-                {countdown?.name
-                  ? <>Neste bønn: <b>{countdown.name}</b> kl <b>{NB_TIME.format(countdown.at)}</b> (<span style={{color:"#93a4b8"}}>{countdown.diffText}</span>)</>
-                  : <span style={{color:"#93a4b8"}}>Alle dagens bønner er passert – oppdateres ved midnatt.</span>}
-              </div>
-              <div style={{marginTop:10}}>
-                <button onClick={()=>{ const a=audioRef.current; if (a) { a.currentTime=0; a.play().catch(()=>{}) } }}>Test Adhan</button>
-                <audio ref={audioRef} preload="auto" src="/audio/adhan.mp3"></audio>
-              </div>
-            </>
-          ) : <div style={{color:"#93a4b8"}}>Henter bønnetider…</div>}
+        {/* Location */}
+        <section className="card">
+          <h3>Plassering</h3>
+          <div className="row" style={{marginTop:8}}>
+            <button className="btn" onClick={onUseLocation} disabled={loading}>{loading ? "Henter…" : "Bruk stedstjenester"}</button>
+            <span className="hint">
+              {coords
+                ? ((city ? city + " • " : "") + coords.latitude.toFixed(4) + ", " + coords.longitude.toFixed(4))
+                : (permission === "denied" ? "Posisjon er blokkert i nettleseren." : "Gi tilgang for automatisk lokasjon")}
+            </span>
+          </div>
+          {geoError && <div className="error" style={{marginTop:8}}>{geoError}</div>}
+        </section>
+
+        {/* Compass + Map + Times */}
+        <div style={{display:"grid", gap:12, marginTop:12}}>
+          <section className="card">
+            <div style={{display:"flex", justifyContent:"space-between", alignItems:"center"}}>
+              <h3>Qibla-retning</h3>
+              <button className="btn" onClick={()=>setShowMap(v=>!v)}>{showMap ? "Skjul kart" : "Vis Qibla på kart"}</button>
+            </div>
+            {coords ? (
+              <>
+                <ModernCompass bearing={qiblaDeg ?? 0} />
+                {showMap && (
+                  <div style={{marginTop:12}}>
+                    <QiblaMap coords={coords} />
+                    <div className="hint" style={{marginTop:6}}>Linjen viser retningen fra din posisjon til Kaaba (Mekka).</div>
+                  </div>
+                )}
+              </>
+            ) : <div className="hint">Velg/bekreft posisjon for å vise Qibla og kart.</div>}
+          </section>
+
+          <section className="card">
+            <h3>Bønnetider (Maliki)</h3>
+            {apiError && <div className="error" style={{margin:"8px 0"}}>{apiError}</div>}
+            {times ? (
+              <>
+                <ul className="times">
+                  <li className="time-item"><span>Fajr</span><span>{NB_TIME.format(times.Fajr)}</span></li>
+                  <li className="time-item"><span>Soloppgang</span><span>{NB_TIME.format(times.Soloppgang)}</span></li>
+                  <li className="time-item"><span>Dhuhr</span><span>{NB_TIME.format(times.Dhuhr)}</span></li>
+                  <li className="time-item"><span>Asr</span><span>{NB_TIME.format(times.Asr)}</span></li>
+                  <li className="time-item"><span>Maghrib</span><span>{NB_TIME.format(times.Maghrib)}</span></li>
+                  <li className="time-item"><span>Isha</span><span>{NB_TIME.format(times.Isha)}</span></li>
+                </ul>
+
+                <div style={{marginTop:10, fontSize:15}}>
+                  {countdown?.name
+                    ? <>Neste bønn: <b>{countdown.name}</b> kl <b>{NB_TIME.format(countdown.at)}</b> (<span className="hint">{countdown.diffText}</span>)</>
+                    : <span className="hint">Alle dagens bønner er passert – oppdateres ved midnatt.</span>
+                  }
+                </div>
+
+                <div className="row" style={{marginTop:10}}>
+                  <button className={remindersOn ? "btn btn-green" : "btn"} onClick={async ()=>{
+                    await ensureNotify();
+                    try { audioRef.current?.play?.().then(()=>{ audioRef.current.pause(); audioRef.current.currentTime=0; }) } catch {}
+                    setRemindersOn(v=>!v);
+                  }}>{remindersOn ? "Adhan-varsler: PÅ" : "Adhan-varsler: AV"}</button>
+
+                  <button className="btn" onClick={()=>{ const a = audioRef.current; if (a) { a.currentTime=0; a.play().catch(()=>{}) } }}>Test Adhan</button>
+                  <audio ref={audioRef} preload="auto" src="/audio/adhan.mp3"></audio>
+                </div>
+              </>
+            ) : <div className="hint">Henter bønnetider…</div>}
+          </section>
         </div>
       </div>
     </div>
