@@ -1,13 +1,25 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 
 /**
- * Afkir Qibla — Norway IRN-like without API (stable)
- * - Norway (countryCode === "NO"): use Aladhan custom method=99 with Fajr/Isha angles and AngleBased high-lat rule.
- *   * fajr=17.5°, isha=17.5°, school=0 (Maliki), latitudeAdjustmentMethod=3 (AngleBased)
- *   * small roundings: Dhuhr -3m, Maghrib -2m (typical IRN practice)
- * - Rest of world: Aladhan method=5 (Egyptian) as before.
- * - Robust HH:MM parsing; local-date build; smooth countdown; compass + map.
+ * Afkir Qibla — Norway “IRN-like” profile (no API key)
+ * - Norway: Aladhan custom (method=99) + tuned angles + small fixed offsets to approximate IRN.
+ * - World: Aladhan method=5 (Egyptian) unchanged.
  */
+
+// ---------- Tuning (easy to edit) ----------
+const NO_IRN_PROFILE = {
+  fajrAngle: 18.0,   // earlier Fajr vs 17.5
+  ishaAngle: 14.0,   // earlier Isha vs 17.5
+  latitudeAdj: 3,    // AngleBased
+  school: 0,         // Maliki
+  offsets: {
+    Fajr: -9,        // minutes (− = earlier)
+    Dhuhr: +12,
+    Asr: 0,
+    Maghrib: +8,
+    Isha: -46
+  }
+};
 
 // ---------- Intl ----------
 const NB_TIME = new Intl.DateTimeFormat("nb-NO", { hour: "2-digit", minute: "2-digit" });
@@ -177,11 +189,11 @@ async function fetchAladhanCustomNO(lat, lng, when = "today") {
   const params = new URLSearchParams({
     latitude: String(lat),
     longitude: String(lng),
-    method: "99",                  // custom
-    fajr: "17.5",                  // degrees
-    isha: "17.5",                  // degrees
-    school: "0",                   // Maliki
-    latitudeAdjustmentMethod: "3", // AngleBased
+    method: "99",                            // custom for Norway
+    fajr: String(NO_IRN_PROFILE.fajrAngle), // degrees
+    isha: String(NO_IRN_PROFILE.ishaAngle), // degrees
+    school: String(NO_IRN_PROFILE.school),
+    latitudeAdjustmentMethod: String(NO_IRN_PROFILE.latitudeAdj),
     timezonestring: tz,
     iso8601: "true"
   });
@@ -192,14 +204,14 @@ async function fetchAladhanCustomNO(lat, lng, when = "today") {
   if (json.code !== 200 || !json.data?.timings) throw new Error("Ugyldig API-respons");
 
   const base = parseAladhanToDates(json);
-  // Small IRN-like roundings
+  const o = NO_IRN_PROFILE.offsets;
   return {
-    Fajr: base.Fajr,
+    Fajr: addMinutes(base.Fajr, o.Fajr || 0),
     Soloppgang: base.Soloppgang,
-    Dhuhr: addMinutes(base.Dhuhr, -3),
-    Asr: base.Asr,
-    Maghrib: addMinutes(base.Maghrib, -2),
-    Isha: base.Isha
+    Dhuhr: addMinutes(base.Dhuhr, o.Dhuhr || 0),
+    Asr: addMinutes(base.Asr, o.Asr || 0),
+    Maghrib: addMinutes(base.Maghrib, o.Maghrib || 0),
+    Isha: addMinutes(base.Isha, o.Isha || 0)
   };
 }
 
@@ -346,7 +358,7 @@ function ModernCompass({ bearing }) {
   );
 }
 
-// ---------- Map fallback (Leaflet via CDN) ----------
+// ---------- Map fallback ----------
 function loadLeafletOnce() {
   if (window.L) return Promise.resolve(window.L);
   return new Promise((resolve, reject) => {
