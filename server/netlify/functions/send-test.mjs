@@ -1,45 +1,63 @@
-// Netlify Function: POST /api/send-test
-import webpush from 'web-push';
-import { createClient } from '@netlify/blobs';
+import webpush from "web-push";
+import { createClient } from "@netlify/blobs";
 
 const PUB  = process.env.VAPID_PUBLIC_KEY;
 const PRIV = process.env.VAPID_PRIVATE_KEY;
-const SUBJ = process.env.VAPID_SUBJECT || 'mailto:you@example.com';
-
+const SUBJ = process.env.VAPID_SUBJECT || "mailto:you@example.com";
 webpush.setVapidDetails(SUBJ, PUB, PRIV);
 
-export default async (req, res) => {
+export const config = { path: "/api/send-test" };
+
+export default async (request) => {
   try {
-    if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
-    const { id } = req.body || {};
-    if (!id) return res.status(400).json({ error: 'missing id' });
+    if (request.method !== "POST") {
+      return new Response(JSON.stringify({ error: "Method Not Allowed" }), {
+        status: 405, headers: { "content-type": "application/json" }
+      });
+    }
+    const { id } = await request.json();
+    if (!id) {
+      return new Response(JSON.stringify({ error: "missing id" }), {
+        status: 400, headers: { "content-type": "application/json" }
+      });
+    }
 
     const blobs = createClient();
     const raw = await blobs.get(`subs/${id}.json`);
-    if (!raw) return res.status(404).json({ error: 'not found' });
-    const subscription = await raw.json();
+    if (!raw) {
+      return new Response(JSON.stringify({ error: "not found" }), {
+        status: 404, headers: { "content-type": "application/json" }
+      });
+    }
+    const rec = await raw.json();           // { id, subscription, lat, lng, tz, countryCode }
+    const subscription = rec.subscription;  // <- viktig
 
     const payload = JSON.stringify({
-      title: 'Afkir Qibla',
-      body: 'Test-varsel fungerer ✅',
-      url: '/',
-      icon: '/icons/apple-touch-icon.png'
+      title: "Afkir Qibla",
+      body: "Test-varsel fungerer ✅",
+      url: "/",
+      icon: "/icons/apple-touch-icon.png"
     });
 
     await webpush.sendNotification(subscription, payload);
-    return res.status(200).json({ ok: true });
+
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200, headers: { "content-type": "application/json" }
+    });
   } catch (e) {
-    // Håndter typiske feil (410 = subscription død)
-    if (e.statusCode === 410 || e.statusCode === 404) {
+    if (e?.statusCode === 410 || e?.statusCode === 404) {
       try {
         const blobs = createClient();
-        await blobs.delete(`subs/${(req.body||{}).id}.json`).catch(()=>{});
+        const { id } = await request.json().catch(() => ({}));
+        if (id) await blobs.delete(`subs/${id}.json`).catch(() => {});
       } catch {}
-      return res.status(410).json({ error: 'gone' });
+      return new Response(JSON.stringify({ error: "gone" }), {
+        status: 410, headers: { "content-type": "application/json" }
+      });
     }
-    console.error('send-test error', e);
-    return res.status(500).json({ error: 'server error' });
+    console.error("send-test error", e);
+    return new Response(JSON.stringify({ error: "server error" }), {
+      status: 500, headers: { "content-type": "application/json" }
+    });
   }
 };
-
-export const config = { path: "/api/send-test" };

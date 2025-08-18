@@ -1,6 +1,6 @@
 export const config = { schedule: "* * * * *" }; // hvert minutt (UTC)
 
-import { getStore } from "@netlify/blobs";
+import { createClient } from "@netlify/blobs";
 import webpush from "web-push";
 import { DateTime } from "luxon";
 
@@ -9,12 +9,13 @@ webpush.setVapidDetails(process.env.VAPID_SUBJECT, process.env.VAPID_PUBLIC_KEY,
 const ORDER = ["Fajr","Sunrise","Dhuhr","Asr","Maghrib","Isha"];
 
 export default async () => {
-  const store = getStore('subs');
+  const blobs = createClient();
 
+  // list alle nøkler under subs/
   let cursor; const keys = [];
   do {
-    const page = await store.list({ cursor });
-    for (const b of page.blobs || []) if (b.key.startsWith('subs/')) keys.push(b.key);
+    const page = await blobs.list({ cursor, prefix: "subs/" });
+    for (const b of page.blobs || []) keys.push(b.key);
     cursor = page.cursor;
   } while (cursor);
 
@@ -22,9 +23,9 @@ export default async () => {
 
   for (const key of keys) {
     try {
-      const json = await store.get(key);
-      if (!json) continue;
-      const rec = JSON.parse(json);
+      const resp = await blobs.get(key);
+      if (!resp) continue;
+      const rec = await resp.json(); // { id, subscription, lat, lng, tz, countryCode }
       const tz = rec.tz || "Europe/Oslo";
       const times = await fetchPrayerTimes(rec.lat, rec.lng, tz, rec.countryCode);
       const now = nowUtc.setZone(tz);
@@ -32,7 +33,8 @@ export default async () => {
       for (const name of ORDER) {
         const hhmm = times[name];
         if (!hhmm) continue;
-        const target = DateTime.fromFormat(hhmm, "H:mm", { zone: tz }).set({ year: now.year, month: now.month, day: now.day });
+        const target = DateTime.fromFormat(hhmm, "H:mm", { zone: tz })
+          .set({ year: now.year, month: now.month, day: now.day });
         const diff = Math.abs(now.diff(target, "seconds").seconds);
         if (diff <= 59) {
           await webpush.sendNotification(rec.subscription, JSON.stringify({
