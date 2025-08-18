@@ -4,7 +4,7 @@ import { createClient } from '@netlify/blobs';
 export default async (req, res) => {
   try {
     if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
-    const { id } = req.body || {};
+    const { id } = await req.json();
     if (!id) return res.status(400).json({ error: 'missing id' });
 
     const blobs = createClient();

@@ -4,7 +4,7 @@ import { createClient } from '@netlify/blobs';
 export default async (req, res) => {
   try {
     if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
-    const body = req.body || {};
+    const body = await req.json();
     const sub = body.subscription;
     if (!sub || !sub.endpoint) return res.status(400).json({ error: 'missing subscription' });
 
