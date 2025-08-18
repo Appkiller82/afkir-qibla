@@ -1,29 +1,23 @@
-import { getStore } from "@netlify/blobs";
-import crypto from "node:crypto";
+// Netlify Function: POST /api/subscribe
+import { createClient } from '@netlify/blobs';
 
-export default async (req) => {
-  if (req.method === 'OPTIONS') return new Response(null, { headers: cors() });
-  if (req.method !== 'POST') return new Response('Method not allowed', { status: 405, headers: cors() });
+export default async (req, res) => {
+  try {
+    if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
+    const body = req.body || {};
+    const sub = body.subscription;
+    if (!sub || !sub.endpoint) return res.status(400).json({ error: 'missing subscription' });
 
-  const body = await req.json();
-  const { subscription, lat, lng, city, countryCode, tz } = body || {};
-  if (!subscription?.endpoint) return new Response('Bad request', { status: 400, headers: cors() });
+    // enkel id fra endpoint
+    const id = Buffer.from(sub.endpoint).toString('base64url').slice(-24);
+    const blobs = createClient();
+    await blobs.set(`subs/${id}.json`, JSON.stringify(sub), { contentType: 'application/json' });
 
-  const id = crypto.createHash('sha256').update(subscription.endpoint).digest('hex').slice(0, 16);
-  const store = getStore('subs');
-  await store.setJSON(`subs/${id}.json`, {
-    id, subscription, lat, lng, city, countryCode, tz, createdAt: Date.now()
-  });
-
-  return new Response(JSON.stringify({ id }), {
-    headers: { ...cors(), 'Content-Type': 'application/json' }
-  });
+    return res.status(200).json({ id });
+  } catch (e) {
+    console.error('subscribe error', e);
+    return res.status(500).json({ error: 'server error' });
+  }
 };
 
-function cors() {
-  return {
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Headers': 'Content-Type',
-    'Access-Control-Allow-Methods': 'POST, OPTIONS'
-  };
-}
+export const config = { path: "/api/subscribe" };

@@ -1,31 +1,45 @@
-import webpush from "web-push";
-import { getStore } from "@netlify/blobs";
+// Netlify Function: POST /api/send-test
+import webpush from 'web-push';
+import { createClient } from '@netlify/blobs';
 
-webpush.setVapidDetails(process.env.VAPID_SUBJECT, process.env.VAPID_PUBLIC_KEY, process.env.VAPID_PRIVATE_KEY);
+const PUB  = process.env.VAPID_PUBLIC_KEY;
+const PRIV = process.env.VAPID_PRIVATE_KEY;
+const SUBJ = process.env.VAPID_SUBJECT || 'mailto:you@example.com';
 
-export default async (req) => {
-  if (req.method === 'OPTIONS') return new Response(null, { headers: cors() });
-  const { id } = await req.json();
-  if (!id) return new Response('Bad request', { status: 400, headers: cors() });
+webpush.setVapidDetails(SUBJ, PUB, PRIV);
 
-  const store = getStore('subs');
-  const json = await store.get(`subs/${id}.json`);
-  if (!json) return new Response('Not found', { status: 404, headers: cors() });
+export default async (req, res) => {
+  try {
+    if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
+    const { id } = req.body || {};
+    if (!id) return res.status(400).json({ error: 'missing id' });
 
-  const rec = JSON.parse(json);
-  await webpush.sendNotification(rec.subscription, JSON.stringify({
-    title: "Testvarsel",
-    body: "Dette er en test fra AfkirQibla.",
-    url: "/"
-  }));
+    const blobs = createClient();
+    const raw = await blobs.get(`subs/${id}.json`);
+    if (!raw) return res.status(404).json({ error: 'not found' });
+    const subscription = await raw.json();
 
-  return new Response('ok', { headers: cors() });
+    const payload = JSON.stringify({
+      title: 'Afkir Qibla',
+      body: 'Test-varsel fungerer ✅',
+      url: '/',
+      icon: '/icons/apple-touch-icon.png'
+    });
+
+    await webpush.sendNotification(subscription, payload);
+    return res.status(200).json({ ok: true });
+  } catch (e) {
+    // Håndter typiske feil (410 = subscription død)
+    if (e.statusCode === 410 || e.statusCode === 404) {
+      try {
+        const blobs = createClient();
+        await blobs.delete(`subs/${(req.body||{}).id}.json`).catch(()=>{});
+      } catch {}
+      return res.status(410).json({ error: 'gone' });
+    }
+    console.error('send-test error', e);
+    return res.status(500).json({ error: 'server error' });
+  }
 };
 
-function cors() {
-  return {
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Headers': 'Content-Type',
-    'Access-Control-Allow-Methods': 'POST, OPTIONS'
-  };
-}
+export const config = { path: "/api/send-test" };

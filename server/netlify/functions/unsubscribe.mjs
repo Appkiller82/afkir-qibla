@@ -1,19 +1,19 @@
-import { getStore } from "@netlify/blobs";
+// Netlify Function: POST /api/unsubscribe
+import { createClient } from '@netlify/blobs';
 
-export default async (req) => {
-  if (req.method === 'OPTIONS') return new Response(null, { headers: cors() });
-  const { id } = await req.json();
-  if (!id) return new Response('Bad request', { status: 400, headers: cors() });
+export default async (req, res) => {
+  try {
+    if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
+    const { id } = req.body || {};
+    if (!id) return res.status(400).json({ error: 'missing id' });
 
-  const store = getStore('subs');
-  await store.delete(`subs/${id}.json`);
-  return new Response('ok', { headers: cors() });
+    const blobs = createClient();
+    await blobs.delete(`subs/${id}.json`).catch(()=>{});
+    return res.status(200).json({ ok: true });
+  } catch (e) {
+    console.error('unsubscribe error', e);
+    return res.status(500).json({ error: 'server error' });
+  }
 };
 
-function cors() {
-  return {
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Headers': 'Content-Type',
-    'Access-Control-Allow-Methods': 'POST, OPTIONS'
-  };
-}
+export const config = { path: "/api/unsubscribe" };
