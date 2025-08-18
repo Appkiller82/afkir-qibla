@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import PushControls from "./PushControls.jsx";
 
 /**
  * Afkir Qibla — Norway “IRN-like” profile (no API key)
@@ -526,6 +527,11 @@ export default function App(){
           </div>
           <div className="hint">{NB_DAY.format(new Date())}</div>
         </header>
+
+	<section className="card" style={{ marginBottom: 12 }}>
+	  <h3>Pushvarsler</h3>
+	  <PushControls />
+	</section>
 
         {/* Location */}
         <section className="card">
