@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import PushControls from "./PushControls.jsx";
 
 /**
  * Afkir Qibla — Norway “IRN-like” profile (no API key)
@@ -593,6 +594,13 @@ export default function App(){
                 </div>
               </>
             ) : <div className="hint">Henter bønnetider…</div>}
+          </section>
+
+          {/* NEW: Push controls card */}
+          <section className="card">
+            <h3>Push-varsler</h3>
+            <div className="hint" style={{marginBottom:8}}>Aktiver push for å få varsler om bønnetider på denne enheten.</div>
+            <PushControls />
           </section>
         </div>
       </div>
