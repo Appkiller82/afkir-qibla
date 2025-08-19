@@ -1,48 +1,40 @@
-import { Handler } from "@netlify/functions";
-import webpush from "web-push";
-import { createStore } from "@netlify/blobs";
+// netlify/functions/send-test.ts
+import { Handler } from '@netlify/functions';
+import webpush from 'web-push';
 
-const store = createStore("push-subs");
-
-const vapidKeys = {
-  publicKey: process.env.VITE_VAPID_PUBLIC_KEY!,
-  privateKey: process.env.VAPID_PRIVATE_KEY!,
-};
-webpush.setVapidDetails(
-  process.env.VAPID_SUBJECT!,
-  vapidKeys.publicKey,
-  vapidKeys.privateKey
-);
-
-export const handler: Handler = async (event) => {
-  if (event.httpMethod !== "POST") {
-    return { statusCode: 405, body: "Method not allowed" };
-  }
-
+const handler: Handler = async (event) => {
   try {
-    const body = JSON.parse(event.body || "{}");
-    let sub = body.sub;
-
-    if (!sub && body.id) {
-      // fallback: hent subscription fra Blobs via endpoint
-      const saved = await store.get(body.id);
-      if (saved) sub = JSON.parse(saved);
+    if (!process.env.VAPID_PUBLIC_KEY || !process.env.VAPID_PRIVATE_KEY || !process.env.VAPID_SUBJECT) {
+      throw new Error('Missing VAPID env vars');
     }
 
-    if (!sub) {
-      return { statusCode: 400, body: "Missing subscription" };
+    if (!event.body) return { statusCode: 400, body: 'Missing body' };
+    const { sub } = JSON.parse(event.body);
+
+    if (!sub?.endpoint) {
+      return { statusCode: 400, body: 'Missing subscription' };
     }
 
-    await webpush.sendNotification(
-      sub,
-      JSON.stringify({
-        title: "Test notification",
-        body: "Push works 🚀",
-      })
+    // Sett VAPID keys
+    webpush.setVapidDetails(
+      process.env.VAPID_SUBJECT!,
+      process.env.VAPID_PUBLIC_KEY!,
+      process.env.VAPID_PRIVATE_KEY!,
     );
 
-    return { statusCode: 200, body: "Push sent" };
+    // Send test
+    await webpush.sendNotification(sub, JSON.stringify({
+      title: 'Push-test 🚀',
+      body: 'Hei! Dette er en testmelding fra Netlify-funksjonen.',
+    }));
+
+    return {
+      statusCode: 200,
+      body: 'Push sendt!',
+    };
   } catch (err: any) {
-    return { statusCode: 500, body: `send-test error: ${err}` };
+    return { statusCode: 500, body: err.message || 'send-test failed' };
   }
 };
+
+export { handler };
