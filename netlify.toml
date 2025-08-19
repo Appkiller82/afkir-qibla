@@ -1,9 +1,16 @@
 [build]
+  base = "frontend"
   command = "npm run build"
   publish = "dist"
-  functions = "netlify/functions"
+  functions = "../netlify/functions"
 
-# Sørg for at service worker kan kontrollere hele domenet
+[dev]
+  command = "npm run dev"
+  framework = "#custom"
+  targetPort = 5173
+  port = 8888
+  publish = "frontend"
+
 [[headers]]
   for = "/service-worker.js"
   [headers.values]

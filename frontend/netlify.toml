@@ -1,4 +1,0 @@
-[[headers]]
-  for = "/service-worker.js"
-  [headers.values]
-    Service-Worker-Allowed = "/"

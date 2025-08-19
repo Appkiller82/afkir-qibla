@@ -1,0 +1,21 @@
+[build]
+  # fortell Netlify at appen ligger i ./frontend
+  base = "frontend"
+  command = "npm run build"
+  publish = "dist"
+  # functions-mappa ligger en mappe opp
+  functions = "../netlify/functions"
+
+[dev]
+  # kjør Vite dev i frontend
+  command = "npm run dev"
+  framework = "#custom"   # eksplisitt "custom" så Netlify proxy'er dev-serveren
+  targetPort = 5173       # Vite default
+  port = 8888             # Netlify Dev proxy-port
+  publish = "frontend"    # hvorfra statiske filer (public/) serveres
+
+# Service worker skal ha lov å kontrollere roten
+[[headers]]
+  for = "/service-worker.js"
+  [headers.values]
+    Service-Worker-Allowed = "/"
