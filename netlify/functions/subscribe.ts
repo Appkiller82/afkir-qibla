@@ -1,28 +1,50 @@
-import { Handler } from '@netlify/functions';
-import { getStore } from '@netlify/blobs';
-
-const store = getStore({ name: 'push-subs', consistency: 'strong' });
-
-export const handler: Handler = async (event) => {
-  if (event.httpMethod === 'POST') {
-    const { subscription } = JSON.parse(event.body || '{}');
-    if (!subscription?.endpoint) {
-      return { statusCode: 400, body: 'Missing subscription' };
+// netlify/functions/subscribe.js
+export const handler = async (event) => {
+  try {
+    if (event.httpMethod !== 'POST') {
+      return { statusCode: 405, body: 'Method Not Allowed' };
     }
-    const key = Buffer.from(subscription.endpoint).toString('base64url');
-    await store.set(key, JSON.stringify(subscription));
-    return { statusCode: 200, body: JSON.stringify({ id: key }) };
-  }
 
-  if (event.httpMethod === 'DELETE') {
-    const { endpoint } = JSON.parse(event.body || '{}');
-    if (!endpoint) {
-      return { statusCode: 400, body: 'Missing endpoint' };
+    // Må være JSON
+    const ct = event.headers['content-type'] || event.headers['Content-Type'] || '';
+    if (!ct.includes('application/json')) {
+      return { statusCode: 400, body: 'Content-Type must be application/json' };
     }
-    const key = Buffer.from(endpoint).toString('base64url');
-    await store.delete(key);
-    return { statusCode: 200, body: 'Deleted' };
-  }
 
-  return { statusCode: 405, body: 'Method Not Allowed' };
+    let sub;
+    try {
+      sub = JSON.parse(event.body || '{}');
+    } catch {
+      return { statusCode: 400, body: 'Invalid JSON' };
+    }
+
+    if (!sub || typeof sub !== 'object' || !sub.endpoint) {
+      return { statusCode: 400, body: 'Invalid subscription: missing endpoint' };
+    }
+
+    const { getStore } = await import('@netlify/blobs');
+    const store = getStore({ name: 'push-subs' });
+
+    // Lag en stabil ID basert på endpoint
+    const id = Buffer.from(sub.endpoint).toString('base64url');
+
+    const meta = {
+      id,
+      createdAt: new Date().toISOString(),
+      ua: event.headers['user-agent'] || '',
+      ip: event.headers['client-ip'] || event.headers['x-forwarded-for'] || '',
+    };
+
+    await store.setJSON(`subs/${id}.json`, { sub, meta });
+
+    return {
+      statusCode: 200,
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ok: true, id }),
+    };
+  } catch (e) {
+    // Ikke send 502 til klient – logg og svar 500 med kort tekst
+    console.error('subscribe error:', e);
+    return { statusCode: 500, body: 'Server error in subscribe' };
+  }
 };
