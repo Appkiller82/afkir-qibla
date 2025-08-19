@@ -1,4 +1,3 @@
-// frontend/src/push.js
 export async function enablePush() {
   const reg = await navigator.serviceWorker.ready;
   const vapidKey = import.meta.env.VITE_VAPID_PUBLIC_KEY;
@@ -8,7 +7,8 @@ export async function enablePush() {
     applicationServerKey: urlBase64ToUint8Array(vapidKey),
   });
 
-  const res = await fetch(import.meta.env.VITE_PUSH_SERVER_URL, {
+  // Registrer hos backend
+  const res = await fetch('/.netlify/functions/subscribe', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(sub),
@@ -16,19 +16,25 @@ export async function enablePush() {
 
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(`subscribe failed: ${res.status} ${data?.message || ''}`);
-  if (!data?.id) throw new Error('backend missing id');
 
-  localStorage.setItem('pushSubId', data.id);
-  return data.id;
+  // lagre hele subscription i localStorage
+  localStorage.setItem('pushSub', JSON.stringify(sub));
+  return data.id || 'ok';
 }
 
 export async function sendTest() {
-  const id = localStorage.getItem('pushSubId') || null;
+  // Finn subscription i SW
+  const reg = await navigator.serviceWorker.ready;
+  const existing = await reg.pushManager.getSubscription();
+
+  const sub = existing ? existing.toJSON() : JSON.parse(localStorage.getItem('pushSub') || 'null');
+
   const res = await fetch('/.netlify/functions/send-test', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(id ? { id } : {}),
+    body: JSON.stringify({ sub }),   // 👈 sender hele subscription
   });
+
   const text = await res.text();
   if (!res.ok) throw new Error(`send-test: ${res.status} ${text || ''}`);
   return text;
