@@ -1,10 +1,24 @@
 // frontend/src/push.ts
 
 /**
+ * Metadata vi kan sende til backend ved registrering.
+ * Alt er valgfritt — hvis du ikke oppgir noe brukes fornuftige defaults (eller undefined).
+ */
+export type PushMeta = {
+  tz?: string;             // f.eks. "Europe/Oslo"
+  lat?: number;            // posisjon (grader)
+  lon?: number;            // posisjon (grader)
+  madhhab?: string;        // "maliki" | "hanafi" | ...
+  nextFireAt?: number;     // epoch ms for neste bønn (om du har beregnet)
+};
+
+/**
  * Aktiver web push i nettleseren og registrer subscription hos backend.
  * Lagrer hele subscription lokalt (localStorage: "pushSub") og en bekreftelses-id ("pushSubId").
+ *
+ * @param meta  (valgfritt) metadata om bruker/posisjon/bønnetid du vil sende til backend
  */
-export async function enablePush(): Promise<string> {
+export async function enablePush(meta: PushMeta = {}): Promise<string> {
   if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
     throw new Error('Push Notifications ikke støttet i denne nettleseren');
   }
@@ -23,11 +37,21 @@ export async function enablePush(): Promise<string> {
     applicationServerKey: urlBase64ToUint8Array(vapidKey),
   }));
 
-  // Registrer hos backend (stateless – backend lagrer ikke, men returnerer en stabil id)
+  // Sett opp metadata (tz fylles automatisk hvis ikke gitt)
+  const payload: any = {
+    sub: sub.toJSON ? sub.toJSON() : sub,
+    tz: meta.tz ?? Intl.DateTimeFormat().resolvedOptions().timeZone,
+  };
+  if (typeof meta.lat === 'number') payload.lat = meta.lat;
+  if (typeof meta.lon === 'number') payload.lon = meta.lon;
+  if (typeof meta.madhhab === 'string') payload.madhhab = meta.madhhab;
+  if (typeof meta.nextFireAt === 'number') payload.nextFireAt = meta.nextFireAt;
+
+  // Registrer hos backend (blobs/stats ready)
   const res = await fetch('/.netlify/functions/subscribe', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(sub),
+    body: JSON.stringify(payload),
   });
 
   const data = await res.json().catch(() => ({}));
@@ -41,7 +65,8 @@ export async function enablePush(): Promise<string> {
 }
 
 /**
- * Sender en test‑push. Sender hele subscription i request‑body (stateless backend).
+ * Sender en test‑push. Sender hele subscription i request‑body (stateless path).
+ * Backend (send-test) vil også kunne slå opp via id dersom du senere velger det.
  */
 export async function sendTest(): Promise<string> {
   const reg = await navigator.serviceWorker.ready;
@@ -52,10 +77,11 @@ export async function sendTest(): Promise<string> {
     throw new Error('Ingen gyldig subscription. Prøv "Aktiver push" først.');
   }
 
+  const id = localStorage.getItem('pushSubId') || null; // valgfritt (for logging)
   const res = await fetch('/.netlify/functions/send-test', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ sub }), // 👈 viktig: sender hele subscription
+    body: JSON.stringify({ sub, id }),
   });
 
   const text = await res.text();
