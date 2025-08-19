@@ -8,3 +8,11 @@
   for = "/service-worker.js"
   [headers.values]
     Service-Worker-Allowed = "/"
+[functions]
+  node_bundler = "esbuild"
+
+# ---------- SCHEDULED FUNCTIONS ----------
+# tick kjører hvert 5. minutt
+[[scheduled]]
+  name = "tick"
+  cron = "*/5 * * * *"
