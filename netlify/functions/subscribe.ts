@@ -1,17 +1,20 @@
+// netlify/functions/subscribe.ts
 import type { Handler } from '@netlify/functions';
+import { getStore } from '@netlify/blobs';
 
-type SavedSub = {
-  meta: {
-    id: string;
-    createdAt: string;
-    tz?: string;
-    lat?: number;
-    lon?: number;
-    madhhab?: string;
-    nextFireAt?: number;
-  };
-  sub: any;
-};
+function blobStore() {
+  const siteID = process.env.BLOBS_SITE_ID!;
+  const token  = process.env.BLOBS_TOKEN!;
+  if (!siteID || !token) {
+    throw new Error('BLOBS_SITE_ID/BLOBS_TOKEN missing in env');
+  }
+  return getStore({
+    name: 'push-subs',
+    siteID,
+    token,
+    consistency: 'strong',
+  });
+}
 
 export const handler: Handler = async (event) => {
   try {
@@ -19,44 +22,33 @@ export const handler: Handler = async (event) => {
       return { statusCode: 405, body: 'Method Not Allowed' };
     }
 
-    let body: any = {};
-    try { body = JSON.parse(event.body || '{}'); } catch {
-      return { statusCode: 400, body: 'Invalid JSON body' };
+    const body = JSON.parse(event.body || '{}');
+
+    // Aksepter både { sub: {...} } og flat subscription
+    const sub = body?.sub && body.sub.endpoint ? body.sub : body;
+    const id: string | undefined = sub?.endpoint;
+    if (!id) {
+      return { statusCode: 400, body: 'missing subscription endpoint' };
     }
 
-    const sub = body?.sub || body;
-    if (!sub?.endpoint) {
-      return { statusCode: 400, body: 'Invalid subscription: missing endpoint' };
-    }
-
-    // Stabil ID av endpoint
-    const id = Buffer.from(sub.endpoint).toString('base64url');
-
-    // Prøv å lagre i Blobs – men ikke gjør “Aktiver” avhengig av det
     let stored = false;
-    try {
-      // Lazy import så vi ikke krasjer hvis Blobs ikke er konfigurert
-      const { getStore } = await import('@netlify/blobs');
-      const store = getStore({ name: 'push-subs' });
 
-      const saved: SavedSub = {
-        meta: {
-          id,
-          createdAt: new Date().toISOString(),
-          tz: body?.tz,
-          lat: typeof body?.lat === 'number' ? body.lat : undefined,
-          lon: typeof body?.lon === 'number' ? body.lon : undefined,
-          madhhab: body?.madhhab,
-          nextFireAt: typeof body?.nextFireAt === 'number' ? body.nextFireAt : undefined,
-        },
+    if (body.store) {
+      const store = blobStore();
+      // lagre under "subs/<encoded endpoint>"
+      const key = `subs/${encodeURIComponent(id)}`;
+      const record = {
+        id,
         sub,
+        tz: body.tz ?? null,
+        lat: body.lat ?? null,
+        lon: body.lon ?? null,
+        madhhab: body.madhhab ?? null,
+        nextFireAt: body.nextFireAt ?? null,
+        savedAt: Date.now(),
       };
-
-      await store.setJSON(`subs/${id}.json`, saved);
+      await store.setJSON(key, record);
       stored = true;
-    } catch (e: any) {
-      // Ikke fall ned – vi svarer 200 uansett, så “Aktiver” funker
-      console.error('subscribe: blobs store failed:', e?.message || e);
     }
 
     return {
@@ -64,8 +56,7 @@ export const handler: Handler = async (event) => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ ok: true, id, stored }),
     };
-  } catch (e: any) {
-    console.error('subscribe fatal:', e?.message || e);
-    return { statusCode: 500, body: 'Server error in subscribe' };
+  } catch (err: any) {
+    return { statusCode: 500, body: err?.message || 'subscribe failed' };
   }
 };
