@@ -16,7 +16,7 @@ export default async function handler() {
     // Merk: Bruker samme oppsett som før – ikke endret for å unngå å "knekke" noe som funker
     const store = client({
       name: "subs",
-      siteID: process.env.SITE_ID,         // behold navnet du allerede bruker i env
+      siteID: process.env.BLOBS_SITE_ID,         // behold navnet du allerede bruker i env
       token: process.env.BLOBS_TOKEN,
     });
 
