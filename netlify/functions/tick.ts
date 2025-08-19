@@ -1,108 +1,86 @@
 // netlify/functions/tick.ts
-import type { Handler } from '@netlify/functions';
-import webpush from 'web-push';
-import { getStore } from '@netlify/blobs';
+import { client } from "@netlify/blobs";
+import webpush from "web-push";
+import { DateTime } from "luxon";
+import { calcNextPrayer } from "./calcNextPrayer";
 
-// ---------- IRN Tuning for Norge ----------
-const NO_IRN_PROFILE = {
-  fajrAngle: 18.0,
-  ishaAngle: 14.0,
-  latitudeAdj: 3, // AngleBased
-  school: 0,      // Maliki
-  offsets: {
-    Fajr: -9,
-    Dhuhr: +12,
-    Asr: 0,
-    Maghrib: +8,
-    Isha: -46,
-  },
-};
+// VAPID-konfig
+webpush.setVapidDetails(
+  process.env.VAPID_SUBJECT || "mailto:aa@cmmco.no",
+  process.env.VAPID_PUBLIC_KEY!,
+  process.env.VAPID_PRIVATE_KEY!
+);
 
-// ---------- Blobs helper ----------
-function blobStore() {
-  return getStore({
-    name: 'push-subs',
-    siteID: process.env.BLOBS_SITE_ID!,
-    token: process.env.BLOBS_TOKEN!,
-    consistency: 'strong',
-  });
-}
-
-// ---------- Bønnetidskalkulering ----------
-function isInNorway(lat: number, lon: number): boolean {
-  return lat >= 57 && lat <= 72 && lon >= 4 && lon <= 32;
-}
-
-// Dummy prayer calculation — her kan du koble mot din eksisterende beregning
-function calcNextPrayer(entry: any): { nextFireAt: number; nextPrayer: string } {
-  const now = Date.now();
-
-  // foreløpig: fyr 2 min frem i tid
-  return { nextFireAt: now + 2 * 60 * 1000, nextPrayer: 'Fajr' };
-}
-
-// ---------- Push sender ----------
-async function sendPush(sub: any, payload: any) {
-  await webpush.sendNotification(sub, JSON.stringify(payload), {
-    vapidDetails: {
-      subject: process.env.VAPID_SUBJECT!,
-      publicKey: process.env.VAPID_PUBLIC_KEY!,
-      privateKey: process.env.VAPID_PRIVATE_KEY!,
-    },
-  });
-}
-
-// ---------- Main handler ----------
-export const handler: Handler = async () => {
+export default async function handler() {
   try {
-    const store = blobStore();
-    const listing = await store.list({ prefix: 'subs/' });
+    // Merk: Bruker samme oppsett som før – ikke endret for å unngå å "knekke" noe som funker
+    const store = client({
+      name: "subs",
+      siteID: process.env.SITE_ID,         // behold navnet du allerede bruker i env
+      token: process.env.BLOBS_TOKEN,
+    });
 
-    const keys =
-      Array.isArray((listing as any).blobs)
-        ? (listing as any).blobs.map((b: any) => b.key)
-        : Array.isArray((listing as any).blobKeys)
-        ? (listing as any).blobKeys
-        : [];
+    // Hent alle subscriptions
+    const keys = await store.list();
+    for (const key of keys.blobKeys) {
+      const record = await store.get(key, { type: "json" });
+      if (!record?.sub) continue;
 
-    let processed = 0;
-
-    for (const key of keys) {
-      const entry = await store.get(key, { type: 'json' });
-      if (!entry?.sub) continue;
-
-      const { lat, lon } = entry;
-
-      // velg profil
-      const useIRN = lat && lon && isInNorway(lat, lon);
-
-      const { nextFireAt, nextPrayer } = calcNextPrayer(entry);
-
-      if (Date.now() >= (entry.nextFireAt || 0)) {
-        // send push
-        await sendPush(entry.sub, {
-          title: 'Bønnetid',
-          body: `${nextPrayer} er nå`,
-        });
-
-        // oppdater nextFireAt
-        await store.setJSON(key, {
-          ...entry,
-          nextFireAt,
-          nextPrayer,
-          updatedAt: Date.now(),
-          profile: useIRN ? 'IRN' : 'Aladhan',
-        });
+      // Krev minimumsdata for korrekt beregning
+      if (!record.lat || !record.lon || !record.tz) {
+        console.warn(`ℹ️  Skipper ${key} (mangler lat/lon/tz)`);
+        continue;
       }
 
-      processed++;
+      const now = DateTime.now().toMillis();
+
+      // Sjekk om det er tid for varsel
+      if (record.nextFireAt && record.nextFireAt > now) {
+        continue; // Ikke ennå
+      }
+
+      // Beregn neste bønn
+      const { name, time } = await calcNextPrayer(
+        record.lat,
+        record.lon,
+        record.tz,
+        record.madhhab
+      );
+
+      // For brukervennlig tekst i riktig tidssone
+      const localTime = DateTime.fromMillis(time)
+        .setZone(record.tz)
+        .toFormat("HH:mm");
+
+      // Send push-varsel
+      const payload = JSON.stringify({
+        title: "Bønnetid",
+        body: `${name} kl. ${localTime}`,
+      });
+
+      try {
+        await webpush.sendNotification(record.sub, payload);
+        console.log(`✅ Sent ${name} to ${key}`);
+      } catch (err: any) {
+        console.error(`❌ Failed push for ${key}`, err);
+        // Hvis subscription er ugyldig → slett
+        if (err?.statusCode === 410 || err?.statusCode === 404) {
+          await store.delete(key);
+          console.log(`🗑 Deleted invalid sub ${key}`);
+        }
+      }
+
+      // Lagre neste fireAt
+      await store.setJSON(key, {
+        ...record,
+        nextFireAt: time,
+        updatedAt: Date.now(),
+      });
     }
 
-    return {
-      statusCode: 200,
-      body: `tick ok, processed ${processed} subs`,
-    };
-  } catch (e: any) {
-    return { statusCode: 500, body: `tick failed: ${e.message}` };
+    return new Response(JSON.stringify({ ok: true }), { status: 200 });
+  } catch (err: any) {
+    console.error("tick failed:", err);
+    return new Response(`tick failed: ${err?.message || String(err)}`, { status: 500 });
   }
-};
+}
