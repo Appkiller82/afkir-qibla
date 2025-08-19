@@ -1,48 +1,47 @@
+// frontend/src/PushControls.jsx
 import React, { useState } from 'react';
-import { ensurePushSubscription, unsubscribePush } from './push.ts';
+import { enablePush, sendTest } from './push';
 
 export default function PushControls() {
   const [status, setStatus] = useState('');
+  const subId = (typeof window !== 'undefined' && localStorage.getItem('pushSubId')) || null;
 
-  const onEnable = async () => {
+  async function onEnable() {
+    setStatus('Aktiverer …');
     try {
-      const ok = await ensurePushSubscription();
-      setStatus(ok ? 'Push aktivert' : 'Tillatelse avvist / ikke støttet');
+      const id = await enablePush();
+      setStatus(`Aktivert. ID: ${id.slice(0, 10)}…`);
     } catch (e) {
       console.error(e);
-      setStatus('Feil ved aktivering');
+      setStatus(`Feil ved aktivering: ${e.message}`);
     }
-  };
+  }
 
-  const onDisable = async () => {
+  async function onSend() {
+    setStatus('Sender test …');
     try {
-      await unsubscribePush();
-      setStatus('Push slått av');
+      const msg = await sendTest();
+      setStatus(`Sendt: ${msg}`);
     } catch (e) {
       console.error(e);
-      setStatus('Feil ved deaktivering');
+      setStatus(`Send-test feilet: ${e.message}`);
     }
-  };
+  }
 
-  const onSendTest = async () => {
-    try {
-      const res = await fetch('/.netlify/functions/send-test', { method: 'POST' });
-      setStatus(`Send-test: ${res.status}`);
-    } catch (e) {
-      console.error(e);
-      setStatus('Feil ved send-test');
-    }
-  };
+  function onDisable() {
+    // Kun lokal “skrudd av” – fjerner lagret id. (Full revoke = unsubscribe i SW om ønskelig)
+    localStorage.removeItem('pushSubId');
+    setStatus('Skrudd av lokalt.');
+  }
 
   return (
-    <div className="card" style={{ marginTop: 12 }}>
-      <h3>Push-varsler</h3>
-      <div className="row" style={{ marginTop: 8 }}>
-        <button className="btn" onClick={onEnable}>Aktiver push</button>
-        <button className="btn" onClick={onSendTest}>Send test</button>
-        <button className="btn" onClick={onDisable}>Skru av</button>
+    <div className="space-x-2">
+      <button onClick={onEnable}>Aktiver push</button>
+      <button onClick={onSend}>Send test</button>
+      <button onClick={onDisable}>Skru av</button>
+      <div style={{ marginTop: 8, opacity: 0.8 }}>
+        {status || (subId ? `Lagret ID: ${subId.slice(0, 10)}…` : 'Ingen lagret ID')}
       </div>
-      <div className="hint" style={{ marginTop: 6 }}>{status}</div>
     </div>
   );
 }
