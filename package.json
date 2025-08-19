@@ -7,5 +7,9 @@
     "dev": "npm --prefix frontend run dev",
     "build": "npm --prefix frontend run build",
     "preview": "npm --prefix frontend run preview"
+  },
+  "dependencies": {
+    "@netlify/blobs": "^10.0.8",
+    "web-push": "^3.6.7"
   }
 }
