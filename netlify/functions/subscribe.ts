@@ -8,35 +8,40 @@ export default async (req: Request) => {
     }
 
     const body = await req.json().catch(() => null);
-    if (!body?.sub) {
-      return new Response("Missing subscription", { status: 400 });
+    const sub = body?.sub || body?.subscription || null;
+
+    if (!sub || !sub.endpoint) {
+      return new Response(
+        'Bad Request: missing "sub". Send JSON { "sub": { ... } }',
+        { status: 400 }
+      );
     }
 
-    // Hent butikk for subscriptions
     const store = getStore("subs");
 
-    // Lag nøkkel basert på endpoint (unik ID)
-    const key = Buffer.from(body.sub.endpoint).toString("base64");
+    // stable key per endpoint
+    const key = Buffer.from(sub.endpoint).toString("base64");
 
-    // Lagre ekstra info sammen med subscription
     const record = {
-      sub: body.sub,
-      lat: body.lat ?? null,
-      lon: body.lon ?? null,
-      tz: body.tz ?? "Europe/Oslo",
-      madhhab: body.madhhab ?? "maliki",
+      sub,
+      lat: body?.lat ?? null,
+      lon: body?.lon ?? null,
+      tz: body?.tz ?? "Europe/Oslo",
+      madhhab: body?.madhhab ?? "maliki",
       createdAt: Date.now(),
-      nextFireAt: 0,
+      // if client didn’t compute one yet, set a safe near‑future placeholder
+      nextFireAt: body?.nextFireAt ?? Date.now() + 5 * 60 * 1000,
     };
 
     await store.setJSON(key, record);
 
-    return new Response(JSON.stringify({ ok: true, stored: true, id: key }), {
-      status: 200,
-      headers: { "content-type": "application/json" },
-    });
+    return new Response(
+      JSON.stringify({ ok: true, stored: true, id: key }),
+      { status: 200, headers: { "content-type": "application/json" } }
+    );
   } catch (err) {
     console.error("subscribe error", err);
+    // Don’t throw—always return a Response so Netlify doesn’t emit 502
     return new Response("subscribe failed", { status: 500 });
   }
 };
