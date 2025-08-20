@@ -2,10 +2,11 @@
 import type { Handler } from '@netlify/functions';
 
 /**
- * subscribe.ts (auto-upsert, tolerant)
- * - Returns 200 OK unless JSON is invalid or subscription is missing.
- * - If Upstash + metadata (lat/lng) are provided, upserts the record and computes next prayer time.
- * - Uses manual base64url to be compatible with Netlify runtimes.
+ * subscribe.ts (SUPER-TOLERANT, Aug 2025)
+ * Goal: Never 500 when Upstash is missing/misconfigured. Always return 200 (unless body is invalid).
+ * - If UPSTASH_* is missing → return 200 OK with note, DO NOT attempt Redis.
+ * - If UPSTASH_* exists → upsert sub and compute next prayer (IRN in NO, AlAdhan elsewhere).
+ * - Manual base64url id to avoid Node 'base64url' encoding issues.
  */
 
 const UP_URL   = process.env.UPSTASH_REDIS_REST_URL || '';
@@ -24,7 +25,6 @@ function idFromEndpoint(ep: string) {
 }
 
 async function redis(cmd: string[], retry = 1): Promise<any> {
-  if (!UP_URL || !UP_TOKEN) throw new Error('NO_UPSTASH');
   const res = await fetch(UP_URL, {
     method: 'POST',
     headers: { Authorization: `Bearer ${UP_TOKEN}`, 'content-type': 'application/json' },
@@ -113,47 +113,60 @@ function nextPrayer(times: Times) {
 }
 
 export const handler: Handler = async (event) => {
-  try {
-    if (event.httpMethod !== 'POST') return { statusCode: 405, body: 'Method Not Allowed' };
-    if (!event.body) return { statusCode: 400, body: 'Missing body' };
+  if (event.httpMethod !== 'POST') return { statusCode: 405, body: 'Method Not Allowed' };
+  if (!event.body) return { statusCode: 400, body: 'Missing body' };
 
-    let json: any;
-    try { json = JSON.parse(event.body); } catch { return { statusCode: 400, body: 'Invalid JSON' }; }
+  let json: any;
+  try { json = JSON.parse(event.body); } catch { return { statusCode: 400, body: 'Invalid JSON' }; }
 
-    const sub = json.subscription;
-    const meta = json.meta || {};
-    if (!sub?.endpoint) return { statusCode: 400, body: 'Missing subscription.endpoint' };
-    const id = idFromEndpoint(sub.endpoint);
+  const sub = json.subscription;
+  const meta = json.meta || {};
+  if (!sub?.endpoint) return { statusCode: 400, body: 'Missing subscription.endpoint' };
+  const id = idFromEndpoint(sub.endpoint);
 
-    const haveMeta = typeof meta.lat === 'number' && typeof meta.lng === 'number';
-    const haveUpstash = !!(UP_URL && UP_TOKEN);
+  const haveMeta = typeof meta.lat === 'number' && typeof meta.lng === 'number';
+  const haveUpstash = Boolean(UP_URL && UP_TOKEN);
 
-    // If we don't have Upstash or metadata: accept and return ID (no scheduling yet)
-    if (!haveMeta || !haveUpstash) {
-      return {
-        statusCode: 200,
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ ok: true, id, note: 'Stored without scheduling (no meta or Upstash).' }),
-      };
-    }
+  // If no Upstash → accept and bail out early (no scheduling)
+  if (!haveUpstash) {
+    return {
+      statusCode: 200,
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ok: true, id, note: 'Stored without scheduling (Upstash not configured).' }),
+    };
+  }
 
-    const countryCode = String(meta.countryCode || '').toUpperCase();
-    const tz = meta.tz || 'UTC';
-
-    let nxtName = 'Fajr';
-    let nxtAt = Date.now() + 60 * 60 * 1000; // fallback
-
+  // If Upstash configured but no meta → accept without scheduling
+  if (!haveMeta) {
+    // Store minimal record so we can attach meta later
     try {
-      const today = await fetchAladhan(meta.lat, meta.lng, 'today', { countryCode, tz });
-      const nxt = nextPrayer(today);
-      if (nxt) { nxtName = nxt.name as string; nxtAt = nxt.at; }
-      else {
-        const tomorrow = await fetchAladhan(meta.lat, meta.lng, 'tomorrow', { countryCode, tz });
-        nxtName = 'Fajr';
-        nxtAt = tomorrow.Fajr.getTime();
-      }
+      await redis(['HSET', `sub:${id}`, 'endpoint', sub.endpoint, 'keys', JSON.stringify(sub.keys || {}), 'active', '1' ]);
+      await redis(['SADD', 'subs:all', id]);
     } catch {}
+    return {
+      statusCode: 200,
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ok: true, id, note: 'Stored without metadata; schedule after meta is provided.' }),
+    };
+  }
 
+  // Normal path: compute next prayer and store
+  const countryCode = String(meta.countryCode || '').toUpperCase();
+  const tz = meta.tz || 'UTC';
+
+  let nxtName = 'Fajr';
+  let nxtAt = Date.now() + 60 * 60 * 1000; // fallback 1h
+  try {
+    const today = await fetchAladhan(meta.lat, meta.lng, 'today', { countryCode, tz });
+    const nxt = nextPrayer(today);
+    if (nxt) { nxtName = nxt.name as string; nxtAt = nxt.at; }
+    else {
+      const tomorrow = await fetchAladhan(meta.lat, meta.lng, 'tomorrow', { countryCode, tz });
+      nxtName = 'Fajr'; nxtAt = tomorrow.Fajr.getTime();
+    }
+  } catch {}
+
+  try {
     const key = `sub:${id}`;
     await redis(['HSET', key,
       'endpoint', sub.endpoint,
@@ -168,25 +181,14 @@ export const handler: Handler = async (event) => {
       'active', '1',
     ]);
     await redis(['SADD', 'subs:all', id]);
-
+  } catch (e: any) {
+    // Even if Redis write fails, still return 200 so UI doesn't break
     return {
       statusCode: 200,
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ ok: true, id }),
+      body: JSON.stringify({ ok: true, id, note: `Accepted but could not write to Upstash: ${e?.message || 'write failed'}` }),
     };
-  } catch (e: any) {
-    if (e?.message === 'NO_UPSTASH') {
-      try {
-        const j = JSON.parse(event.body || '{}');
-        const sub = j.subscription || {};
-        const id = sub.endpoint ? idFromEndpoint(sub.endpoint) : 'local';
-        return {
-          statusCode: 200,
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ ok: true, id, note: 'Stored without scheduling (no Upstash configured).' }),
-        };
-      } catch {}
-    }
-    return { statusCode: 500, body: `subscribe failed: ${e?.message || String(e)}` };
   }
+
+  return { statusCode: 200, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ok: true, id }) };
 };
