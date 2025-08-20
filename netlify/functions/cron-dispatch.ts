@@ -63,27 +63,28 @@ function nextPrayer(times:Times){
   return null
 }
 
-// Always use /pipeline with {"commands":[ ... ]}
+// === Correct Upstash REST helpers ===
+// Single command: POST base URL with JSON array body ["CMD","arg1",...]
 async function redisSingle(cmd: string[]) {
   if(!UP_URL || !UP_TOKEN) throw new Error('NO_UPSTASH')
-  const res = await fetch(`${UP_URL}/pipeline`, {
+  const res = await fetch(UP_URL, {
     method: 'POST',
     headers: { Authorization: `Bearer ${UP_TOKEN}`, 'content-type': 'application/json' },
-    body: JSON.stringify({ commands: [cmd] }),
+    body: JSON.stringify(cmd),
   })
   if (!res.ok) {
     const txt = await res.text().catch(()=>String(res.status))
-    throw new Error(`RedisPipe ${res.status} ${txt}`)
+    throw new Error(`Redis ${res.status} ${txt}`)
   }
-  const json = await res.json()
-  return json?.[0] ?? json
+  return res.json()
 }
+// Pipeline: POST /pipeline with body as a 2D JSON array [[...],[...]]
 async function redisMany(cmds: string[][]) {
   if(!UP_URL || !UP_TOKEN) throw new Error('NO_UPSTASH')
   const res = await fetch(`${UP_URL}/pipeline`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${UP_TOKEN}`, 'content-type': 'application/json' },
-    body: JSON.stringify({ commands: cmds }),
+    body: JSON.stringify(cmds),
   })
   if (!res.ok) {
     const txt = await res.text().catch(()=>String(res.status))

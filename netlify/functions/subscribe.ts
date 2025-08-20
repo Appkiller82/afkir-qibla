@@ -14,15 +14,30 @@ function idFromEndpoint(ep: string) {
   const b64 = Buffer.from(ep).toString('base64')
   return b64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '')
 }
-async function redisMany(cmds: string[][]){
+
+// === Correct Upstash REST helpers ===
+async function redisSingle(cmd: string[]) {
   if(!UP_URL || !UP_TOKEN) throw new Error('NO_UPSTASH')
-  const res=await fetch(`${UP_URL}/pipeline`,{ method:'POST', headers:{ Authorization:`Bearer ${UP_TOKEN}`,'content-type':'application/json' }, body: JSON.stringify({ commands: cmds }) })
-  if(!res.ok){ const txt=await res.text().catch(()=>String(res.status)); throw new Error(`RedisPipe ${res.status} ${txt}`) }
+  const res = await fetch(UP_URL, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${UP_TOKEN}`, 'content-type': 'application/json' },
+    body: JSON.stringify(cmd),
+  })
+  if (!res.ok) {
+    const txt = await res.text().catch(()=>String(res.status))
+    throw new Error(`Redis ${res.status} ${txt}`)
+  }
   return res.json()
 }
-async function redisSingle(cmd: string[]){
-  const arr = await redisMany([cmd])
-  return arr?.[0] ?? arr
+async function redisMany(cmds: string[][]){
+  if(!UP_URL || !UP_TOKEN) throw new Error('NO_UPSTASH')
+  const res=await fetch(`${UP_URL}/pipeline`,{
+    method:'POST',
+    headers:{ Authorization:`Bearer ${UP_TOKEN}`,'content-type':'application/json' },
+    body: JSON.stringify(cmds)
+  })
+  if(!res.ok){ const txt=await res.text().catch(()=>String(res.status)); throw new Error(`RedisPipe ${res.status} ${txt}`) }
+  return res.json()
 }
 
 function mkDate(ymdStr: string, hhmm: string) {
