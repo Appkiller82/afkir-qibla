@@ -20,14 +20,14 @@ export async function enablePush(): Promise<string> {
     applicationServerKey: urlBase64ToUint8Array(vapidKey),
   });
 
-  // Minimal backend lagring (uten metadata) – gir stabil ID tilbake
   const res = await fetch('/.netlify/functions/subscribe', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ subscription: sub.toJSON ? sub.toJSON() : sub, meta: {} }),
   });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(`subscribe failed: ${res.status} ${data?.message || ''}`);
+  const text = await res.text();
+  let data: any = {}; try { data = JSON.parse(text) } catch {}
+  if (!res.ok) throw new Error(`subscribe failed: ${res.status} ${data?.message || text || ''}`);
 
   localStorage.setItem('pushSub', JSON.stringify(sub.toJSON ? sub.toJSON() : sub));
   if (data?.id) localStorage.setItem('pushSubId', data.id);
@@ -60,12 +60,40 @@ export async function registerWithMetadata(meta: {
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(payload),
   });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(`subscribe failed: ${res.status} ${data?.message || ''}`);
+  const text = await res.text();
+  let data: any = {}; try { data = JSON.parse(text) } catch {}
+  if (!res.ok) throw new Error(`subscribe failed: ${res.status} ${data?.message || text || ''}`);
 
   localStorage.setItem('pushSub', JSON.stringify(sub.toJSON ? sub.toJSON() : sub));
   if (data?.id) localStorage.setItem('pushSubId', data.id);
   return data?.id || 'ok';
+}
+
+/**
+ * Updates backend metadata if a subscription already exists.
+ * Safe to call on every coordinate/city change; backend will upsert.
+ * Returns true if a subscription existed and the call succeeded.
+ */
+export async function updateMetaIfSubscribed(meta: {
+  lat: number; lng: number; city?: string; countryCode?: string; tz?: string;
+}): Promise<boolean> {
+  if (!('serviceWorker' in navigator)) return false;
+  const reg = await navigator.serviceWorker.ready;
+  const existing = await reg.pushManager.getSubscription();
+  if (!existing) return false;
+
+  const sub = existing.toJSON ? existing.toJSON() : existing;
+  const payload = {
+    subscription: sub,
+    meta: { ...meta, tz: meta.tz || Intl.DateTimeFormat().resolvedOptions().timeZone },
+  };
+
+  const res = await fetch('/.netlify/functions/subscribe', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  return res.ok;
 }
 
 export async function sendTest(): Promise<string> {
