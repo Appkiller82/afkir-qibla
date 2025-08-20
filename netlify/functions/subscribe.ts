@@ -3,10 +3,9 @@ import type { Handler } from '@netlify/functions';
 
 /**
  * subscribe.ts (auto-upsert, tolerant)
- * - Always returns 200 OK unless JSON is invalid or subscription is missing.
+ * - Returns 200 OK unless JSON is invalid or subscription is missing.
  * - If Upstash + metadata (lat/lng) are provided, upserts the record and computes next prayer time.
  * - Uses manual base64url to be compatible with Netlify runtimes.
- * - Designed to work smoothly with updateMetaIfSubscribed() being called often.
  */
 
 const UP_URL   = process.env.UPSTASH_REDIS_REST_URL || '';
@@ -91,7 +90,6 @@ async function fetchAladhan(lat: number, lng: number, when: 'today' | 'tomorrow'
     Isha: mkDate(ymd, t.Isha),
   };
 
-  // Apply Norway offsets if relevant
   if ((opts?.countryCode || '').toUpperCase() === 'NO') {
     const o = NO_IRN_PROFILE.offsets;
     base.Fajr.setMinutes(base.Fajr.getMinutes() + (o.Fajr || 0));
@@ -139,12 +137,11 @@ export const handler: Handler = async (event) => {
       };
     }
 
-    // Compute next prayer now so cron can dispatch at the right time
     const countryCode = String(meta.countryCode || '').toUpperCase();
     const tz = meta.tz || 'UTC';
 
     let nxtName = 'Fajr';
-    let nxtAt = Date.now() + 60 * 60 * 1000; // default 1h fallback
+    let nxtAt = Date.now() + 60 * 60 * 1000; // fallback
 
     try {
       const today = await fetchAladhan(meta.lat, meta.lng, 'today', { countryCode, tz });
@@ -155,9 +152,7 @@ export const handler: Handler = async (event) => {
         nxtName = 'Fajr';
         nxtAt = tomorrow.Fajr.getTime();
       }
-    } catch {
-      // Keep fallback
-    }
+    } catch {}
 
     const key = `sub:${id}`;
     await redis(['HSET', key,
@@ -180,7 +175,6 @@ export const handler: Handler = async (event) => {
       body: JSON.stringify({ ok: true, id }),
     };
   } catch (e: any) {
-    // If Upstash is not configured, fall back to OK without scheduling
     if (e?.message === 'NO_UPSTASH') {
       try {
         const j = JSON.parse(event.body || '{}');

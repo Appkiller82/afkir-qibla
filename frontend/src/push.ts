@@ -48,13 +48,7 @@ export async function registerWithMetadata(meta: {
     applicationServerKey: urlBase64ToUint8Array(vapidKey),
   });
 
-  const payload = {
-    subscription: sub.toJSON ? sub.toJSON() : sub,
-    meta: {
-      ...meta,
-      tz: meta.tz || Intl.DateTimeFormat().resolvedOptions().timeZone,
-    },
-  };
+  const payload = { subscription: sub.toJSON ? sub.toJSON() : sub, meta: { ...meta, tz: meta.tz || Intl.DateTimeFormat().resolvedOptions().timeZone } };
   const res = await fetch('/.netlify/functions/subscribe', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -69,11 +63,7 @@ export async function registerWithMetadata(meta: {
   return data?.id || 'ok';
 }
 
-/**
- * Updates backend metadata if a subscription already exists.
- * Safe to call on every coordinate/city change; backend will upsert.
- * Returns true if a subscription existed and the call succeeded.
- */
+/** Always-on: try to upsert meta when coords/by change */
 export async function updateMetaIfSubscribed(meta: {
   lat: number; lng: number; city?: string; countryCode?: string; tz?: string;
 }): Promise<boolean> {
@@ -81,18 +71,9 @@ export async function updateMetaIfSubscribed(meta: {
   const reg = await navigator.serviceWorker.ready;
   const existing = await reg.pushManager.getSubscription();
   if (!existing) return false;
-
   const sub = existing.toJSON ? existing.toJSON() : existing;
-  const payload = {
-    subscription: sub,
-    meta: { ...meta, tz: meta.tz || Intl.DateTimeFormat().resolvedOptions().timeZone },
-  };
-
-  const res = await fetch('/.netlify/functions/subscribe', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
+  const payload = { subscription: sub, meta: { ...meta, tz: meta.tz || Intl.DateTimeFormat().resolvedOptions().timeZone } };
+  const res = await fetch('/.netlify/functions/subscribe', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) });
   return res.ok;
 }
 
