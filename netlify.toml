@@ -1,10 +1,6 @@
-[build]
-  base = "."
-  command = "npm run build"
-  publish = "frontend/dist"
-  functions = "netlify/functions"
+[functions]
+  node_bundler = "esbuild"
 
-[[headers]]
-  for = "/service-worker.js"
-  [headers.values]
-    Service-Worker-Allowed = "/"
+[[scheduled.functions]]
+  name = "cron-dispatch"
+  cron = "* * * * *"

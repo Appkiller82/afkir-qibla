@@ -1,0 +1,20 @@
+*** Begin Patch
+*** Update File: frontend/src/App.jsx
+@@
+-import PushControls from "./PushControls.jsx";
++import PushControlsAuto from "./PushControlsAuto.jsx";
+@@
+-          {/* NEW: Push controls card */}
++          {/* Push controls card (auto-metadata) */}
+           <section className="card">
+             <h3>Push-varsler</h3>
+             <div className="hint" style={{marginBottom:8}}>Aktiver push for å få varsler om bønnetider på denne enheten.</div>
+-            <PushControls />
++            <PushControlsAuto
++              coords={coords}
++              city={city}
++              countryCode={countryCode}
++              tz={Intl.DateTimeFormat().resolvedOptions().timeZone}
++            />
+           </section>
+*** End Patch

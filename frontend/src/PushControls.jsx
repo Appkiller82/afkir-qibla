@@ -29,7 +29,6 @@ export default function PushControls() {
   }
 
   function onDisable() {
-    // Kun lokal “skrudd av” – fjerner lagret id. (Full revoke = unsubscribe i SW om ønskelig)
     localStorage.removeItem('pushSubId');
     setStatus('Skrudd av lokalt.');
   }

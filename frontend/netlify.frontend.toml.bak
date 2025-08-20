@@ -1,13 +1,10 @@
 [build]
-  base = "."
+  # fortell Netlify at appen ligger i ./frontend
+  base = "frontend"
   command = "npm run build"
-  publish = "frontend/dist"
-  functions = "netlify/functions"
-
-[[headers]]
-  for = "/service-worker.js"
-  [headers.values]
-    Service-Worker-Allowed = "/"
+  publish = "dist"
+  # functions-mappa ligger en mappe opp
+  functions = "../netlify/functions"
 
 [dev]
   # kjør Vite dev i frontend
