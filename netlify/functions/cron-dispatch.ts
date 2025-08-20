@@ -2,11 +2,8 @@
 import type { Handler } from '@netlify/functions'
 import webpush from 'web-push'
 
-// ✅ Netlify registers this as a scheduled function at build time
-// Runs every minute (UTC)
-export const config = {
-  schedule: '* * * * *',
-}
+// Schedule: every minute (UTC)
+export const config = { schedule: '* * * * *' }
 
 const UP_URL = process.env.UPSTASH_REDIS_REST_URL || ''
 const UP_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN || ''
@@ -65,16 +62,33 @@ function nextPrayer(times:Times){
   for(const k of order){ const d=times[k]; if(d && d.getTime()>now) return { name:k, at:d.getTime() } }
   return null
 }
-async function redis(cmd:string[]){
+
+// Always use /pipeline with {"commands":[ ... ]}
+async function redisSingle(cmd: string[]) {
   if(!UP_URL || !UP_TOKEN) throw new Error('NO_UPSTASH')
-  const res=await fetch(`${UP_URL}`,{ method:'POST', headers:{ Authorization:`Bearer ${UP_TOKEN}`,'content-type':'application/json' }, body: JSON.stringify({ command: cmd }) })
-  if(!res.ok){ const txt=await res.text().catch(()=>String(res.status)); throw new Error(`Redis ${res.status} ${txt}`) }
-  return res.json()
+  const res = await fetch(`${UP_URL}/pipeline`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${UP_TOKEN}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ commands: [cmd] }),
+  })
+  if (!res.ok) {
+    const txt = await res.text().catch(()=>String(res.status))
+    throw new Error(`RedisPipe ${res.status} ${txt}`)
+  }
+  const json = await res.json()
+  return json?.[0] ?? json
 }
-async function redisPipeline(cmds: string[][]){
+async function redisMany(cmds: string[][]) {
   if(!UP_URL || !UP_TOKEN) throw new Error('NO_UPSTASH')
-  const res=await fetch(`${UP_URL}/pipeline`,{ method:'POST', headers:{ Authorization:`Bearer ${UP_TOKEN}`,'content-type':'application/json' }, body: JSON.stringify({ commands: cmds }) })
-  if(!res.ok){ const txt=await res.text().catch(()=>String(res.status)); throw new Error(`RedisPipe ${res.status} ${txt}`) }
+  const res = await fetch(`${UP_URL}/pipeline`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${UP_TOKEN}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ commands: cmds }),
+  })
+  if (!res.ok) {
+    const txt = await res.text().catch(()=>String(res.status))
+    throw new Error(`RedisPipe ${res.status} ${txt}`)
+  }
   return res.json()
 }
 
@@ -93,8 +107,8 @@ export const handler: Handler = async () => {
 
     webpush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY)
 
-    const subsAll = await redis(['SMEMBERS','subs:all'])
-    const ids:string[] = subsAll.result || subsAll || []
+    const r = await redisSingle(['SMEMBERS','subs:all'])
+    const ids:string[] = r.result || r || []
     console.log('[cron] subs:', ids.length)
 
     if (!ids.length) {
@@ -107,7 +121,7 @@ export const handler: Handler = async () => {
     let sent = 0, updated = 0, skipped = 0
 
     for (const id of ids) {
-      const h = await redis(['HGETALL', `sub:${id}`])
+      const h = await redisSingle(['HGETALL', `sub:${id}`])
       const entries:string[] = h.result || h || []
       if (!entries.length) { skipped++; continue }
       const m:Record<string,string> = {}; for(let i=0;i<entries.length;i+=2){ m[entries[i]] = entries[i+1] }
@@ -138,7 +152,7 @@ export const handler: Handler = async () => {
           const tomorrow = await fetchAladhan(lat,lng,'tomorrow',{countryCode,tz})
           nxt = { name: 'Fajr', at: tomorrow.Fajr.getTime() }
         }
-        await redisPipeline([ ['HSET', `sub:${id}`, 'nextName', String(nxt!.name), 'nextAt', String(nxt!.at)] ])
+        await redisMany([ ['HSET', `sub:${id}`, 'nextName', String(nxt!.name), 'nextAt', String(nxt!.at)] ])
         updated++
       } catch (e:any) {
         console.error('[cron] could not reschedule', id, e?.message || e)

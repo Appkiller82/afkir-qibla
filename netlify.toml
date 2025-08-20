@@ -1,4 +1,4 @@
-# netlify.toml (cron inline schedule)
+# netlify.toml (ensure Node 20 + functions dir + plugin)
 [build]
   base = "frontend"
   command = "npm run build"
@@ -11,6 +11,5 @@
   node_bundler = "esbuild"
   directory = "../netlify/functions"
 
-# Ensure functions deps in netlify/functions/package.json are installed
 [[plugins]]
   package = "@netlify/plugin-functions-install-core"
