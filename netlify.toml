@@ -8,6 +8,10 @@
   node_bundler = "esbuild"
   directory = "../netlify/functions"
 
+# Install deps declared in netlify/functions/package.json before bundling
+[[plugins]]
+  package = "@netlify/plugin-functions-install-core"
+
 # Run cron-dispatch every minute
 [[scheduled.functions]]
   name = "cron-dispatch"
