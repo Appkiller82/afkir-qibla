@@ -10,7 +10,7 @@
     "preview": "npm --prefix frontend run preview"
   },
   "dependencies": {
-    "@netlify/blobs": "^8.2.0",
+    "@netlify/blobs": "^10.0.8",
     "luxon": "^3.7.1",
     "web-push": "^3.6.7"
   }
