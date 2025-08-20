@@ -1,3 +1,4 @@
+# netlify.toml (scheduled function via default export + manual trigger)
 [build]
   base = "frontend"
   command = "npm run build"

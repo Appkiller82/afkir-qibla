@@ -1,15 +1,16 @@
 // netlify/functions/cron-dispatch.ts
-import type { Handler } from '@netlify/functions'
-import webpush from 'web-push'
+// Scheduled function (cannot be invoked via URL).
+// Uses default export + export const config per Netlify docs.
+import type { Config } from "@netlify/functions"
+import webpush from "web-push"
 
-// Schedule: every minute (UTC)
-export const config = { schedule: '* * * * *' }
+export const config: Config = { schedule: "* * * * *" } // every minute (UTC)
 
-const UP_URL = process.env.UPSTASH_REDIS_REST_URL || ''
-const UP_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN || ''
-const VAPID_PUBLIC_KEY  = process.env.VAPID_PUBLIC_KEY  || ''
-const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY || ''
-const VAPID_SUBJECT     = process.env.VAPID_SUBJECT     || ''
+const UP_URL = process.env.UPSTASH_REDIS_REST_URL || ""
+const UP_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN || ""
+const VAPID_PUBLIC_KEY  = process.env.VAPID_PUBLIC_KEY  || ""
+const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY || ""
+const VAPID_SUBJECT     = process.env.VAPID_SUBJECT     || ""
 
 const NO_IRN_PROFILE = {
   fajrAngle: 18.0, ishaAngle: 14.0, latitudeAdj: 3, school: 0,
@@ -63,8 +64,7 @@ function nextPrayer(times:Times){
   return null
 }
 
-// === Correct Upstash REST helpers ===
-// Single command: POST base URL with JSON array body ["CMD","arg1",...]
+// Upstash helpers: Single = POST base with JSON array. Pipeline = POST /pipeline with 2D array.
 async function redisSingle(cmd: string[]) {
   if(!UP_URL || !UP_TOKEN) throw new Error('NO_UPSTASH')
   const res = await fetch(UP_URL, {
@@ -78,7 +78,6 @@ async function redisSingle(cmd: string[]) {
   }
   return res.json()
 }
-// Pipeline: POST /pipeline with body as a 2D JSON array [[...],[...]]
 async function redisMany(cmds: string[][]) {
   if(!UP_URL || !UP_TOKEN) throw new Error('NO_UPSTASH')
   const res = await fetch(`${UP_URL}/pipeline`, {
@@ -93,77 +92,82 @@ async function redisMany(cmds: string[][]) {
   return res.json()
 }
 
-export const handler: Handler = async () => {
+// Shared core
+async function runCron(): Promise<string> {
   console.log('[cron] tick', new Date().toISOString())
 
-  try {
-    if (!UP_URL || !UP_TOKEN) {
-      console.log('[cron] Upstash not configured; idle')
-      return { statusCode: 200, body: 'Upstash not configured; cron idle.' }
-    }
-    if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY || !VAPID_SUBJECT) {
-      console.error('[cron] Missing VAPID env')
-      return { statusCode: 500, body: 'Missing VAPID env' }
-    }
-
-    webpush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY)
-
-    const r = await redisSingle(['SMEMBERS','subs:all'])
-    const ids:string[] = r.result || r || []
-    console.log('[cron] subs:', ids.length)
-
-    if (!ids.length) {
-      console.log('[cron] no subscribers; ok')
-      return { statusCode: 200, body: 'no subscribers' }
-    }
-
-    const now = Date.now()
-    const windowMs = 60_000 // ±60s
-    let sent = 0, updated = 0, skipped = 0
-
-    for (const id of ids) {
-      const h = await redisSingle(['HGETALL', `sub:${id}`])
-      const entries:string[] = h.result || h || []
-      if (!entries.length) { skipped++; continue }
-      const m:Record<string,string> = {}; for(let i=0;i<entries.length;i+=2){ m[entries[i]] = entries[i+1] }
-
-      if (m.active !== '1') { skipped++; continue }
-      const endpoint = m.endpoint; if (!endpoint) { skipped++; continue }
-      let keys:any = {}; try { keys = JSON.parse(m.keys || '{}') } catch {}
-      const nextAt = Number(m.nextAt || 0); const nextName = String(m.nextName || '')
-      if (!nextAt || Math.abs(now - nextAt) > windowMs) { skipped++; continue }
-
-      const sub = { endpoint, keys } as any
-      const payload = JSON.stringify({ title: 'Tid for bønn', body: nextName ? `Nå er det ${nextName}` : 'Bønnetid', url: '/' })
-      try {
-        await webpush.sendNotification(sub, payload)
-        sent++;
-      } catch (e:any) {
-        console.error('[cron] push failed for', id, e?.message || e)
-      }
-
-      const lat = Number(m.lat), lng = Number(m.lng)
-      const countryCode = String(m.countryCode || '')
-      const tz = String(m.tz || 'UTC')
-
-      try {
-        const today = await fetchAladhan(lat,lng,'today',{countryCode,tz})
-        let nxt = nextPrayer(today)
-        if (!nxt) {
-          const tomorrow = await fetchAladhan(lat,lng,'tomorrow',{countryCode,tz})
-          nxt = { name: 'Fajr', at: tomorrow.Fajr.getTime() }
-        }
-        await redisMany([ ['HSET', `sub:${id}`, 'nextName', String(nxt!.name), 'nextAt', String(nxt!.at)] ])
-        updated++
-      } catch (e:any) {
-        console.error('[cron] could not reschedule', id, e?.message || e)
-      }
-    }
-
-    console.log('[cron] done', { sent, updated, skipped })
-    return { statusCode: 200, body: `cron ok: sent=${sent} updated=${updated} skipped=${skipped}` }
-  } catch (e:any) {
-    console.error('[cron] failed:', e?.message || String(e))
-    return { statusCode: 500, body: `cron failed: ${e?.message || String(e)}` }
+  if (!UP_URL || !UP_TOKEN) {
+    console.log('[cron] Upstash not configured; idle')
+    return 'Upstash not configured; cron idle.'
   }
+  if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY || !VAPID_SUBJECT) {
+    console.error('[cron] Missing VAPID env')
+    return 'Missing VAPID env'
+  }
+
+  webpush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY)
+
+  const r = await redisSingle(['SMEMBERS','subs:all'])
+  const ids:string[] = r.result || r || []
+  console.log('[cron] subs:', ids.length)
+
+  if (!ids.length) {
+    console.log('[cron] no subscribers; ok')
+    return 'no subscribers'
+  }
+
+  const now = Date.now()
+  const windowMs = 60_000 // ±60s
+  let sent = 0, updated = 0, skipped = 0
+
+  for (const id of ids) {
+    const h = await redisSingle(['HGETALL', `sub:${id}`])
+    const entries:string[] = h.result || h || []
+    if (!entries.length) { skipped++; continue }
+    const m:Record<string,string> = {}; for(let i=0;i<entries.length;i+=2){ m[entries[i]] = entries[i+1] }
+
+    if (m.active !== '1') { skipped++; continue }
+    const endpoint = m.endpoint; if (!endpoint) { skipped++; continue }
+    let keys:any = {}; try { keys = JSON.parse(m.keys || '{}') } catch {}
+    const nextAt = Number(m.nextAt || 0); const nextName = String(m.nextName || '')
+    if (!nextAt || Math.abs(now - nextAt) > windowMs) { skipped++; continue }
+
+    const sub = { endpoint, keys } as any
+    const payload = JSON.stringify({ title: 'Tid for bønn', body: nextName ? `Nå er det ${nextName}` : 'Bønnetid', url: '/' })
+    try {
+      await webpush.sendNotification(sub, payload)
+      sent++;
+    } catch (e:any) {
+      console.error('[cron] push failed for', id, e?.message || e)
+    }
+
+    const lat = Number(m.lat), lng = Number(m.lng)
+    const countryCode = String(m.countryCode || '')
+    const tz = String(m.tz || 'UTC')
+
+    try {
+      const today = await fetchAladhan(lat,lng,'today',{countryCode,tz})
+      let nxt = nextPrayer(today)
+      if (!nxt) {
+        const tomorrow = await fetchAladhan(lat,lng,'tomorrow',{countryCode,tz})
+        nxt = { name: 'Fajr', at: tomorrow.Fajr.getTime() }
+      }
+      await redisMany([ ['HSET', `sub:${id}`, 'nextName', String(nxt!.name), 'nextAt', String(nxt!.at)] ])
+      updated++
+    } catch (e:any) {
+      console.error('[cron] could not reschedule', id, e?.message || e)
+    }
+  }
+
+  console.log('[cron] done', { sent, updated, skipped })
+  return `cron ok: sent=${sent} updated=${updated} skipped=${skipped}`
+}
+
+// Default export required for scheduled function
+export default async (req: Request): Promise<Response> => {
+  const { next_run } = await req.json().catch(() => ({} as any))
+  console.log('[cron] scheduled invoke; next_run:', next_run)
+  const result = await runCron()
+  // Scheduled functions don't return body to clients, but we return for logs/debug.
+  return new Response(result, { status: 200 })
 }
