@@ -1,4 +1,3 @@
-# netlify.toml (ensure Node 20 + functions dir + plugin)
 [build]
   base = "frontend"
   command = "npm run build"
