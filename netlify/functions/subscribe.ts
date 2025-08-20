@@ -1,62 +1,42 @@
 // netlify/functions/subscribe.ts
-import type { Handler } from '@netlify/functions';
-import { getStore } from '@netlify/blobs';
+import { getStore } from "@netlify/blobs";
 
-function blobStore() {
-  const siteID = process.env.BLOBS_SITE_ID!;
-  const token  = process.env.BLOBS_TOKEN!;
-  if (!siteID || !token) {
-    throw new Error('BLOBS_SITE_ID/BLOBS_TOKEN missing in env');
-  }
-  return getStore({
-    name: 'push-subs',
-    siteID,
-    token,
-    consistency: 'strong',
-  });
-}
-
-export const handler: Handler = async (event) => {
+export default async (req: Request) => {
   try {
-    if (event.httpMethod !== 'POST') {
-      return { statusCode: 405, body: 'Method Not Allowed' };
+    if (req.method !== "POST") {
+      return new Response("Method Not Allowed", { status: 405 });
     }
 
-    const body = JSON.parse(event.body || '{}');
-
-    // Aksepter både { sub: {...} } og flat subscription
-    const sub = body?.sub && body.sub.endpoint ? body.sub : body;
-    const id: string | undefined = sub?.endpoint;
-    if (!id) {
-      return { statusCode: 400, body: 'missing subscription endpoint' };
+    const body = await req.json().catch(() => null);
+    if (!body?.sub) {
+      return new Response("Missing subscription", { status: 400 });
     }
 
-    let stored = false;
+    // Hent butikk for subscriptions
+    const store = getStore("subs");
 
-    if (body.store) {
-      const store = blobStore();
-      // lagre under "subs/<encoded endpoint>"
-      const key = `subs/${encodeURIComponent(id)}`;
-      const record = {
-        id,
-        sub,
-        tz: body.tz ?? null,
-        lat: body.lat ?? null,
-        lon: body.lon ?? null,
-        madhhab: body.madhhab ?? null,
-        nextFireAt: body.nextFireAt ?? null,
-        savedAt: Date.now(),
-      };
-      await store.setJSON(key, record);
-      stored = true;
-    }
+    // Lag nøkkel basert på endpoint (unik ID)
+    const key = Buffer.from(body.sub.endpoint).toString("base64");
 
-    return {
-      statusCode: 200,
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ ok: true, id, stored }),
+    // Lagre ekstra info sammen med subscription
+    const record = {
+      sub: body.sub,
+      lat: body.lat ?? null,
+      lon: body.lon ?? null,
+      tz: body.tz ?? "Europe/Oslo",
+      madhhab: body.madhhab ?? "maliki",
+      createdAt: Date.now(),
+      nextFireAt: 0,
     };
-  } catch (err: any) {
-    return { statusCode: 500, body: err?.message || 'subscribe failed' };
+
+    await store.setJSON(key, record);
+
+    return new Response(JSON.stringify({ ok: true, stored: true, id: key }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  } catch (err) {
+    console.error("subscribe error", err);
+    return new Response("subscribe failed", { status: 500 });
   }
 };
