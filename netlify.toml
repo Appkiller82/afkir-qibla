@@ -1,18 +1,16 @@
-# Netlify config for Afkir Qibla 7 (monorepo)
+# netlify.toml (cron inline schedule)
 [build]
   base = "frontend"
   command = "npm run build"
   publish = "dist"
 
+[build.environment]
+  NODE_VERSION = "20"
+
 [functions]
   node_bundler = "esbuild"
   directory = "../netlify/functions"
 
-# Install deps declared in netlify/functions/package.json before bundling
+# Ensure functions deps in netlify/functions/package.json are installed
 [[plugins]]
   package = "@netlify/plugin-functions-install-core"
-
-# Run cron-dispatch every minute
-[[scheduled.functions]]
-  name = "cron-dispatch"
-  cron = "* * * * *"
