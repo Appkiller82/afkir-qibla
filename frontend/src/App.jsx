@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import PushControls from "./PushControls.jsx";
+import PushControlsAuto from "./PushControlsAuto.jsx";
 
 /**
  * Afkir Qibla — Norway “IRN-like” profile (no API key)
@@ -406,8 +406,8 @@ const BACKGROUNDS = [
   "/backgrounds/mecca_panorama.jpg",
   "/backgrounds/kaaba_2024.jpg",
   "/backgrounds/mecca_aerial.jpg",
-  "/backgrounds/mecca_city_panorama.jpg",
-  "/backgrounds/mecca_exterior.jpg"
+  "/backgrounds/mecca_city_panorama.jpg"
+  // Fjernet mecca_exterior.jpg som ga 404
 ];
 
 export default function App(){
@@ -596,11 +596,16 @@ export default function App(){
             ) : <div className="hint">Henter bønnetider…</div>}
           </section>
 
-          {/* NEW: Push controls card */}
+          {/* Push controls card (auto-metadata) */}
           <section className="card">
             <h3>Push-varsler</h3>
             <div className="hint" style={{marginBottom:8}}>Aktiver push for å få varsler om bønnetider på denne enheten.</div>
-            <PushControls />
+            <PushControlsAuto
+              coords={coords}
+              city={city}
+              countryCode={countryCode}
+              tz={Intl.DateTimeFormat().resolvedOptions().timeZone}
+            />
           </section>
         </div>
       </div>
