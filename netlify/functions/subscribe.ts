@@ -2,13 +2,10 @@
 import type { Handler } from '@netlify/functions';
 
 /**
- * subscribe.ts (SUPER-TOLERANT, Aug 2025)
- * Goal: Never 500 when Upstash is missing/misconfigured. Always return 200 (unless body is invalid).
- * - If UPSTASH_* is missing → return 200 OK with note, DO NOT attempt Redis.
- * - If UPSTASH_* exists → upsert sub and compute next prayer (IRN in NO, AlAdhan elsewhere).
- * - Manual base64url id to avoid Node 'base64url' encoding issues.
+ * SUPER-TOLERANT subscribe: never 500 due to missing Upstash.
+ * - 200 OK without scheduling if UPSTASH_* missing or meta missing.
+ * - Upserts and computes next prayer when both Upstash + meta are present.
  */
-
 const UP_URL   = process.env.UPSTASH_REDIS_REST_URL || '';
 const UP_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN || '';
 
@@ -52,14 +49,9 @@ function ddmmyyyyToYmd(ddmmyyyy: string) {
   return `${y}-${m}-${d}`;
 }
 
-async function fetchAladhan(lat: number, lng: number, when: 'today' | 'tomorrow', opts: { countryCode?: string, tz?: string }): Promise<Times> {
+async function fetchAladhan(lat: number, lng: number, when: 'today'|'tomorrow', opts: { countryCode?: string, tz?: string }): Promise<Times> {
   const tz = opts?.tz || Intl.DateTimeFormat().resolvedOptions().timeZone;
-  const p = new URLSearchParams({
-    latitude: String(lat),
-    longitude: String(lng),
-    timezonestring: tz,
-    iso8601: 'true',
-  });
+  const p = new URLSearchParams({ latitude: String(lat), longitude: String(lng), timezonestring: tz, iso8601: 'true' });
 
   if ((opts?.countryCode || '').toUpperCase() === 'NO') {
     p.set('method', '99');
@@ -77,7 +69,7 @@ async function fetchAladhan(lat: number, lng: number, when: 'today' | 'tomorrow'
   const j = await res.json();
   if (!res.ok || j.code !== 200) throw new Error(`AlAdhan error ${res.status}`);
 
-  const greg = j.data?.date?.gregorian?.date as string; // DD-MM-YYYY
+  const greg = j.data?.date?.gregorian?.date as string;
   const ymd = ddmmyyyyToYmd(greg);
 
   const t = j.data.timings;
@@ -127,43 +119,28 @@ export const handler: Handler = async (event) => {
   const haveMeta = typeof meta.lat === 'number' && typeof meta.lng === 'number';
   const haveUpstash = Boolean(UP_URL && UP_TOKEN);
 
-  // If no Upstash → accept and bail out early (no scheduling)
   if (!haveUpstash) {
-    return {
-      statusCode: 200,
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ ok: true, id, note: 'Stored without scheduling (Upstash not configured).' }),
-    };
+    return { statusCode: 200, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ok: true, id, note: 'Stored without scheduling (Upstash not configured).' }) };
   }
 
-  // If Upstash configured but no meta → accept without scheduling
   if (!haveMeta) {
-    // Store minimal record so we can attach meta later
     try {
       await redis(['HSET', `sub:${id}`, 'endpoint', sub.endpoint, 'keys', JSON.stringify(sub.keys || {}), 'active', '1' ]);
       await redis(['SADD', 'subs:all', id]);
     } catch {}
-    return {
-      statusCode: 200,
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ ok: true, id, note: 'Stored without metadata; schedule after meta is provided.' }),
-    };
+    return { statusCode: 200, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ok: true, id, note: 'Stored without metadata; schedule after meta is provided.' }) };
   }
 
-  // Normal path: compute next prayer and store
   const countryCode = String(meta.countryCode || '').toUpperCase();
   const tz = meta.tz || 'UTC';
 
   let nxtName = 'Fajr';
-  let nxtAt = Date.now() + 60 * 60 * 1000; // fallback 1h
+  let nxtAt = Date.now() + 60 * 60 * 1000;
   try {
     const today = await fetchAladhan(meta.lat, meta.lng, 'today', { countryCode, tz });
     const nxt = nextPrayer(today);
     if (nxt) { nxtName = nxt.name as string; nxtAt = nxt.at; }
-    else {
-      const tomorrow = await fetchAladhan(meta.lat, meta.lng, 'tomorrow', { countryCode, tz });
-      nxtName = 'Fajr'; nxtAt = tomorrow.Fajr.getTime();
-    }
+    else { const tomorrow = await fetchAladhan(meta.lat, meta.lng, 'tomorrow', { countryCode, tz }); nxtName = 'Fajr'; nxtAt = tomorrow.Fajr.getTime(); }
   } catch {}
 
   try {
@@ -182,12 +159,7 @@ export const handler: Handler = async (event) => {
     ]);
     await redis(['SADD', 'subs:all', id]);
   } catch (e: any) {
-    // Even if Redis write fails, still return 200 so UI doesn't break
-    return {
-      statusCode: 200,
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ ok: true, id, note: `Accepted but could not write to Upstash: ${e?.message || 'write failed'}` }),
-    };
+    return { statusCode: 200, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ok: true, id, note: `Accepted but could not write to Upstash: ${e?.message || 'write failed'}` }) };
   }
 
   return { statusCode: 200, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ok: true, id }) };
