@@ -1,4 +1,3 @@
-// netlify/functions/save-sub.ts
 import { getStore } from "@netlify/blobs";
 
 export default async (req: Request) => {
@@ -8,11 +7,11 @@ export default async (req: Request) => {
     }
 
     const body = await req.json().catch(() => null);
-    // godta både { sub } og { subscription }
+    // accept both keys from frontend/backends
     const sub = body?.sub || body?.subscription || null;
     if (!sub || !sub.endpoint) {
       return new Response(
-        'Missing subscription: send JSON { "sub": { ... } }',
+        'Missing subscription: send JSON { "subscription": {...} } or { "sub": {...} }',
         { status: 400 }
       );
     }
