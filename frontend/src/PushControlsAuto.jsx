@@ -4,8 +4,7 @@ import { registerWithMetadata, sendTest } from "./push";
 
 export default function PushControlsAuto({ coords, city, countryCode, tz }) {
   const [status, setStatus] = useState("");
-  const subId =
-    (typeof window !== "undefined" && localStorage.getItem("pushSubId")) || null;
+  const subId = (typeof window !== "undefined" && localStorage.getItem("pushSubId")) || null;
 
   async function onEnable() {
     if (!coords) {
@@ -14,34 +13,41 @@ export default function PushControlsAuto({ coords, city, countryCode, tz }) {
     }
     setStatus("Aktiverer …");
     try {
-      const id = await registerWithMetadata({
+      const ok = await registerWithMetadata({
         lat: coords.latitude,
         lng: coords.longitude,
         city,
         countryCode,
         tz,
+        mode: "auto",
+        savedAt: Date.now(),
       });
-      setStatus(`Aktivert. ID: ${id.slice(0, 10)}…`);
+      setStatus(ok ? "Aktivert!" : "Kunne ikke aktivere");
     } catch (e) {
       console.error(e);
-      setStatus(`Feil ved aktivering: ${e.message}`);
+      setStatus("Feil ved aktivering (se konsoll)");
     }
   }
 
   async function onSend() {
     setStatus("Sender test …");
-    try {
-      const msg = await sendTest();
-      setStatus(`Sendt: ${msg}`);
-    } catch (e) {
-      console.error(e);
-      setStatus(`Send-test feilet: ${e.message}`);
-    }
+    const ok = await sendTest();
+    setStatus("Sendt: " + String(ok));
   }
 
-  function onDisable() {
-    localStorage.removeItem("pushSubId");
-    setStatus("Skrudd av lokalt.");
+  async function onDisable() {
+    try {
+      if ("serviceWorker" in navigator) {
+        const reg = await navigator.serviceWorker.ready;
+        const sub = await reg.pushManager.getSubscription();
+        if (sub) await sub.unsubscribe();
+      }
+      localStorage.removeItem("pushSubId");
+      setStatus("Skrudd av");
+    } catch (e) {
+      console.error(e);
+      setStatus("Feil ved avskrudd");
+    }
   }
 
   return (
@@ -50,11 +56,9 @@ export default function PushControlsAuto({ coords, city, countryCode, tz }) {
       <button onClick={onSend}>Send test</button>
       <button onClick={onDisable}>Skru av</button>
       <div style={{ marginTop: 8, opacity: 0.8 }}>
-        {status ||
-          (subId
-            ? `Lagret ID: ${subId.slice(0, 10)}…`
-            : "Ingen lagret ID")}
+        {subId ? `Lagret ID: ${String(subId).slice(0, 10)}…` : "Ingen lagret ID"}
       </div>
+      <div style={{ marginTop: 6, fontSize: 12, opacity: 0.7 }}>{status}</div>
     </div>
   );
 }
