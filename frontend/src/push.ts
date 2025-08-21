@@ -19,17 +19,15 @@ function getApiBase(): string {
   let raw = (import.meta as any)?.env?.VITE_PUSH_SERVER_URL
   if (typeof raw !== 'string' || !raw) raw = '/.netlify/functions'
   raw = raw.trim()
-  // normalize base: strip trailing slashes
-  raw = raw.replace(/\/+$/,'')
-  // if someone mistakenly put '/subscribe' in the base, remove it
-  raw = raw.replace(/\/subscribe$/,'')
+  // normalize base: strip trailing slashes and accidental '/subscribe'
+  raw = raw.replace(/\/+$/,'').replace(/\/subscribe$/,'')
   return raw || '/.netlify/functions'
 }
 const API_BASE = getApiBase()
 
 function urlBase64ToUint8Array(base64String: string) {
-  if (typeof base64String !== 'string' || base64String.length < 10) {
-    throw new Error('VAPID public key missing/invalid')
+  if (typeof base64String !== 'string' || !/^[A-Za-z0-9\-_]{20,}$/.test(base64String)) {
+    throw new Error('VITE_VAPID_PUBLIC_KEY missing or invalid')
   }
   const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
   const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
@@ -111,7 +109,17 @@ export async function registerWithMetadata(meta: AqMeta): Promise<boolean> {
 
 export async function sendTest(title?: string, body?: string, url?: string): Promise<boolean> {
   try {
-    const payload = { title: title || 'Test', body: body || 'Dette er en test', url: url || '/' }
+    // ensure we include a valid subscription in the request
+    const reg = await getRegistration();
+    let sub = await reg.pushManager.getSubscription();
+    if (!sub) {
+      const ok = await subscribe();
+      if (!ok) return false;
+      sub = await reg.pushManager.getSubscription();
+    }
+    if (!sub) return false;
+
+    const payload = { title: title || 'Test', body: body || 'Dette er en test', url: url || '/', subscription: sub.toJSON() }
     const res = await fetch(`${API_BASE}/send-test`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
