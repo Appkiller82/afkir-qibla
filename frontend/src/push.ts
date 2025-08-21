@@ -1,18 +1,36 @@
 // frontend/src/push.ts
-// Web Push klienthjelpere: subscribe/unsubscribe + oppdater meta til server
-// Nå med *kompatibilitetseksporter* for eldre kode: registerWithMetadata, sendTest
+// Web Push helpers with strong guards + clean URL joining.
+// Includes compat exports: registerWithMetadata(), sendTest().
+
 export type PushKeys = { p256dh: string; auth: string }
 export type PushSubscriptionJSON = { endpoint: string; keys: PushKeys }
-
 export type AqMeta = {
   lat: number; lng: number; city?: string; countryCode?: string; tz?: string;
   mode?: 'auto' | 'manual'; savedAt?: number;
 }
 
-const VAPID_PUBLIC = (import.meta as any).env?.VITE_VAPID_PUBLIC_KEY as string | undefined
-const API_BASE = ((import.meta as any).env?.VITE_PUSH_SERVER_URL as string | undefined) || '/.netlify/functions'
+// ---- Env & URL helpers ----
+function getVapidPublic(): string {
+  const raw = (import.meta as any)?.env?.VITE_VAPID_PUBLIC_KEY
+  if (typeof raw !== 'string') return ''
+  return raw.trim()
+}
+function getApiBase(): string {
+  let raw = (import.meta as any)?.env?.VITE_PUSH_SERVER_URL
+  if (typeof raw !== 'string' || !raw) raw = '/.netlify/functions'
+  raw = raw.trim()
+  // normalize base: strip trailing slashes
+  raw = raw.replace(/\/+$/,'')
+  // if someone mistakenly put '/subscribe' in the base, remove it
+  raw = raw.replace(/\/subscribe$/,'')
+  return raw || '/.netlify/functions'
+}
+const API_BASE = getApiBase()
 
 function urlBase64ToUint8Array(base64String: string) {
+  if (typeof base64String !== 'string' || base64String.length < 10) {
+    throw new Error('VAPID public key missing/invalid')
+  }
   const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
   const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
   const rawData = atob(base64);
@@ -23,8 +41,7 @@ function urlBase64ToUint8Array(base64String: string) {
 
 async function getRegistration(): Promise<ServiceWorkerRegistration> {
   if (!('serviceWorker' in navigator)) throw new Error('Service worker unsupported');
-  const reg = await navigator.serviceWorker.ready;
-  return reg;
+  return await navigator.serviceWorker.ready;
 }
 export async function getSubscription(): Promise<PushSubscription | null> {
   try {
@@ -33,29 +50,26 @@ export async function getSubscription(): Promise<PushSubscription | null> {
   } catch { return null }
 }
 
+// ---- Main API ----
 export async function subscribe(): Promise<boolean> {
   try {
-    if (!VAPID_PUBLIC) {
-      console.warn('VITE_VAPID_PUBLIC_KEY mangler');
-      return false;
-    }
+    const vapid = getVapidPublic();
     const reg = await getRegistration();
-    // allerede subbed?
     const current = await reg.pushManager.getSubscription();
     if (current) return true;
 
     const sub = await reg.pushManager.subscribe({
       userVisibleOnly: true,
-      applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC)
+      applicationServerKey: urlBase64ToUint8Array(vapid)
     });
-    // send til server (uten meta her – meta kommer via updateMetaIfSubscribed)
+
     await fetch(`${API_BASE}/subscribe`, {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ subscription: sub.toJSON() })
     }).catch(()=>{});
     return true;
-  } catch (e) {
-    console.error('subscribe failed', e);
+  } catch (e: any) {
+    console.error('subscribe failed:', e?.message || e);
     return false;
   }
 }
@@ -80,6 +94,7 @@ export async function updateMetaIfSubscribed(meta: AqMeta): Promise<boolean> {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(payload),
     });
+    if (!res.ok) console.warn('updateMetaIfSubscribed: server returned', res.status)
     return res.ok;
   } catch (e) {
     console.error('updateMetaIfSubscribed failed', e);
@@ -87,24 +102,13 @@ export async function updateMetaIfSubscribed(meta: AqMeta): Promise<boolean> {
   }
 }
 
-// ---- Kompatibilitet for eldre komponenter ----
-
-// Eldre komponenter forventer registerWithMetadata(meta)
-// Vi implementerer denne som: subscribe() -> updateMetaIfSubscribed(meta)
+// ---- Compatibility layer ----
 export async function registerWithMetadata(meta: AqMeta): Promise<boolean> {
   const ok = await subscribe();
-  if (!ok) {
-    console.error('registerWithMetadata: subscribe failed');
-    return false;
-  }
-  const up = await updateMetaIfSubscribed(meta);
-  if (!up) {
-    console.warn('registerWithMetadata: updateMetaIfSubscribed returned false');
-  }
-  return true;
+  if (!ok) return false;
+  return await updateMetaIfSubscribed(meta);
 }
 
-// Eldre UI kaller sendTest() fra klienten – videresender til server-funksjonen
 export async function sendTest(title?: string, body?: string, url?: string): Promise<boolean> {
   try {
     const payload = { title: title || 'Test', body: body || 'Dette er en test', url: url || '/' }
@@ -113,6 +117,7 @@ export async function sendTest(title?: string, body?: string, url?: string): Pro
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(payload),
     });
+    if (!res.ok) console.warn('sendTest: server returned', res.status)
     return res.ok;
   } catch (e) {
     console.error('sendTest failed', e);
