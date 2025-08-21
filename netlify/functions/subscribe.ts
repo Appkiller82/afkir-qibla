@@ -1,170 +1,96 @@
 // netlify/functions/subscribe.ts
-import type { Handler } from '@netlify/functions'
+import type { Handler } from "@netlify/functions"
 
-const UP_URL   = process.env.UPSTASH_REDIS_REST_URL || ''
-const UP_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN || ''
+const UP_URL   = process.env.UPSTASH_REDIS_REST_URL || ""
+const UP_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN || ""
+const VAPID_PUBLIC_KEY  = process.env.VAPID_PUBLIC_KEY  || ""
+const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY || ""
+const VAPID_SUBJECT     = process.env.VAPID_SUBJECT     || ""
 
-const NO_IRN_PROFILE = {
-  fajrAngle: 18.0, ishaAngle: 14.0, latitudeAdj: 3, school: 0,
-  offsets: { Fajr: -9, Dhuhr: +12, Asr: 0, Maghrib: +8, Isha: -46 },
-}
-type Times = Record<'Fajr'|'Sunrise'|'Dhuhr'|'Asr'|'Maghrib'|'Isha', Date>
-
-function idFromEndpoint(ep: string) {
-  const b64 = Buffer.from(ep).toString('base64')
-  return b64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '')
-}
-
-// === Correct Upstash REST helpers ===
 async function redisSingle(cmd: string[]) {
-  if(!UP_URL || !UP_TOKEN) throw new Error('NO_UPSTASH')
+  if(!UP_URL || !UP_TOKEN) return { skipped: true } // tolerant: no-op
   const res = await fetch(UP_URL, {
     method: 'POST',
     headers: { Authorization: `Bearer ${UP_TOKEN}`, 'content-type': 'application/json' },
     body: JSON.stringify(cmd),
   })
-  if (!res.ok) {
-    const txt = await res.text().catch(()=>String(res.status))
-    throw new Error(`Redis ${res.status} ${txt}`)
-  }
-  return res.json()
+  const text = await res.text()
+  if (!res.ok) throw new Error(`Redis ${res.status} ${text}`)
+  try { return JSON.parse(text) } catch { return { result: text } }
 }
-async function redisMany(cmds: string[][]){
-  if(!UP_URL || !UP_TOKEN) throw new Error('NO_UPSTASH')
-  const res=await fetch(`${UP_URL}/pipeline`,{
-    method:'POST',
-    headers:{ Authorization:`Bearer ${UP_TOKEN}`,'content-type':'application/json' },
-    body: JSON.stringify(cmds)
+async function redisMany(cmds: string[][]) {
+  if(!UP_URL || !UP_TOKEN) return { skipped: true } // tolerant: no-op
+  const res = await fetch(`${UP_URL}/pipeline`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${UP_TOKEN}`, 'content-type': 'application/json' },
+    body: JSON.stringify(cmds),
   })
-  if(!res.ok){ const txt=await res.text().catch(()=>String(res.status)); throw new Error(`RedisPipe ${res.status} ${txt}`) }
-  return res.json()
+  const text = await res.text()
+  if (!res.ok) throw new Error(`RedisPipe ${res.status} ${text}`)
+  try { return JSON.parse(text) } catch { return { result: text } }
 }
-
-function mkDate(ymdStr: string, hhmm: string) {
-  const [h, m] = hhmm.split(':').map((x) => parseInt(x, 10))
-  const d = new Date(`${ymdStr}T00:00:00`)
-  d.setHours(h, m, 0, 0)
-  return d
+function b64url(s: string) {
+  return Buffer.from(s, 'utf8').toString('base64url')
 }
-function ddmmyyyyToYmd(ddmmyyyy: string) {
-  const [dd, mm, yyyy] = ddmmyyyy.split('-').map((x) => parseInt(x, 10))
-  return `${yyyy}-${String(mm).padStart(2,'0')}-${String(dd).padStart(2,'0')}`
-}
-async function fetchAladhan(lat: number, lng: number, when: 'today' | 'tomorrow', opts: { countryCode?: string, tz?: string }): Promise<Times> {
-  const tz = opts?.tz || Intl.DateTimeFormat().resolvedOptions().timeZone
-  const p = new URLSearchParams({ latitude: String(lat), longitude: String(lng), timezonestring: tz, iso8601: 'true' })
-
-  if ((opts?.countryCode || '').toUpperCase() === 'NO') {
-    p.set('method', '99')
-    p.set('fajr', String(NO_IRN_PROFILE.fajrAngle))
-    p.set('isha', String(NO_IRN_PROFILE.ishaAngle))
-    p.set('school', String(NO_IRN_PROFILE.school))
-    p.set('latitudeAdjustmentMethod', String(NO_IRN_PROFILE.latitudeAdj))
-  } else {
-    p.set('method', '5')
-    p.set('school', '0')
+function toKV(m: Record<string, any>) {
+  const out: string[] = []
+  for (const [k,v] of Object.entries(m)) {
+    if (v === undefined || v === null) continue
+    out.push(String(k), typeof v === 'string' ? v : JSON.stringify(v))
   }
-
-  const url = `https://api.aladhan.com/v1/timings/${when}?${p.toString()}`
-  const res = await fetch(url)
-  const j = await res.json()
-  if (!res.ok || j.code !== 200) throw new Error(`AlAdhan error ${res.status}`)
-
-  const greg = j.data?.date?.gregorian?.date as string // DD-MM-YYYY
-  const ymd = ddmmyyyyToYmd(greg)
-
-  const t = j.data.timings
-  const base: Times = {
-    Fajr: mkDate(ymd, t.Fajr),
-    Sunrise: mkDate(ymd, t.Sunrise),
-    Dhuhr: mkDate(ymd, t.Dhuhr),
-    Asr: mkDate(ymd, t.Asr),
-    Maghrib: mkDate(ymd, t.Maghrib),
-    Isha: mkDate(ymd, t.Isha),
-  }
-
-  if ((opts?.countryCode || '').toUpperCase() === 'NO') {
-    const o = NO_IRN_PROFILE.offsets
-    base.Fajr.setMinutes(base.Fajr.getMinutes() + (o.Fajr || 0))
-    base.Dhuhr.setMinutes(base.Dhuhr.getMinutes() + (o.Dhuhr || 0))
-    base.Asr.setMinutes(base.Asr.getMinutes() + (o.Asr || 0))
-    base.Maghrib.setMinutes(base.Maghrib.getMinutes() + (o.Maghrib || 0))
-    base.Isha.setMinutes(base.Isha.getMinutes() + (o.Isha || 0))
-  }
-
-  return base
-}
-function nextPrayer(times: Times) {
-  const now = Date.now()
-  const order: (keyof Times)[] = ['Fajr','Sunrise','Dhuhr','Asr','Maghrib','Isha']
-  for (const k of order) {
-    const d = times[k]
-    if (d && d.getTime() > now) return { name: k, at: d.getTime() }
-  }
-  return null
+  return out
 }
 
 export const handler: Handler = async (event) => {
-  if (event.httpMethod !== 'POST') return { statusCode: 405, body: 'Method Not Allowed' }
-  if (!event.body) return { statusCode: 400, body: 'Missing body' }
-
-  let json: any
-  try { json = JSON.parse(event.body) } catch { return { statusCode: 400, body: 'Invalid JSON' } }
-
-  const sub = json.subscription
-  const meta = json.meta || {}
-  if (!sub?.endpoint) return { statusCode: 400, body: 'Missing subscription.endpoint' }
-  const id = idFromEndpoint(sub.endpoint)
-
-  const haveMeta = typeof meta.lat === 'number' && typeof meta.lng === 'number'
-  const haveUpstash = Boolean(UP_URL && UP_TOKEN)
-
-  if (!haveUpstash) {
-    return { statusCode: 200, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ok: true, id, note: 'Stored without scheduling (Upstash not configured).' }) }
-  }
-
-  if (!haveMeta) {
-    try {
-      await redisMany([ ['HSET', `sub:${id}`, 'endpoint', sub.endpoint, 'keys', JSON.stringify(sub.keys || {}), 'active', '1'], ['SADD', 'subs:all', id] ])
-    } catch {}
-    return { statusCode: 200, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ok: true, id, note: 'Stored without metadata; schedule after meta is provided.' }) }
-  }
-
-  const countryCode = String(meta.countryCode || '').toUpperCase()
-  const tz = meta.tz || 'UTC'
-
-  let nxtName = 'Fajr'
-  let nxtAt = Date.now() + 60 * 60 * 1000
   try {
-    const today = await fetchAladhan(meta.lat, meta.lng, 'today', { countryCode, tz })
-    const nxt = nextPrayer(today)
-    if (nxt) { nxtName = nxt.name as string; nxtAt = nxt.at }
-    else {
-      const tomorrow = await fetchAladhan(meta.lat, meta.lng, 'tomorrow', { countryCode, tz })
-      nxtName = 'Fajr'; nxtAt = tomorrow.Fajr.getTime()
+    // GET: expose public VAPID for client
+    if (event.httpMethod === 'GET') {
+      return new Response(JSON.stringify({ publicKey: VAPID_PUBLIC_KEY || '' }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' }
+      })
     }
-  } catch {}
 
-  try {
-    const key = `sub:${id}`
-    await redisMany([
-      ['HSET', key,
-        'endpoint', sub.endpoint,
-        'keys', JSON.stringify(sub.keys || {}),
-        'lat', String(meta.lat),
-        'lng', String(meta.lng),
-        'city', meta.city || '',
-        'countryCode', countryCode,
-        'tz', tz,
-        'nextName', nxtName,
-        'nextAt', String(nxtAt),
-        'active', '1',
-      ],
-      ['SADD', 'subs:all', id]
-    ])
-  } catch (e:any) {
-    return { statusCode: 200, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ok: true, id, note: `Accepted but could not write to Upstash: ${e?.message || 'write failed'}` }) }
+    if (event.httpMethod !== 'POST') {
+      return new Response('Method not allowed', { status: 405 })
+    }
+
+    const body = event.body ? JSON.parse(event.body) : {}
+    const subscription = body.subscription
+    const meta = body.meta || {}
+
+    if (!subscription || !subscription.endpoint) {
+      // answer 200 to keep client happy, but indicate missing subscription
+      return new Response(JSON.stringify({ ok: false, reason: 'NO_SUBSCRIPTION' }), {
+        status: 200, headers: { 'content-type': 'application/json' }
+      })
+    }
+
+    const id = b64url(subscription.endpoint)
+    const now = Date.now()
+
+    // Persist to Upstash if configured
+    const cmdList: string[][] = [
+      ['SADD', 'subs:all', id],
+      ['HSET', `sub:${id}`, ...toKV({
+        active: '1',
+        endpoint: subscription.endpoint,
+        keys: subscription.keys ? JSON.stringify(subscription.keys) : undefined,
+        lat: meta.lat, lng: meta.lng,
+        city: meta.city, countryCode: meta.countryCode, tz: meta.tz,
+        mode: meta.mode, savedAt: meta.savedAt || now
+      })]
+    ]
+    try { await redisMany(cmdList) } catch (e) { console.warn('[subscribe] redis skipped/failed:', (e as any)?.message || e) }
+
+    return new Response(JSON.stringify({ ok: true, id }), {
+      status: 200, headers: { 'content-type': 'application/json' }
+    })
+  } catch (e: any) {
+    console.error('[subscribe] error', e?.message || e)
+    // Be tolerant: never 500 the client for subscribe
+    return new Response(JSON.stringify({ ok: false, error: 'SUBSCRIBE_FAILED' }), {
+      status: 200, headers: { 'content-type': 'application/json' }
+    })
   }
-
-  return { statusCode: 200, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ok: true, id }) }
 }
