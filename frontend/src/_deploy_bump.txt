@@ -1,1 +1,1 @@
-cron handler fix
+cron handler + send-test GET id fix
