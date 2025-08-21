@@ -1,96 +1,74 @@
 // netlify/functions/subscribe.ts
 import type { Handler } from "@netlify/functions"
+import webpush from "web-push"
 
 const UP_URL   = process.env.UPSTASH_REDIS_REST_URL || ""
 const UP_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN || ""
+
 const VAPID_PUBLIC_KEY  = process.env.VAPID_PUBLIC_KEY  || ""
 const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY || ""
-const VAPID_SUBJECT     = process.env.VAPID_SUBJECT     || ""
+const VAPID_SUBJECT     = process.env.VAPID_SUBJECT || "mailto:push@example.com"
 
-async function redisSingle(cmd: string[]) {
-  if(!UP_URL || !UP_TOKEN) return { skipped: true } // tolerant: no-op
+async function redis(cmd: any) {
+  if (!UP_URL || !UP_TOKEN) return { ok: false, skipped: true }
   const res = await fetch(UP_URL, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${UP_TOKEN}`, 'content-type': 'application/json' },
+    method: "POST",
+    headers: { Authorization: `Bearer ${UP_TOKEN}`, "content-type": "application/json" },
     body: JSON.stringify(cmd),
   })
-  const text = await res.text()
-  if (!res.ok) throw new Error(`Redis ${res.status} ${text}`)
-  try { return JSON.parse(text) } catch { return { result: text } }
-}
-async function redisMany(cmds: string[][]) {
-  if(!UP_URL || !UP_TOKEN) return { skipped: true } // tolerant: no-op
-  const res = await fetch(`${UP_URL}/pipeline`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${UP_TOKEN}`, 'content-type': 'application/json' },
-    body: JSON.stringify(cmds),
-  })
-  const text = await res.text()
-  if (!res.ok) throw new Error(`RedisPipe ${res.status} ${text}`)
-  try { return JSON.parse(text) } catch { return { result: text } }
-}
-function b64url(s: string) {
-  return Buffer.from(s, 'utf8').toString('base64url')
-}
-function toKV(m: Record<string, any>) {
-  const out: string[] = []
-  for (const [k,v] of Object.entries(m)) {
-    if (v === undefined || v === null) continue
-    out.push(String(k), typeof v === 'string' ? v : JSON.stringify(v))
-  }
-  return out
+  const txt = await res.text()
+  try { return JSON.parse(txt) } catch { return { error: txt, status: res.status } }
 }
 
 export const handler: Handler = async (event) => {
   try {
-    // GET: expose public VAPID for client
-    if (event.httpMethod === 'GET') {
-      return new Response(JSON.stringify({ publicKey: VAPID_PUBLIC_KEY || '' }), {
-        status: 200,
-        headers: { 'content-type': 'application/json' }
-      })
+    if (event.httpMethod === "GET") {
+      // Vapids for client (anti-slice fix)
+      const wantVapid = event.queryStringParameters?.vapid
+      if (wantVapid) {
+        if (!VAPID_PUBLIC_KEY) return { statusCode: 404, body: JSON.stringify({ error: "no-public-key" }) }
+        return { statusCode: 200, body: JSON.stringify({ publicKey: VAPID_PUBLIC_KEY }) }
+      }
+      return { statusCode: 200, body: "ok" }
     }
 
-    if (event.httpMethod !== 'POST') {
-      return new Response('Method not allowed', { status: 405 })
+    if (event.httpMethod !== "POST") {
+      return { statusCode: 405, body: "method not allowed" }
+    }
+
+    if (VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY) {
+      webpush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY)
     }
 
     const body = event.body ? JSON.parse(event.body) : {}
-    const subscription = body.subscription
+    const sub = body.subscription
     const meta = body.meta || {}
 
-    if (!subscription || !subscription.endpoint) {
-      // answer 200 to keep client happy, but indicate missing subscription
-      return new Response(JSON.stringify({ ok: false, reason: 'NO_SUBSCRIPTION' }), {
-        status: 200, headers: { 'content-type': 'application/json' }
-      })
+    if (!sub || !sub.endpoint) {
+      return { statusCode: 400, body: "missing subscription" }
     }
 
-    const id = b64url(subscription.endpoint)
-    const now = Date.now()
+    // Persist basic info if Upstash is configured
+    if (UP_URL && UP_TOKEN) {
+      const id = Buffer.from(sub.endpoint).toString("base64url")
+      const key = `sub:${id}`
+      const hset = ["HSET", key,
+        "endpoint", sub.endpoint,
+        "keys", JSON.stringify(sub.keys || {}),
+        "active", "1",
+        "lat", meta.lat ? String(meta.lat) : "",
+        "lng", meta.lng ? String(meta.lng) : "",
+        "city", meta.city || "",
+        "countryCode", meta.countryCode || "",
+        "tz", meta.tz || "",
+      ]
+      await redis(hset)
+      await redis(["SADD", "subs:all", id])
+    }
 
-    // Persist to Upstash if configured
-    const cmdList: string[][] = [
-      ['SADD', 'subs:all', id],
-      ['HSET', `sub:${id}`, ...toKV({
-        active: '1',
-        endpoint: subscription.endpoint,
-        keys: subscription.keys ? JSON.stringify(subscription.keys) : undefined,
-        lat: meta.lat, lng: meta.lng,
-        city: meta.city, countryCode: meta.countryCode, tz: meta.tz,
-        mode: meta.mode, savedAt: meta.savedAt || now
-      })]
-    ]
-    try { await redisMany(cmdList) } catch (e) { console.warn('[subscribe] redis skipped/failed:', (e as any)?.message || e) }
-
-    return new Response(JSON.stringify({ ok: true, id }), {
-      status: 200, headers: { 'content-type': 'application/json' }
-    })
+    return { statusCode: 200, body: JSON.stringify({ ok: true }) }
   } catch (e: any) {
-    console.error('[subscribe] error', e?.message || e)
-    // Be tolerant: never 500 the client for subscribe
-    return new Response(JSON.stringify({ ok: false, error: 'SUBSCRIBE_FAILED' }), {
-      status: 200, headers: { 'content-type': 'application/json' }
-    })
+    console.error("subscribe error:", e?.message || e)
+    return { statusCode: 500, body: e?.message || "subscribe failed" }
   }
 }
