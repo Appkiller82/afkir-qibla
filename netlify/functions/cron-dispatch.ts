@@ -1,7 +1,8 @@
 // netlify/functions/cron-dispatch.ts
-// Scheduled function that sends prayer push notifications.
-// Adds tolerance window for late cron ticks, de-duplication via lastSentAt,
-// and self-heal: reschedule-only if nextAt missing or too late.
+// Scheduled function + safe manual runner & health endpoint.
+// - GET ?run=1    -> run cron now (manual)
+// - GET ?health=1 -> return JSON status (Upstash & VAPID)
+// Avoids internal errors when opened directly in a browser.
 import type { Config } from "@netlify/functions"
 import webpush from "web-push"
 
@@ -13,11 +14,10 @@ const VAPID_PUBLIC_KEY  = process.env.VAPID_PUBLIC_KEY  || ""
 const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY || ""
 const VAPID_SUBJECT     = process.env.VAPID_SUBJECT     || ""
 
-// Allow small lateness, avoid stale sends
-const LATE_TOLERANCE_MS = 5 * 60_000   // send if up to 5 min late
-const TOO_LATE_MS       = 15 * 60_000  // drop if over 15 min late
+// Tolerance window
+const LATE_TOLERANCE_MS = 5 * 60_000
+const TOO_LATE_MS       = 15 * 60_000
 
-// Norway (IRN) tuning
 const NO_IRN_PROFILE = {
   fajrAngle: 18.0, ishaAngle: 14.0, latitudeAdj: 3, school: 0,
   offsets: { Fajr: -9, Dhuhr: +12, Asr: 0, Maghrib: +8, Isha: -46 },
@@ -44,7 +44,7 @@ async function fetchAladhan(lat:number,lng:number,when:'today'|'tomorrow',opts:{
     p.set('school',String(NO_IRN_PROFILE.school))
     p.set('latitudeAdjustmentMethod',String(NO_IRN_PROFILE.latitudeAdj))
   } else {
-    p.set('method','5') // Umm Al-Qura
+    p.set('method','5')
     p.set('school','0')
   }
   const res = await fetch(`https://api.aladhan.com/v1/timings/${when}?${p.toString()}`)
@@ -70,7 +70,7 @@ function nextPrayer(times:Times){
   return null
 }
 
-// Upstash helpers (REST): Single = POST base with JSON array. Pipeline = POST /pipeline with 2D array.
+// Upstash REST helpers
 async function redisSingle(cmd: string[]) {
   if(!UP_URL || !UP_TOKEN) throw new Error('NO_UPSTASH')
   const res = await fetch(UP_URL, {
@@ -146,7 +146,7 @@ async function runCron(): Promise<string> {
     if (tooEarly || alreadySent) { skipped++; skipWindow++; continue }
 
     if (!nextAt || tooLate) {
-      // === SELF-HEAL: reschedule only (ikke send utdatert) ===
+      // Reschedule-only (no send)
       const lat = Number(m.lat), lng = Number(m.lng)
       const countryCode = String(m.countryCode || '')
       const tz = String(m.tz || 'UTC')
@@ -162,11 +162,10 @@ async function runCron(): Promise<string> {
       } catch (e:any) {
         console.error('[cron] reschedule-only failed', id, e?.message || e)
       }
-      skipped++; // ikke send denne runden
-      continue
+      skipped++; continue
     }
 
-    // === SEND ===
+    // Send
     const sub = { endpoint, keys } as any
     const payload = JSON.stringify({ title: 'Tid for bønn', body: nextName ? `Nå er det ${nextName}` : 'Bønnetid', url: '/' })
     try {
@@ -177,7 +176,7 @@ async function runCron(): Promise<string> {
       console.error('[cron] push failed for', id, e?.message || e)
     }
 
-    // Reschedule next prayer
+    // Reschedule next
     const lat = Number(m.lat), lng = Number(m.lng)
     const countryCode = String(m.countryCode || '')
     const tz = String(m.tz || 'UTC')
@@ -199,9 +198,48 @@ async function runCron(): Promise<string> {
   return `cron ok: sent=${sent} updated=${updated} skipped=${skipped}`
 }
 
+function json(data: any, status = 200) {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { 'content-type': 'application/json' }
+  })
+}
+
 export default async (req: Request): Promise<Response> => {
-  const { next_run } = await req.json().catch(() => ({} as any))
-  console.log('[cron] scheduled invoke; next_run:', next_run)
-  const result = await runCron()
-  return new Response(result, { status: 200 })
+  try {
+    const url = new URL(req.url)
+    const isGET = req.method === 'GET'
+
+    let body: any = {}
+    if (!isGET) {
+      try { body = await req.json() } catch { body = {} }
+    }
+    const doRun = url.searchParams.get('run') === '1' || body?.run === 1
+    const askHealth = url.searchParams.get('health') === '1'
+
+    if (askHealth) {
+      const status: any = {
+        upstashConfigured: Boolean(UP_URL && UP_TOKEN),
+        vapidConfigured: Boolean(VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY && VAPID_SUBJECT),
+      }
+      if (status.upstashConfigured) {
+        try { status.redisPing = await redisSingle(['PING']) } catch (e:any) { status.redisError = e?.message || String(e) }
+      }
+      return json(status, 200)
+    }
+
+    if (!doRun && !body?.next_run) {
+      // Avoid throwing on manual GET without body
+      return new Response('ok: add ?run=1 to execute now', { status: 200 })
+    }
+
+    const next_run = body?.next_run || url.searchParams.get('next_run')
+    console.log('[cron] scheduled invoke; next_run:', next_run || '(manual)')
+
+    const result = await runCron()
+    return new Response(result, { status: 200 })
+  } catch (e:any) {
+    console.error('[cron] internal error', e?.stack || e?.message || e)
+    return new Response('cron internal error: ' + (e?.message || 'unknown'), { status: 500 })
+  }
 }
