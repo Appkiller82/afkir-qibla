@@ -1,20 +1,14 @@
-// netlify/functions/cron-dispatch.ts
-// Scheduled function + safe manual runner & health endpoint.
-// - GET ?run=1    -> run cron now (manual)
-// - GET ?health=1 -> return JSON status (Upstash & VAPID)
-// Avoids internal errors when opened directly in a browser.
 import type { Config } from "@netlify/functions"
 import webpush from "web-push"
 
-export const config: Config = { schedule: "* * * * *" } // every minute (UTC)
+export const config: Config = { schedule: "* * * * *" } // hvert minutt (UTC)
 
-const UP_URL = process.env.UPSTASH_REDIS_REST_URL || ""
-const UP_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN || ""
-const VAPID_PUBLIC_KEY  = process.env.VAPID_PUBLIC_KEY  || ""
-const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY || ""
-const VAPID_SUBJECT     = process.env.VAPID_SUBJECT     || ""
+const UP_URL  = process.env.UPSTASH_REDIS_REST_URL || ""
+const UP_TOK  = process.env.UPSTASH_REDIS_REST_TOKEN || ""
+const VAPID_PUB  = process.env.VAPID_PUBLIC_KEY  || ""
+const VAPID_PRIV = process.env.VAPID_PRIVATE_KEY || ""
+const VAPID_SUBJ = process.env.VAPID_SUBJECT     || ""
 
-// Tolerance window
 const LATE_TOLERANCE_MS = 5 * 60_000
 const TOO_LATE_MS       = 15 * 60_000
 
@@ -49,7 +43,7 @@ async function fetchAladhan(lat:number,lng:number,when:'today'|'tomorrow',opts:{
   }
   const res = await fetch(`https://api.aladhan.com/v1/timings/${when}?${p.toString()}`)
   const j = await res.json()
-  if (!res.ok || j.code !== 200) throw new Error(`AlAdhan error ${res.status}`)
+  if (!res.ok || j.code !== 200) throw new Error(`AlAdhan ${res.status}`)
   const ymd = ddmmyyyyToYmd(j.data?.date?.gregorian?.date as string)
   const t = j.data.timings
   const base:Times = { Fajr:mkDate(ymd,t.Fajr), Sunrise:mkDate(ymd,t.Sunrise), Dhuhr:mkDate(ymd,t.Dhuhr), Asr:mkDate(ymd,t.Asr), Maghrib:mkDate(ymd,t.Maghrib), Isha:mkDate(ymd,t.Isha) }
@@ -70,12 +64,12 @@ function nextPrayer(times:Times){
   return null
 }
 
-// Upstash REST helpers
+// Upstash REST
 async function redisSingle(cmd: string[]) {
-  if(!UP_URL || !UP_TOKEN) throw new Error('NO_UPSTASH')
+  if(!UP_URL || !UP_TOK) throw new Error('NO_UPSTASH')
   const res = await fetch(UP_URL, {
     method: 'POST',
-    headers: { Authorization: `Bearer ${UP_TOKEN}`, 'content-type': 'application/json' },
+    headers: { Authorization: `Bearer ${UP_TOK}`, 'content-type': 'application/json' },
     body: JSON.stringify(cmd),
   })
   if (!res.ok) {
@@ -85,10 +79,10 @@ async function redisSingle(cmd: string[]) {
   return res.json()
 }
 async function redisMany(cmds: string[][]) {
-  if(!UP_URL || !UP_TOKEN) throw new Error('NO_UPSTASH')
+  if(!UP_URL || !UP_TOK) throw new Error('NO_UPSTASH')
   const res = await fetch(`${UP_URL}/pipeline`, {
     method: 'POST',
-    headers: { Authorization: `Bearer ${UP_TOKEN}`, 'content-type': 'application/json' },
+    headers: { Authorization: `Bearer ${UP_TOK}`, 'content-type': 'application/json' },
     body: JSON.stringify(cmds),
   })
   if (!res.ok) {
@@ -101,25 +95,21 @@ async function redisMany(cmds: string[][]) {
 async function runCron(): Promise<string> {
   console.log('[cron] tick', new Date().toISOString())
 
-  if (!UP_URL || !UP_TOKEN) {
+  if (!UP_URL || !UP_TOK) {
     console.log('[cron] Upstash not configured; idle')
     return 'Upstash not configured; cron idle.'
   }
-  if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY || !VAPID_SUBJECT) {
+  if (!VAPID_PUB || !VAPID_PRIV || !VAPID_SUBJ) {
     console.error('[cron] Missing VAPID env')
     return 'Missing VAPID env'
   }
 
-  webpush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY)
+  webpush.setVapidDetails(VAPID_SUBJ, VAPID_PUB, VAPID_PRIV)
 
   const r = await redisSingle(['SMEMBERS','subs:all'])
   const ids:string[] = r.result || r || []
   console.log('[cron] subs:', ids.length)
-
-  if (!ids.length) {
-    console.log('[cron] no subscribers; ok')
-    return 'no subscribers'
-  }
+  if (!ids.length) return 'no subscribers'
 
   const now = Date.now()
   let sent = 0, updated = 0, skipped = 0
@@ -146,7 +136,6 @@ async function runCron(): Promise<string> {
     if (tooEarly || alreadySent) { skipped++; skipWindow++; continue }
 
     if (!nextAt || tooLate) {
-      // Reschedule-only (no send)
       const lat = Number(m.lat), lng = Number(m.lng)
       const countryCode = String(m.countryCode || '')
       const tz = String(m.tz || 'UTC')
@@ -165,7 +154,7 @@ async function runCron(): Promise<string> {
       skipped++; continue
     }
 
-    // Send
+    // SEND
     const sub = { endpoint, keys } as any
     const payload = JSON.stringify({ title: 'Tid for bønn', body: nextName ? `Nå er det ${nextName}` : 'Bønnetid', url: '/' })
     try {
@@ -176,7 +165,7 @@ async function runCron(): Promise<string> {
       console.error('[cron] push failed for', id, e?.message || e)
     }
 
-    // Reschedule next
+    // planlegg neste
     const lat = Number(m.lat), lng = Number(m.lng)
     const countryCode = String(m.countryCode || '')
     const tz = String(m.tz || 'UTC')
@@ -198,48 +187,42 @@ async function runCron(): Promise<string> {
   return `cron ok: sent=${sent} updated=${updated} skipped=${skipped}`
 }
 
-function json(data: any, status = 200) {
-  return new Response(JSON.stringify(data), {
-    status,
-    headers: { 'content-type': 'application/json' }
-  })
-}
-
 export default async (req: Request): Promise<Response> => {
   try {
     const url = new URL(req.url)
-    const isGET = req.method === 'GET'
+    const qp = url.searchParams
 
-    let body: any = {}
-    if (!isGET) {
-      try { body = await req.json() } catch { body = {} }
-    }
-    const doRun = url.searchParams.get('run') === '1' || body?.run === 1
-    const askHealth = url.searchParams.get('health') === '1'
-
-    if (askHealth) {
-      const status: any = {
-        upstashConfigured: Boolean(UP_URL && UP_TOKEN),
-        vapidConfigured: Boolean(VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY && VAPID_SUBJECT),
+    if (qp.get('health') === '1') {
+      let redisPing:any = null, upstashConfigured = !!(UP_URL && UP_TOK)
+      if (upstashConfigured) {
+        try {
+          const r = await fetch(UP_URL, {
+            method:'POST',
+            headers:{ Authorization:`Bearer ${UP_TOK}`, 'content-type':'application/json' },
+            body: JSON.stringify(['PING'])
+          })
+          redisPing = await r.json().catch(()=>({}))
+        } catch (e:any) { redisPing = { error: e?.message || String(e) } }
       }
-      if (status.upstashConfigured) {
-        try { status.redisPing = await redisSingle(['PING']) } catch (e:any) { status.redisError = e?.message || String(e) }
-      }
-      return json(status, 200)
+      const vapidConfigured = !!(VAPID_PUB && VAPID_PRIV && VAPID_SUBJ)
+      return new Response(JSON.stringify({ upstashConfigured, vapidConfigured, redisPing }), { status: 200, headers: { 'content-type':'application/json' } })
     }
 
-    if (!doRun && !body?.next_run) {
-      // Avoid throwing on manual GET without body
-      return new Response('ok: add ?run=1 to execute now', { status: 200 })
+    if (qp.get('run') === '1') {
+      const result = await runCron()
+      return new Response(result, { status: 200 })
     }
 
-    const next_run = body?.next_run || url.searchParams.get('next_run')
-    console.log('[cron] scheduled invoke; next_run:', next_run || '(manual)')
-
-    const result = await runCron()
-    return new Response(result, { status: 200 })
+    // Scheduled invoke (POST) eller manuell GET uten params
+    const method = (req as any).method || 'GET'
+    if (method === 'POST') {
+      const result = await runCron()
+      return new Response(result, { status: 200 })
+    } else {
+      return new Response('OK. Add ?run=1 to trigger or ?health=1 for status.', { status: 200 })
+    }
   } catch (e:any) {
-    console.error('[cron] internal error', e?.stack || e?.message || e)
-    return new Response('cron internal error: ' + (e?.message || 'unknown'), { status: 500 })
+    console.error('[cron] top-level error', e?.message || e)
+    return new Response('cron error: ' + (e?.message || String(e)), { status: 500 })
   }
 }
