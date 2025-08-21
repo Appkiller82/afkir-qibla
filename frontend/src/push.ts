@@ -1,5 +1,6 @@
 // frontend/src/push.ts
 // Web Push klienthjelpere: subscribe/unsubscribe + oppdater meta til server
+// Nå med *kompatibilitetseksporter* for eldre kode: registerWithMetadata, sendTest
 export type PushKeys = { p256dh: string; auth: string }
 export type PushSubscriptionJSON = { endpoint: string; keys: PushKeys }
 
@@ -8,8 +9,8 @@ export type AqMeta = {
   mode?: 'auto' | 'manual'; savedAt?: number;
 }
 
-const VAPID_PUBLIC = import.meta.env.VITE_VAPID_PUBLIC_KEY as string
-const API_BASE = (import.meta.env.VITE_PUSH_SERVER_URL as string) || '/.netlify/functions'
+const VAPID_PUBLIC = (import.meta as any).env?.VITE_VAPID_PUBLIC_KEY as string | undefined
+const API_BASE = ((import.meta as any).env?.VITE_PUSH_SERVER_URL as string | undefined) || '/.netlify/functions'
 
 function urlBase64ToUint8Array(base64String: string) {
   const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
@@ -34,6 +35,10 @@ export async function getSubscription(): Promise<PushSubscription | null> {
 
 export async function subscribe(): Promise<boolean> {
   try {
+    if (!VAPID_PUBLIC) {
+      console.warn('VITE_VAPID_PUBLIC_KEY mangler');
+      return false;
+    }
     const reg = await getRegistration();
     // allerede subbed?
     const current = await reg.pushManager.getSubscription();
@@ -78,6 +83,39 @@ export async function updateMetaIfSubscribed(meta: AqMeta): Promise<boolean> {
     return res.ok;
   } catch (e) {
     console.error('updateMetaIfSubscribed failed', e);
+    return false;
+  }
+}
+
+// ---- Kompatibilitet for eldre komponenter ----
+
+// Eldre komponenter forventer registerWithMetadata(meta)
+// Vi implementerer denne som: subscribe() -> updateMetaIfSubscribed(meta)
+export async function registerWithMetadata(meta: AqMeta): Promise<boolean> {
+  const ok = await subscribe();
+  if (!ok) {
+    console.error('registerWithMetadata: subscribe failed');
+    return false;
+  }
+  const up = await updateMetaIfSubscribed(meta);
+  if (!up) {
+    console.warn('registerWithMetadata: updateMetaIfSubscribed returned false');
+  }
+  return true;
+}
+
+// Eldre UI kaller sendTest() fra klienten – videresender til server-funksjonen
+export async function sendTest(title?: string, body?: string, url?: string): Promise<boolean> {
+  try {
+    const payload = { title: title || 'Test', body: body || 'Dette er en test', url: url || '/' }
+    const res = await fetch(`${API_BASE}/send-test`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    return res.ok;
+  } catch (e) {
+    console.error('sendTest failed', e);
     return false;
   }
 }
