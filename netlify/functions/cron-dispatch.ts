@@ -1,217 +1,280 @@
 // netlify/functions/cron-dispatch.ts
-// Scheduled function that sends prayer push notifications.
-// Adds tolerance window for late cron ticks and de-duplication via lastSentAt.
-import type { Config } from "@netlify/functions"
-import webpush from "web-push"
+import type { Handler } from "@netlify/functions";
 
-// Run every minute (UTC). This file is NOT invokable via URL in prod.
-export const config: Config = { schedule: "* * * * *" }
+export const config = { schedule: "* * * * *" }; // every minute
 
-// ---- Config / env ----
-const UP_URL = process.env.UPSTASH_REDIS_REST_URL || ""
-const UP_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN || ""
-const VAPID_PUBLIC_KEY  = process.env.VAPID_PUBLIC_KEY  || ""
-const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY || ""
-const VAPID_SUBJECT     = process.env.VAPID_SUBJECT     || ""
-
-// Allow small lateness, avoid stale sends
-const LATE_TOLERANCE_MS = 5 * 60_000   // send if up to 5 min late
-const TOO_LATE_MS       = 15 * 60_000  // drop if over 15 min late
-
-// Norway (IRN) tuning
+// ====== Constants matching frontend NO_IRN_PROFILE ======
 const NO_IRN_PROFILE = {
-  fajrAngle: 18.0, ishaAngle: 14.0, latitudeAdj: 3, school: 0,
-  offsets: { Fajr: -9, Dhuhr: +12, Asr: 0, Maghrib: +8, Isha: -46 },
+  fajrAngle: 18.0,
+  ishaAngle: 14.0,
+  latitudeAdj: 3,
+  school: 0,
+  // EXACT same offsets as in frontend
+  offsets: { Fajr: -9, Dhuhr: +12, Asr: 0, Maghrib: +8, Isha: -46 }
+};
+
+const PRAYERS = ["Fajr","Dhuhr","Asr","Maghrib","Isha"] as const;
+type Timings = Record<(typeof PRAYERS)[number], string>;
+
+const UP_URL  = process.env.UPSTASH_REDIS_REST_URL as string;
+const UP_TOK  = process.env.UPSTASH_REDIS_REST_TOKEN as string;
+const PUSH_ENDPOINT = process.env.PUSH_ENDPOINT || `${process.env.URL}/.netlify/functions/push`;
+
+// Sets we try to read subscription ids from
+const SUBS_SET_KEYS = (process.env.SUBS_SET_KEYS || "subs,subs:all,subs all")
+  .split(",").map(s=>s.trim()).filter(Boolean);
+
+// ============ Helpers ============
+async function upstash(path: string, init?: RequestInit) {
+  const res = await fetch(`${UP_URL}${path}`, {
+    ...init,
+    headers: {
+      Authorization: `Bearer ${UP_TOK}`,
+      "content-type": "application/json",
+      ...(init?.headers || {})
+    }
+  });
+  if (!res.ok) throw new Error(`Upstash ${path} -> ${res.status}`);
+  return res.json() as Promise<any>;
 }
-type Times = Record<'Fajr'|'Sunrise'|'Dhuhr'|'Asr'|'Maghrib'|'Isha', Date>
 
+async function listSubIds(): Promise<string[]> {
+  for (const key of SUBS_SET_KEYS) {
+    try {
+      const r = await upstash(`/smembers/${encodeURIComponent(key)}`);
+      if (Array.isArray(r?.result) && r.result.length) return r.result;
+    } catch {}
+  }
+  return [];
+}
 
-function zonedEpoch(ymdStr: string, hhmm: string, tz: string): number {
-  // Convert a local time in `tz` to a UTC epoch (ms) without external libs.
-  // Strategy: format the UTC date through the target tz and reconstruct.
-  const [y, mo, d] = ymdStr.split('-').map((x)=>parseInt(x,10));
-  const [hh, mm]   = hhmm.split(':').map((x)=>parseInt(x,10));
-  // Start from the same wall-clock in tz using formatToParts trick
-  const dtf = new Intl.DateTimeFormat('en-CA', {
+async function readMeta(id: string): Promise<any|null> {
+  try {
+    const g = await upstash(`/get/sub:${id}`);
+    if (typeof g?.result === "string" && g.result.length) {
+      try { return JSON.parse(g.result); } catch {}
+    }
+  } catch {}
+  try {
+    const h = await upstash(`/hget/sub:${id}`, { method: "POST", body: JSON.stringify({ field: "data" }) });
+    if (typeof h?.result === "string" && h.result.length) {
+      try { return JSON.parse(h.result); } catch {}
+    }
+  } catch {}
+  return null;
+}
+
+async function writeMeta(id: string, meta: any) {
+  await upstash(`/set/sub:${id}`, { method: "POST", body: JSON.stringify({ value: JSON.stringify(meta) }) });
+}
+
+function hhmmToMinutes(hhmm: string): number {
+  const m = String(hhmm||"00:00").match(/(\d{1,2}):(\d{2})/);
+  if (!m) return 0;
+  const h = parseInt(m[1],10), mm = parseInt(m[2],10);
+  return h*60 + mm;
+}
+
+function nowInTz(tz: string): { ymd: string; minutes: number } {
+  const fmt = new Intl.DateTimeFormat("en-CA", {
     timeZone: tz,
-    year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit', second: '2-digit',
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
     hour12: false,
   });
-  // Guess: take UTC date of same components, then read what tz would display
-  const guess = new Date(Date.UTC(y, mo-1, d, hh, mm, 0));
-  const parts = dtf.formatToParts(guess);
-  const obj: any = {};
-  for (const p of parts) obj[p.type] = p.value;
-  const yr = parseInt(obj.year,10);
-  const mon = parseInt(obj.month,10);
-  const day = parseInt(obj.day,10);
-  const hour = parseInt(obj.hour,10);
-  const minute = parseInt(obj.minute,10);
-  const second = parseInt(obj.second,10);
-  // These parts represent the same wall-clock time in tz. Compute UTC epoch for that local time.
-  return Date.UTC(yr, mon-1, day, hour, minute, second);
-}
-function mkDate(ymdStr: string, hhmm: string, tz: string) {
-  return new Date(zonedEpoch(ymdStr, hhmm, tz));
-}
-}
-function ddmmyyyyToYmd(ddmmyyyy: string) {
-  const [dd, mm, yyyy] = ddmmyyyy.split('-').map(x=>parseInt(x,10))
-  return `${yyyy}-${String(mm).padStart(2,'0')}-${String(dd).padStart(2,'0')}`
-}
-async function fetchAladhan(lat:number,lng:number,when:'today'|'tomorrow',opts:{countryCode?:string,tz?:string}):Promise<Times>{
-  const tz = opts?.tz || 'UTC'
-  const p = new URLSearchParams({ latitude:String(lat), longitude:String(lng), timezonestring:tz, iso8601:'true' })
-  if ((opts?.countryCode||'').toUpperCase()==='NO'){
-    p.set('method','99')
-    p.set('fajr',String(NO_IRN_PROFILE.fajrAngle))
-    p.set('isha',String(NO_IRN_PROFILE.ishaAngle))
-    p.set('school',String(NO_IRN_PROFILE.school))
-    p.set('latitudeAdjustmentMethod',String(NO_IRN_PROFILE.latitudeAdj))
-  } else {
-    p.set('method','5') // Umm Al-Qura
-    p.set('school','0')
-  }
-  const res = await fetch(`https://api.aladhan.com/v1/timings/${when}?${p.toString()}`)
-  const j = await res.json()
-  if (!res.ok || j.code !== 200) throw new Error(`AlAdhan error ${res.status}`)
-  const ymd = ddmmyyyyToYmd(j.data?.date?.gregorian?.date as string)
-  const t = j.data.timings
-  const base:Times = { Fajr:mkDate(ymd,t.Fajr, tz), Sunrise:mkDate(ymd,t.Sunrise, tz), Dhuhr:mkDate(ymd,t.Dhuhr, tz), Asr:mkDate(ymd,t.Asr, tz), Maghrib:mkDate(ymd,t.Maghrib, tz), Isha:mkDate(ymd,t.Isha, tz) }
-  if ((opts?.countryCode||'').toUpperCase()==='NO'){
-    const o = NO_IRN_PROFILE.offsets
-    base.Fajr.setMinutes(base.Fajr.getMinutes()+(o.Fajr||0))
-    base.Dhuhr.setMinutes(base.Dhuhr.getMinutes()+(o.Dhuhr||0))
-    base.Asr.setMinutes(base.Asr.getMinutes()+(o.Asr||0))
-    base.Maghrib.setMinutes(base.Maghrib.getMinutes()+(o.Maghrib||0))
-    base.Isha.setMinutes(base.Isha.getMinutes()+(o.Isha||0))
-  }
-  return base
-}
-function nextPrayer(times:Times){
-  const now=Date.now()
-  const order:(keyof Times)[]=['Fajr','Sunrise','Dhuhr','Asr','Maghrib','Isha']
-  for(const k of order){ const d=times[k]; if(d && d.getTime()>now) return { name:k, at:d.getTime() } }
-  return null
+  const parts = fmt.formatToParts(new Date());
+  const get = (t: string) => parts.find(p=>p.type===t)?.value || "";
+  const y = get("year"), M = get("month"), d = get("day");
+  const h = parseInt(get("hour")||"0",10), m = parseInt(get("minute")||"0",10);
+  return { ymd: `${y}-${M}-${d}`, minutes: h*60 + m };
 }
 
-// ---- Upstash REST helpers ----
-// Single: POST base URL with JSON array body ["CMD","arg1",...]
-async function redisSingle(cmd: string[]) {
-  if(!UP_URL || !UP_TOKEN) throw new Error('NO_UPSTASH')
-  const res = await fetch(UP_URL, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${UP_TOKEN}`, 'content-type': 'application/json' },
-    body: JSON.stringify(cmd),
-  })
+function nextYmdInTz(tz: string, todayYmd?: string): string {
+  const base = todayYmd ? new Date(`${todayYmd}T00:00:00Z`) : new Date();
+  const one = 24*60*60*1000;
+  const fmt = new Intl.DateTimeFormat("en-CA", { timeZone: tz, year:"numeric", month:"2-digit", day:"2-digit" });
+  return fmt.format(new Date(base.getTime()+one));
+}
+
+function inDueWindow(nowMin: number, targetMin: number, earlyMin = 1, lateMin = 5) {
+  return nowMin >= targetMin - earlyMin && nowMin <= targetMin + lateMin;
+}
+
+async function fetchTimingsAlAdhan(lat: number, lng: number, tz: string, method = 5, school = 0, ymd?: string): Promise<Timings|null> {
+  try {
+    const qp = new URLSearchParams({
+      latitude: String(lat),
+      longitude: String(lng),
+      method: String(method),
+      school: String(school),
+      timezonestring: tz,
+      iso8601: "true"
+    });
+    if (ymd) qp.set("date", ymd);
+    const url = `https://api.aladhan.com/v1/timings?${qp.toString()}`;
+    const res = await fetch(url);
+    const json = await res.json();
+    const t = json?.data?.timings;
+    if (!t) return null;
+    const out: any = {};
+    for (const p of PRAYERS) out[p] = String(t[p]||"00:00").split(" ")[0];
+    return out as Timings;
+  } catch { return null; }
+}
+
+async function fetchTimingsIRN_NO(lat: number, lng: number, tz: string, ymd?: string): Promise<Timings|null> {
+  try {
+    const qp = new URLSearchParams({
+      latitude: String(lat),
+      longitude: String(lng),
+      method: "99",
+      fajr: String(NO_IRN_PROFILE.fajrAngle),
+      isha: String(NO_IRN_PROFILE.ishaAngle),
+      school: String(NO_IRN_PROFILE.school),
+      latitudeAdjustmentMethod: String(NO_IRN_PROFILE.latitudeAdj),
+      timezonestring: tz,
+      iso8601: "true"
+    });
+    if (ymd) qp.set("date", ymd);
+    const url = `https://api.aladhan.com/v1/timings?${qp.toString()}`;
+    const res = await fetch(url);
+    const json = await res.json();
+    const t = json?.data?.timings;
+    if (!t) return null;
+    const base: any = {};
+    for (const p of PRAYERS) base[p] = String(t[p]||"00:00").split(" ")[0];
+    // Apply exact same offsets
+    const o = NO_IRN_PROFILE.offsets;
+    const adj: any = {};
+    for (const p of PRAYERS) {
+      const mins = hhmmToMinutes(base[p]) + (o[p as keyof typeof o] || 0);
+      const wrapped = (mins % (24*60) + (24*60)) % (24*60);
+      const h = Math.floor(wrapped/60), m = wrapped%60;
+      adj[p] = `${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")}`;
+    }
+    return adj as Timings;
+  } catch { return null; }
+}
+
+async function fetchTimingsSmart(lat: number, lng: number, tz: string, ymd: string, countryCode?: string, method?: number, school?: number): Promise<Timings|null> {
+  const isNorway = (countryCode||"").toUpperCase() === "NO";
+  if (isNorway) return await fetchTimingsIRN_NO(lat, lng, tz, ymd);
+  return await fetchTimingsAlAdhan(lat, lng, tz, method ?? 5, school ?? 0, ymd);
+}
+
+function nextPrayerAfter(nowMin: number, timings: Timings) {
+  for (const p of PRAYERS) {
+    const tm = hhmmToMinutes(timings[p]);
+    if (tm > nowMin) return { name: p, minutes: tm };
+  }
+  return null;
+}
+
+async function callPush(sub: any, payload: any) {
+  const body = JSON.stringify({ subscription: sub, payload });
+  let res = await fetch(`${PUSH_ENDPOINT}?mode=manual`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body
+  });
   if (!res.ok) {
-    const txt = await res.text().catch(()=>String(res.status))
-    throw new Error(`Redis ${res.status} ${txt}`)
+    res = await fetch(`${PUSH_ENDPOINT}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body
+    });
   }
-  return res.json()
-}
-// Pipeline: POST /pipeline with body as 2D array [[...],[...]]
-async function redisMany(cmds: string[][]) {
-  if(!UP_URL || !UP_TOKEN) throw new Error('NO_UPSTASH')
-  const res = await fetch(`${UP_URL}/pipeline`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${UP_TOKEN}`, 'content-type': 'application/json' },
-    body: JSON.stringify(cmds),
-  })
-  if (!res.ok) {
-    const txt = await res.text().catch(()=>String(res.status))
-    throw new Error(`RedisPipe ${res.status} ${txt}`)
-  }
-  return res.json()
+  return res.ok;
 }
 
-async function runCron(): Promise<string> {
-  console.log('[cron] tick', new Date().toISOString())
-
-  if (!UP_URL || !UP_TOKEN) {
-    console.log('[cron] Upstash not configured; idle')
-    return 'Upstash not configured; cron idle.'
-  }
-  if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY || !VAPID_SUBJECT) {
-    console.error('[cron] Missing VAPID env')
-    return 'Missing VAPID env'
+// ============ Handler ============
+const handler: Handler = async () => {
+  if (!UP_URL || !UP_TOK) {
+    console.warn("[cron] Missing Upstash env");
+    return { statusCode: 200, body: "missing upstash env" };
   }
 
-  webpush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY)
+  const ids = await listSubIds();
+  if (!ids.length) return { statusCode: 200, body: "no subs" };
 
-  const r = await redisSingle(['SMEMBERS','subs:all'])
-  const ids:string[] = r.result || r || []
-  console.log('[cron] subs:', ids.length)
-
-  if (!ids.length) {
-    console.log('[cron] no subscribers; ok')
-    return 'no subscribers'
-  }
-
-  const now = Date.now()
-  let sent = 0, updated = 0, skipped = 0
-  let skipNoHash=0, skipInactive=0, skipNoEndpoint=0, skipWindow=0
+  let sent = 0, skipped = 0, updated = 0, errors = 0;
 
   for (const id of ids) {
-    const h = await redisSingle(['HGETALL', `sub:${id}`])
-    const entries:string[] = h.result || h || []
-    if (!entries.length) { skipped++; skipNoHash++; continue }
-    const m:Record<string,string> = {}; for(let i=0;i<entries.length;i+=2){ m[entries[i]] = entries[i+1] }
-
-    if (m.active !== '1') { skipped++; skipInactive++; continue }
-    const endpoint = m.endpoint; if (!endpoint) { skipped++; skipNoEndpoint++; continue }
-    let keys:any = {}; try { keys = JSON.parse(m.keys || '{}') } catch {}
-
-    const nextAt   = Number(m.nextAt || 0)
-    const lastSent = Number(m.lastSentAt || 0)
-    const nextName = String(m.nextName || '')
-
-    // Window logic
-    const tooEarly    = !nextAt || (now < (nextAt - LATE_TOLERANCE_MS))
-    const alreadySent = lastSent && lastSent >= nextAt
-    const tooLate     = nextAt && (now - nextAt) > TOO_LATE_MS
-
-    if (tooEarly || alreadySent || tooLate) { skipped++; skipWindow++; continue }
-
-    // === SEND ===
-    const sub = { endpoint, keys } as any
-    const payload = JSON.stringify({ title: 'Tid for bønn', body: nextName ? `Nå er det ${nextName}` : 'Bønnetid', url: '/' })
     try {
-      await webpush.sendNotification(sub, payload)
-      sent++
-      // mark as sent to avoid duplicates if cron fires multiple times
-      await redisMany([['HSET', `sub:${id}`, 'lastSentAt', String(nextAt), 'lastSentName', nextName]])
-    } catch (e:any) {
-      console.error('[cron] push failed for', id, e?.message || e)
-    }
+      const meta = await readMeta(id);
+      if (!meta?.sub?.endpoint) { skipped++; continue; }
 
-    // Reschedule next prayer
-    const lat = Number(m.lat), lng = Number(m.lng)
-    const countryCode = String(m.countryCode || '')
-    const tz = String(m.tz || 'UTC')
-    try {
-      const today = await fetchAladhan(lat,lng,'today',{countryCode,tz})
-      let nxt = nextPrayer(today)
-      if (!nxt) {
-        const tomorrow = await fetchAladhan(lat,lng,'tomorrow',{countryCode,tz})
-        nxt = { name: 'Fajr', at: tomorrow.Fajr.getTime() }
+      // Expect meta to contain precise per-user data
+      const tz = meta.tz || "Europe/Oslo";
+      const lat = Number(meta.lat);
+      const lng = Number(meta.lng);
+      const method = isFinite(Number(meta.method)) ? Number(meta.method) : undefined;
+      const school = isFinite(Number(meta.school)) ? Number(meta.school) : undefined;
+      // Prefer countryCode (as in frontend), fallback to country
+      const countryCode = (meta.countryCode || meta.country || "").toUpperCase();
+
+      if (!isFinite(lat) || !isFinite(lng)) { skipped++; continue; }
+
+      const { ymd, minutes: nowMin } = nowInTz(tz);
+
+      // Refresh timings cache per-day
+      if (!meta._timings || meta._timings_ymd !== ymd) {
+        const t = await fetchTimingsSmart(lat, lng, tz, ymd, countryCode, method, school);
+        if (!t) { skipped++; continue; }
+        meta._timings = t;
+        meta._timings_ymd = ymd;
+        updated++;
       }
-      await redisMany([ ['HSET', `sub:${id}`, 'nextName', String(nxt!.name), 'nextAt', String(nxt!.at)] ])
-      updated++
-    } catch (e:any) {
-      console.error('[cron] could not reschedule', id, e?.message || e)
+
+      const timings: Timings = meta._timings;
+
+      // Check if any prayer is due within window
+      let due: { name: string; minutes: number } | null = null;
+      for (const p of PRAYERS) {
+        const tm = hhmmToMinutes(timings[p]);
+        if (inDueWindow(nowMin, tm, 1, 5)) { due = { name: p, minutes: tm }; break; }
+      }
+
+      // Compute nextName (for info)
+      const upcoming = nextPrayerAfter(nowMin, timings);
+      if (upcoming) {
+        meta.nextName = upcoming.name;
+        meta.nextAtYmd = ymd;
+        meta.nextAtMinutes = upcoming.minutes;
+      }
+
+      // Dedup by day|prayer
+      const currentKey = due ? `${ymd}|${due.name}` : "";
+      if (due && meta.lastSentKey !== currentKey) {
+        const ok = await callPush(meta.sub, {
+          title: `Tid for ${due.name}`,
+          body: `Det er tid for ${due.name} nå`,
+          url: "/"
+        });
+        if (ok) {
+          sent++;
+          meta.lastSentKey = currentKey;
+        } else {
+          errors++;
+        }
+      } else {
+        skipped++;
+      }
+
+      await writeMeta(id, meta);
+    } catch (e) {
+      errors++;
     }
   }
 
-  console.log('[cron] done', { sent, updated, skipped, skipNoHash, skipInactive, skipNoEndpoint, skipWindow })
-  return `cron ok: sent=${sent} updated=${updated} skipped=${skipped}`
-}
+  return {
+    statusCode: 200,
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ sent, skipped, updated, errors })
+  };
+};
 
-// Default export for scheduled functions
-export default async (req: Request): Promise<Response> => {
-  const { next_run } = await req.json().catch(() => ({} as any))
-  console.log('[cron] scheduled invoke; next_run:', next_run)
-  const result = await runCron()
-  return new Response(result, { status: 200 })
-}
+export default handler;
