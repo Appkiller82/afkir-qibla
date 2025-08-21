@@ -1,6 +1,18 @@
 // frontend/src/push.ts
+// Web Push klienthjelpere: subscribe/unsubscribe + oppdater meta til server
+export type PushKeys = { p256dh: string; auth: string }
+export type PushSubscriptionJSON = { endpoint: string; keys: PushKeys }
+
+export type AqMeta = {
+  lat: number; lng: number; city?: string; countryCode?: string; tz?: string;
+  mode?: 'auto' | 'manual'; savedAt?: number;
+}
+
+const VAPID_PUBLIC = import.meta.env.VITE_VAPID_PUBLIC_KEY as string
+const API_BASE = (import.meta.env.VITE_PUSH_SERVER_URL as string) || '/.netlify/functions'
+
 function urlBase64ToUint8Array(base64String: string) {
-  const padding = '='.repeat((4 - base64String.length % 4) % 4);
+  const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
   const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
   const rawData = atob(base64);
   const outputArray = new Uint8Array(rawData.length);
@@ -8,88 +20,64 @@ function urlBase64ToUint8Array(base64String: string) {
   return outputArray;
 }
 
-export async function enablePush(): Promise<string> {
-  if (!('serviceWorker' in navigator)) throw new Error('Service worker ikke støttet');
+async function getRegistration(): Promise<ServiceWorkerRegistration> {
+  if (!('serviceWorker' in navigator)) throw new Error('Service worker unsupported');
   const reg = await navigator.serviceWorker.ready;
-  const existing = await reg.pushManager.getSubscription();
-  const vapidKey = import.meta.env.VITE_VAPID_PUBLIC_KEY as string | undefined;
-  if (!vapidKey) throw new Error('VITE_VAPID_PUBLIC_KEY mangler');
-
-  const sub = existing ?? await reg.pushManager.subscribe({
-    userVisibleOnly: true,
-    applicationServerKey: urlBase64ToUint8Array(vapidKey),
-  });
-
-  const res = await fetch('/.netlify/functions/subscribe', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ subscription: sub.toJSON ? sub.toJSON() : sub, meta: {} }),
-  });
-  const text = await res.text();
-  let data: any = {}; try { data = JSON.parse(text) } catch {}
-  if (!res.ok) throw new Error(`subscribe failed: ${res.status} ${data?.message || text || ''}`);
-
-  localStorage.setItem('pushSub', JSON.stringify(sub.toJSON ? sub.toJSON() : sub));
-  if (data?.id) localStorage.setItem('pushSubId', data.id);
-  return data?.id || 'ok';
+  return reg;
+}
+export async function getSubscription(): Promise<PushSubscription | null> {
+  try {
+    const reg = await getRegistration();
+    return await reg.pushManager.getSubscription();
+  } catch { return null }
 }
 
-export async function registerWithMetadata(meta: {
-  lat: number; lng: number; city?: string; countryCode?: string; tz?: string;
-}): Promise<string> {
-  if (!('serviceWorker' in navigator)) throw new Error('Service worker ikke støttet');
-  const reg = await navigator.serviceWorker.ready;
-  const existing = await reg.pushManager.getSubscription();
-  const vapidKey = import.meta.env.VITE_VAPID_PUBLIC_KEY as string | undefined;
-  if (!vapidKey) throw new Error('VITE_VAPID_PUBLIC_KEY mangler');
+export async function subscribe(): Promise<boolean> {
+  try {
+    const reg = await getRegistration();
+    // allerede subbed?
+    const current = await reg.pushManager.getSubscription();
+    if (current) return true;
 
-  const sub = existing ?? await reg.pushManager.subscribe({
-    userVisibleOnly: true,
-    applicationServerKey: urlBase64ToUint8Array(vapidKey),
-  });
-
-  const payload = { subscription: sub.toJSON ? sub.toJSON() : sub, meta: { ...meta, tz: meta.tz || Intl.DateTimeFormat().resolvedOptions().timeZone } };
-  const res = await fetch('/.netlify/functions/subscribe', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
-  const text = await res.text();
-  let data: any = {}; try { data = JSON.parse(text) } catch {}
-  if (!res.ok) throw new Error(`subscribe failed: ${res.status} ${data?.message || text || ''}`);
-
-  localStorage.setItem('pushSub', JSON.stringify(sub.toJSON ? sub.toJSON() : sub));
-  if (data?.id) localStorage.setItem('pushSubId', data.id);
-  return data?.id || 'ok';
+    const sub = await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC)
+    });
+    // send til server (uten meta her – meta kommer via updateMetaIfSubscribed)
+    await fetch(`${API_BASE}/subscribe`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ subscription: sub.toJSON() })
+    }).catch(()=>{});
+    return true;
+  } catch (e) {
+    console.error('subscribe failed', e);
+    return false;
+  }
 }
 
-/** Always-on: try to upsert meta when coords/by change */
-export async function updateMetaIfSubscribed(meta: {
-  lat: number; lng: number; city?: string; countryCode?: string; tz?: string;
-}): Promise<boolean> {
-  if (!('serviceWorker' in navigator)) return false;
-  const reg = await navigator.serviceWorker.ready;
-  const existing = await reg.pushManager.getSubscription();
-  if (!existing) return false;
-  const sub = existing.toJSON ? existing.toJSON() : existing;
-  const payload = { subscription: sub, meta: { ...meta, tz: meta.tz || Intl.DateTimeFormat().resolvedOptions().timeZone } };
-  const res = await fetch('/.netlify/functions/subscribe', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) });
-  return res.ok;
+export async function unsubscribe(): Promise<boolean> {
+  try {
+    const sub = await getSubscription();
+    if (!sub) return true;
+    await sub.unsubscribe();
+    return true;
+  } catch { return false }
 }
 
-export async function sendTest(): Promise<string> {
-  const reg = await navigator.serviceWorker.ready;
-  const existing = await reg.pushManager.getSubscription();
-  const sub = existing ? existing.toJSON() : JSON.parse(localStorage.getItem('pushSub') || 'null');
-  if (!sub?.endpoint) throw new Error('Ingen gyldig subscription. Prøv "Aktiver push" først.');
-
-  const res = await fetch('/.netlify/functions/send-test', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ sub }),
-  });
-
-  const text = await res.text();
-  if (!res.ok) throw new Error(`send-test: ${res.status} ${text || ''}`);
-  return text;
+export async function updateMetaIfSubscribed(meta: AqMeta): Promise<boolean> {
+  try {
+    const reg = await getRegistration();
+    const sub = await reg.pushManager.getSubscription();
+    if (!sub) return false;
+    const payload = { subscription: sub.toJSON() as PushSubscriptionJSON, meta }
+    const res = await fetch(`${API_BASE}/subscribe`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    return res.ok;
+  } catch (e) {
+    console.error('updateMetaIfSubscribed failed', e);
+    return false;
+  }
 }
