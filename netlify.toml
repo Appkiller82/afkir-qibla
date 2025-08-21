@@ -1,15 +1,7 @@
-# netlify.toml (scheduled function via default export + manual trigger)
 [build]
-  base = "frontend"
   command = "npm run build"
-  publish = "dist"
-
-[build.environment]
-  NODE_VERSION = "20"
+  publish = "frontend/dist"
 
 [functions]
   node_bundler = "esbuild"
-  directory = "../netlify/functions"
-
-[[plugins]]
-  package = "@netlify/plugin-functions-install-core"
+  directory = "netlify/functions"
