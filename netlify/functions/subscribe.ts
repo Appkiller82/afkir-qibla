@@ -1,104 +1,122 @@
-// netlify/functions/subscribe.ts
 import type { Handler } from "@netlify/functions";
 
 const UP_URL = process.env.UPSTASH_REDIS_REST_URL || "";
 const UP_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN || "";
-const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY || process.env.VITE_VAPID_PUBLIC_KEY || "";
+const VAPID_PUBLIC_KEY =
+  process.env.VAPID_PUBLIC_KEY || process.env.VITE_VAPID_PUBLIC_KEY || "";
+
+function json(statusCode: number, body: any) {
+  return {
+    statusCode,
+    headers: { "content-type": "application/json" },
+    body: typeof body === "string" ? body : JSON.stringify(body),
+  };
+}
 
 function b64url(str: string) {
-  return Buffer.from(str).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/,"");
+  return Buffer.from(String(str))
+    .toString("base64")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
 }
 
-async function redisSingle(cmd: (string|number)[]) {
-  if (!UP_URL || !UP_TOKEN) return { ok: false, skipped: true };
-  const res = await fetch(UP_URL, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${UP_TOKEN}`, "content-type": "application/json" },
-    body: JSON.stringify(cmd),
-  });
-  if (!res.ok) {
-    const t = await res.text().catch(()=>`${res.status}`);
-    throw new Error(`Redis ${res.status} ${t}`);
-  }
-  return await res.json();
-}
-async function redisMany(cmds: (string|number)[][]) {
-  if (!UP_URL || !UP_TOKEN) return { ok: false, skipped: true };
+async function upstash(cmds: (string | number)[][]) {
+  if (!UP_URL || !UP_TOKEN) throw new Error("Upstash creds missing");
   const res = await fetch(`${UP_URL}/pipeline`, {
     method: "POST",
-    headers: { Authorization: `Bearer ${UP_TOKEN}`, "content-type": "application/json" },
+    headers: {
+      Authorization: `Bearer ${UP_TOKEN}`,
+      "content-type": "application/json",
+    },
     body: JSON.stringify(cmds),
   });
-  if (!res.ok) {
-    const t = await res.text().catch(()=>`${res.status}`);
-    throw new Error(`RedisPipe ${res.status} ${t}`);
-  }
-  return await res.json();
+  if (!res.ok) throw new Error(`Upstash ${res.status} ${await res.text()}`);
+  return res.json();
 }
 
 export const handler: Handler = async (event) => {
   try {
-    // GET ?vapid=1 → expose public key to clients that don't have VITE_ set
     if (event.httpMethod === "GET") {
       if (event.queryStringParameters && "vapid" in event.queryStringParameters) {
-        if (VAPID_PUBLIC_KEY) {
-          return { statusCode: 200, body: JSON.stringify({ publicKey: VAPID_PUBLIC_KEY }) };
-        }
-        return { statusCode: 404, body: JSON.stringify({ error: "VAPID public key not set" }) };
+        return VAPID_PUBLIC_KEY
+          ? json(200, { publicKey: VAPID_PUBLIC_KEY })
+          : json(404, { error: "VAPID public key not set" });
       }
-      return { statusCode: 200, body: "ok" };
+      return json(200, { ok: true });
     }
 
-    if (event.httpMethod !== "POST") {
-      return { statusCode: 405, body: "Method Not Allowed" };
+    if (event.httpMethod !== "POST") return json(405, "Method Not Allowed");
+    if (!event.body) return json(400, "Missing body");
+
+    let parsed: any;
+    try {
+      parsed = JSON.parse(event.body);
+    } catch (e) {
+      console.error("[subscribe] bad json:", e);
+      return json(400, "Bad JSON");
     }
 
-    if (!event.body) return { statusCode: 400, body: "Missing body" };
-
-    const { subscription, meta } = JSON.parse(event.body);
+    const { subscription, meta } = parsed || {};
     if (!subscription || !subscription.endpoint) {
-      return { statusCode: 400, body: "Invalid subscription" };
+      console.error("[subscribe] invalid subscription payload:", parsed);
+      return json(400, "Invalid subscription");
     }
 
     const id = b64url(subscription.endpoint);
-    const tz = (meta && meta.tz) || Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
-
-    // Always add to set + ensure a hash exists with minimal fields
-    const cmds: (string|number)[][] = [
-      ["SADD", "subs:all", id],
-      ["HSET", `sub:${id}`,
-        "endpoint", String(subscription.endpoint),
-        "keys", JSON.stringify(subscription.keys || {}),
-        "active", "1",
-        "tz", String(tz),
-        "updatedAt", String(Date.now())
-      ]
-    ];
-
-    // If meta provided, enrich the hash
-    if (meta && typeof meta === "object") {
-      if (typeof meta.lat === "number" && typeof meta.lng === "number") {
-        cmds.push(["HSET", `sub:${id}`, "lat", String(meta.lat), "lng", String(meta.lng)]);
-      }
-      if (meta.city) cmds.push(["HSET", `sub:${id}`, "city", String(meta.city)]);
-      if (meta.countryCode) cmds.push(["HSET", `sub:${id}`, "countryCode", String(meta.countryCode)]);
-      if (meta.mode) cmds.push(["HSET", `sub:${id}`, "mode", String(meta.mode)]);
-    }
+    const tz =
+      (meta && meta.tz) ||
+      Intl.DateTimeFormat().resolvedOptions().timeZone ||
+      "UTC";
 
     try {
-      await redisMany(cmds);
-    } catch (e) {
-      // Be tolerant: do not fail activation if Redis has issues
-      console.error("subscribe: redis error", (e as any)?.message || e);
+      const cmds: (string | number)[][] = [
+        ["SADD", "subs:all", id],
+        [
+          "HSET",
+          `sub:${id}`,
+          "endpoint",
+          String(subscription.endpoint),
+          "keys",
+          JSON.stringify(subscription.keys || {}),
+          "active",
+          "1",
+          "tz",
+          String(tz),
+          "updatedAt",
+          String(Date.now()),
+        ],
+      ];
+      if (meta && typeof meta === "object") {
+        if (typeof meta.lat === "number" && typeof meta.lng === "number") {
+          cmds.push([
+            "HSET",
+            `sub:${id}`,
+            "lat",
+            String(meta.lat),
+            "lng",
+            String(meta.lng),
+          ]);
+        }
+        if (meta.city) cmds.push(["HSET", `sub:${id}`, "city", String(meta.city)]);
+        if (meta.countryCode)
+          cmds.push([
+            "HSET",
+            `sub:${id}`,
+            "countryCode",
+            String(meta.countryCode),
+          ]);
+        if (meta.mode)
+          cmds.push(["HSET", `sub:${id}`, "mode", String(meta.mode)]);
+      }
+      await upstash(cmds);
+    } catch (e: any) {
+      console.error("[subscribe] upstash error:", e?.message || e);
     }
 
-    return {
-      statusCode: 200,
-      body: JSON.stringify({ ok: true, id }),
-      headers: { "content-type": "application/json" }
-    };
-  } catch (err:any) {
-    console.error("subscribe failed:", err?.message || err);
-    return { statusCode: 500, body: err?.message || "subscribe failed" };
+    return json(200, { ok: true, id });
+  } catch (err: any) {
+    console.error("[subscribe] fatal:", err?.message || err);
+    return json(200, { ok: true, note: "soft-errored" });
   }
 };
