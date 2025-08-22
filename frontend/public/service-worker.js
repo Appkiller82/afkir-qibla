@@ -6,7 +6,19 @@ self.addEventListener('push', (event) => {
   let data = {};
   try { data = event.data?.json() || {}; } catch {}
   const title = data.title || 'Afkir Qibla';
-  const options = { body: data.body || 'Ny melding', data: { url: data.url || '/' } };
+
+  // Use apple-touch-icon for both icon and badge
+  const options = {
+    body: data.body || 'Ny melding',
+    data: { url: data.url || '/' },
+    icon: data.icon || '/icons/apple-touch-icon',
+    badge: data.badge || '/icons/apple-touch-icon',
+    tag: data.tag || 'afkir-qibla',
+    renotify: false,
+    requireInteraction: false,
+    timestamp: Date.now()
+  };
+
   event.waitUntil(self.registration.showNotification(title, options));
 });
 
