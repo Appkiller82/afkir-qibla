@@ -7,12 +7,11 @@ self.addEventListener('push', (event) => {
   try { data = event.data?.json() || {}; } catch {}
   const title = data.title || 'Afkir Qibla';
 
-  // Use apple-touch-icon for both icon and badge
+  // Based on your working version — no icon/badge references to avoid 404s.
   const options = {
     body: data.body || 'Ny melding',
     data: { url: data.url || '/' },
-    icon: data.icon || '/icons/apple-touch-icon',
-    badge: data.badge || '/icons/apple-touch-icon',
+    // Harmless, iOS-friendly hints (do not trigger any asset fetches):
     tag: data.tag || 'afkir-qibla',
     renotify: false,
     requireInteraction: false,
