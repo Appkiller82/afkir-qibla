@@ -1,5 +1,4 @@
-
-// netlify/functions/send-test.ts
+// netlify/functions/send-test.ts — force sound-friendly notifications
 import type { Handler } from "@netlify/functions";
 import webpush from "web-push";
 
@@ -10,7 +9,6 @@ export const handler: Handler = async (event) => {
   const { subscription, pushSubId } = body;
 
   try {
-    // Get VAPID keys
     const publicKey = process.env.VAPID_PUBLIC_KEY || "";
     const privateKey = process.env.VAPID_PRIVATE_KEY || "";
     if (!publicKey || !privateKey) return { statusCode: 500, body: "VAPID keys missing" };
@@ -19,7 +17,6 @@ export const handler: Handler = async (event) => {
     // Resolve subscription
     let sub: any = subscription;
     if (!sub) {
-      // Fetch from Upstash if available
       const url = process.env.UPSTASH_REDIS_REST_URL;
       const token = process.env.UPSTASH_REDIS_REST_TOKEN;
       if (url && token && pushSubId) {
@@ -32,16 +29,18 @@ export const handler: Handler = async (event) => {
         }
       }
     }
+    if (!sub) return { statusCode: 400, body: 'Missing "subscription" or "pushSubId"' };
 
-    if (!sub) {
-      return { statusCode: 400, body: 'Missing "subscription" or "pushSubId"' };
-    }
-
+    // Unik tag + requireInteraction + timestamp for bedre lyd/synlighet i Chrome/Windows
     const payload = JSON.stringify({
       title: "Afkir Qibla",
       body: "Testvarsel — det fungerer!",
       url: "/",
-      tag: "test",
+      tag: "test-" + Date.now(),
+      renotify: true,
+      requireInteraction: true,
+      timestamp: Date.now()
+      // NB: ingen custom sound i Web Push (ikke støttet), OS spiller standardlyd
     });
 
     await webpush.sendNotification(sub, payload);

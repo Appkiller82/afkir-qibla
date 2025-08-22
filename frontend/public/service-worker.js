@@ -1,20 +1,28 @@
-/* public/service-worker.js */
+/* public/service-worker.js — sound-friendly */
 self.addEventListener('install', () => self.skipWaiting());
 self.addEventListener('activate', () => self.clients.claim());
 
-// Show notification on push with robust defaults for iOS
 self.addEventListener('push', (event) => {
   let data = {};
   try { data = event.data?.json() || {}; } catch {}
+
   const title = data.title || 'Afkir Qibla';
   const options = {
     body: data.body || 'Ny melding',
     data: { url: data.url || '/' },
-    tag: data.tag || 'prayer',
-    renotify: true,
-    badge: '/icons/badge-72.png',
-    icon: '/icons/icon-192.png'
+    // Viktig for lyd/synlighet: ikke "silent"
+    silent: false,
+    // La avsender styre tag/renotify hvis sendt i payload, ellers unik tag for å tvinge nytt varsel
+    tag: data.tag || ('prayer-' + Date.now()),
+    renotify: data.renotify !== undefined ? !!data.renotify : true,
+    badge: data.badge || '/icons/badge-72.png',
+    icon: data.icon || '/icons/icon-192.png',
+    // Disse feltene hjelper enkelte plattformer (Chrome/Windows) å gi lyd og holde varselet synlig
+    requireInteraction: data.requireInteraction !== undefined ? !!data.requireInteraction : true,
+    timestamp: data.timestamp || Date.now(),
+    vibrate: data.vibrate || [100, 50, 100] // ignoreres på desktop/iOS, ok på Android
   };
+
   event.waitUntil(self.registration.showNotification(title, options));
 });
 
@@ -31,7 +39,7 @@ self.addEventListener('notificationclick', (event) => {
   );
 });
 
-// Auto re-subscribe if the subscription changes (iOS rotates endpoints occasionally)
+// Auto re-subscribe (iOS bytter endpoint av og til)
 self.addEventListener('pushsubscriptionchange', async () => {
   try {
     const res = await fetch('/vapid-public.txt');
@@ -46,7 +54,7 @@ self.addEventListener('pushsubscriptionchange', async () => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ subscription: sub, mode: 'auto', savedAt: Date.now() })
     });
-  } catch { /* silent */ }
+  } catch {}
 });
 
 function urlBase64ToUint8Array(base64) {
