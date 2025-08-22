@@ -1,31 +1,52 @@
-// netlify/functions/send-test.ts (patched)
-import type { Handler } from '@netlify/functions';
-import webpush from 'web-push';
 
-const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY || process.env.VITE_VAPID_PUBLIC_KEY || '';
-const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY || '';
-const VAPID_SUBJECT = process.env.VAPID_SUBJECT || 'mailto:you@example.com';
-
-webpush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
+// netlify/functions/send-test.ts
+import type { Handler } from "@netlify/functions";
+import webpush from "web-push";
 
 export const handler: Handler = async (event) => {
+  if (event.httpMethod !== "POST") return { statusCode: 405, body: "Method Not Allowed" };
+  let body: any = {};
+  try { body = JSON.parse(event.body || "{}"); } catch {}
+  const { subscription, pushSubId } = body;
+
   try {
-    const body = event.body ? JSON.parse(event.body) : {};
-    const subscription = body?.subscription;
-    if (!subscription) {
-      return { statusCode: 400, body: JSON.stringify({ ok:false, error:'Missing subscription' }) };
+    // Get VAPID keys
+    const publicKey = process.env.VAPID_PUBLIC_KEY || "";
+    const privateKey = process.env.VAPID_PRIVATE_KEY || "";
+    if (!publicKey || !privateKey) return { statusCode: 500, body: "VAPID keys missing" };
+    webpush.setVapidDetails("mailto:example@example.com", publicKey, privateKey);
+
+    // Resolve subscription
+    let sub: any = subscription;
+    if (!sub) {
+      // Fetch from Upstash if available
+      const url = process.env.UPSTASH_REDIS_REST_URL;
+      const token = process.env.UPSTASH_REDIS_REST_TOKEN;
+      if (url && token && pushSubId) {
+        const res = await fetch(`${url}/get/${pushSubId}`, { headers: { Authorization: `Bearer ${token}` } });
+        if (res.ok) {
+          const json = await res.json().catch(() => null);
+          if (json && json.result) {
+            try { sub = JSON.parse(json.result).subscription; } catch {}
+          }
+        }
+      }
+    }
+
+    if (!sub) {
+      return { statusCode: 400, body: 'Missing "subscription" or "pushSubId"' };
     }
 
     const payload = JSON.stringify({
-      title: body?.title || 'Afkir Qibla',
-      body: body?.body  || 'Testvarsel: dette er en bakgrunns‑push',
-      url:  body?.url   || '/',
-      tag:  'test'
+      title: "Afkir Qibla",
+      body: "Testvarsel — det fungerer!",
+      url: "/",
+      tag: "test",
     });
 
-    await webpush.sendNotification(subscription as any, payload, { TTL: 60 });
-    return { statusCode: 200, body: JSON.stringify({ ok: true }) };
+    await webpush.sendNotification(sub, payload);
+    return { statusCode: 200, headers: { "content-type": "application/json" }, body: JSON.stringify({ ok: true }) };
   } catch (e: any) {
-    return { statusCode: 400, body: JSON.stringify({ ok:false, error: e?.message || String(e) }) };
+    return { statusCode: 500, body: e?.message || "send-test failed" };
   }
 };

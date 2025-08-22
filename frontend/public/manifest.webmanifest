@@ -1,10 +1,10 @@
 {
   "name": "Afkir Qibla",
-  "short_name": "Afkir Qibla",
+  "short_name": "Qibla",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#0b1220",
-  "theme_color": "#0f172a",
+  "theme_color": "#16a34a",
   "icons": [
     {
       "src": "/icons/icon-192.png",
@@ -27,6 +27,12 @@
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "maskable"
+    },
+    {
+      "src": "/icons/apple-touch-icon.png",
+      "sizes": "180x180",
+      "type": "image/png",
+      "purpose": "any"
     }
   ]
 }
