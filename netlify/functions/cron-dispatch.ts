@@ -1,16 +1,31 @@
-
 // netlify/functions/cron-dispatch.ts
-import type { Handler } from '@netlify/functions';
+export const config = {
+  schedule: "* * * * *",
+};
 
-const CRON_SECRET = process.env.CRON_SECRET;
-const BASE = process.env.URL || process.env.DEPLOY_URL || '';
+export default async () => {
+  const startedAt = new Date().toISOString();
 
-export const handler: Handler = async () => {
+  const base = process.env.URL || process.env.DEPLOY_URL;
+  const secret = process.env.CRON_SECRET || "";
+  const url = `${base}/.netlify/functions/cron-run${secret ? `?secret=${encodeURIComponent(secret)}` : ""}`;
+
+  let resText = "";
+  let status = 0;
+
   try {
-    const res = await fetch(`${BASE}/.netlify/functions/cron-run?secret=${CRON_SECRET}`);
-    const txt = await res.text();
-    return { statusCode: 200, body: txt };
-  } catch (e: any) {
-    return { statusCode: 500, body: `cron-dispatch failed: ${e?.message}` };
+    const res = await fetch(url, { method: "POST" });
+    status = res.status;
+    resText = await res.text();
+    console.log("[cron-dispatch] -> cron-run", status, resText.slice(0, 200));
+  } catch (err) {
+    console.error("[cron-dispatch] fetch error", err);
+    status = 500;
+    resText = String(err);
   }
+
+  return new Response(
+    JSON.stringify({ ok: true, startedAt, called: url, status, preview: resText.slice(0, 200) }),
+    { headers: { "content-type": "application/json" } }
+  );
 };
