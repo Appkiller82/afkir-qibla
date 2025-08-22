@@ -1,124 +1,163 @@
-// frontend/src/push.ts — COMPLETE
-// Works with: PushControls.jsx (enablePush, sendTest), PushControlsAuto.jsx (registerWithMetadata, sendTest),
-// and App.jsx (updateMetaIfSubscribed).
-// Single-source VAPID: reads from VITE_VAPID_PUBLIC_KEY or /vapid-public.txt (must match backend).
+// frontend/src/push.ts
+// Robust push helpers + test sender.
+// Fixes: sendTest 400 by always including PushSubscription; avoids slice issues.
+// Exports: subscribe, unsubscribe, updateMetaIfSubscribed, registerWithMetadata, sendTest.
+export type PushKeys = { p256dh: string; auth: string }
+export type PushSubscriptionJSON = { endpoint: string; keys: PushKeys }
+export type AqMeta = {
+  lat: number; lng: number; city?: string; countryCode?: string; tz?: string;
+  mode?: 'auto' | 'manual'; savedAt?: number;
+}
 
-type PushMeta = {
-  lat?: number;
-  lng?: number;
-  city?: string;
-  countryCode?: string;
-  tz?: string;
-  mode?: 'auto' | 'manual';
-  savedAt?: number;
-};
+function cleanApiBase(): string {
+  let b = (import.meta as any)?.env?.VITE_PUSH_SERVER_URL
+  if (typeof b !== 'string' || !b) b = '/.netlify/functions'
+  b = b.trim().replace(/\/+$/,'')
+  // strip accidental /subscribe suffix
+  b = b.replace(/\/subscribe$/,'')
+  return b
+}
+const API_BASE = cleanApiBase()
 
-const SERVER_BASE =
-  (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_PUSH_SERVER_URL) ||
-  '';
+function b64UrlToUint8Array(b64url: string): Uint8Array {
+  if (typeof b64url !== 'string' || !/^[A-Za-z0-9\-_]{20,}$/.test(b64url)) {
+    throw new Error('VAPID public key missing or invalid')
+  }
+  const padding = '='.repeat((4 - (b64url.length % 4)) % 4)
+  const base64 = (b64url + padding).replace(/-/g, '+').replace(/_/g, '/')
+  const raw = atob(base64)
+  const arr = new Uint8Array(raw.length)
+  for (let i = 0; i < raw.length; i++) arr[i] = raw.charCodeAt(i)
+  return arr
+}
 
-/** Try env first, else /vapid-public.txt */
-async function getVapidPublicKey(): Promise<string> {
-  const fromEnv = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_VAPID_PUBLIC_KEY) || '';
-  if (fromEnv && fromEnv.length > 0) return fromEnv.trim();
+async function getVapidPublic(): Promise<string> {
+  const env = (import.meta as any)?.env?.VITE_VAPID_PUBLIC_KEY
+  if (typeof env === 'string' && env.length > 20) return env.trim()
+  // fallback to server
   try {
-    const res = await fetch('/vapid-public.txt', { cache: 'no-store' });
-    if (res.ok) return (await res.text()).trim();
+    const r = await fetch(`${API_BASE}/vapid`)
+    if (r.ok) {
+      const j = await r.json().catch(() => ({} as any))
+      if (j?.publicKey && typeof j.publicKey === 'string') return j.publicKey.trim()
+    }
   } catch {}
-  throw new Error('Mangler VAPID public key');
+  // second fallback (compat)
+  try {
+    const r = await fetch(`${API_BASE}/subscribe?vapid=1`)
+    if (r.ok) {
+      const j = await r.json().catch(() => ({} as any))
+      if (j?.publicKey && typeof j.publicKey === 'string') return j.publicKey.trim()
+    }
+  } catch {}
+  throw new Error('Could not obtain VAPID public key')
 }
 
-function urlBase64ToUint8Array(base64: string): Uint8Array {
-  const padding = '='.repeat((4 - (base64.length % 4)) % 4);
-  const b64 = (base64 + padding).replace(/-/g, '+').replace(/_/g, '/');
-  const raw = typeof atob !== 'undefined' ? atob(b64) : Buffer.from(b64, 'base64').toString('binary');
-  const out = new Uint8Array(raw.length);
-  for (let i = 0; i < raw.length; ++i) out[i] = raw.charCodeAt(i);
-  return out;
+async function swReady(): Promise<ServiceWorkerRegistration> {
+  if (!('serviceWorker' in navigator)) throw new Error('Service worker unsupported')
+  return await navigator.serviceWorker.ready
+}
+export async function getSubscription(): Promise<PushSubscription | null> {
+  try {
+    const reg = await swReady()
+    return await reg.pushManager.getSubscription()
+  } catch { return null }
 }
 
-async function ensureSW(): Promise<ServiceWorkerRegistration> {
-  if (!('serviceWorker' in navigator)) throw new Error('Service worker ikke støttet');
-  return navigator.serviceWorker.ready;
-}
-
-async function ensurePermission(): Promise<void> {
-  if (!('Notification' in window)) throw new Error('Notification ikke støttet');
-  if (Notification.permission === 'default') {
-    const res = await Notification.requestPermission();
-    if (res !== 'granted') throw new Error('Varsler ble ikke tillatt');
-  } else if (Notification.permission !== 'granted') {
-    throw new Error('Varsler er blokkert i nettleseren');
+export async function subscribe(): Promise<boolean> {
+  try {
+    const reg = await swReady()
+    const current = await reg.pushManager.getSubscription()
+    if (current) return true
+    const vapid = await getVapidPublic()
+    const keyBytes = b64UrlToUint8Array(vapid)
+    const sub = await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      // pass ArrayBuffer for max WebKit compatibility
+      applicationServerKey: keyBytes.buffer
+    })
+    // post to server (no meta here)
+    await fetch(`${API_BASE}/subscribe`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ subscription: sub.toJSON() })
+    }).catch(()=>{})
+    try {
+      const id = btoa(sub.endpoint) // simple local id
+      localStorage.setItem('pushSubId', id)
+    } catch {}
+    return true
+  } catch (e:any) {
+    console.error('subscribe failed:', e?.message || e)
+    return false
   }
 }
 
-/** Subscribe and return PushSubscription */
-async function createSubscription(): Promise<PushSubscription> {
-  const reg = await ensureSW();
-  const vapid = await getVapidPublicKey();
-  const sub = await reg.pushManager.subscribe({
-    userVisibleOnly: true,
-    applicationServerKey: urlBase64ToUint8Array(vapid),
-  });
-  return sub;
-}
-
-/** Low-level save call to backend */
-async function saveToServer(payload: any): Promise<{ id?: string }> {
-  const url = (SERVER_BASE || '') + '/.netlify/functions/subscribe';
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
-  const json = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(json?.error || 'Server-feil ved subscribe');
-  return json;
-}
-
-/** Exported: simple enable used by PushControls.jsx */
-export async function enablePush(): Promise<string> {
-  await ensurePermission();
-  const sub = await createSubscription();
-  const { id } = await saveToServer({ subscription: sub, mode: 'manual', savedAt: Date.now() });
-  if (id) try { localStorage.setItem('pushSubId', id); } catch {}
-  return id || '';
-}
-
-/** Exported: auto register with metadata used by PushControlsAuto.jsx */
-export async function registerWithMetadata(meta: PushMeta): Promise<boolean> {
-  await ensurePermission();
-  const sub = await createSubscription();
-  const resp = await saveToServer({ subscription: sub, ...meta });
-  if (resp?.id) try { localStorage.setItem('pushSubId', resp.id); } catch {}
-  return true;
-}
-
-/** Exported: update meta when already subscribed (used in App.jsx) */
-export async function updateMetaIfSubscribed(meta: PushMeta): Promise<void> {
+export async function unsubscribe(): Promise<boolean> {
   try {
-    const reg = await ensureSW();
-    const sub = await reg.pushManager.getSubscription();
-    if (!sub) return;
-    await saveToServer({ subscription: sub, ...meta, upsert: true });
-  } catch { /* silent */ }
+    const sub = await getSubscription()
+    if (!sub) return true
+    await sub.unsubscribe()
+    return true
+  } catch { return false }
 }
 
-/** Exported: send a test push by posting current subscription to the backend */
-export async function sendTest(): Promise<boolean> {
-  const reg = await ensureSW();
-  const sub = await reg.pushManager.getSubscription();
-  if (!sub) throw new Error('Mangler subscription – aktiver push først');
-  const url = (SERVER_BASE || '') + '/.netlify/functions/send-test';
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
-      subscription: sub,
-      pushSubId: (typeof localStorage !== 'undefined' && localStorage.getItem('pushSubId')) || null,
-    }),
-  });
-  const json = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(json?.error || 'send-test feilet');
-  return true;
+export async function updateMetaIfSubscribed(meta: AqMeta): Promise<boolean> {
+  try {
+    const reg = await swReady()
+    const sub = await reg.pushManager.getSubscription()
+    if (!sub) return false
+    const payload = { subscription: sub.toJSON() as PushSubscriptionJSON, meta }
+    const res = await fetch(`${API_BASE}/subscribe`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+    return res.ok
+  } catch (e) {
+    console.error('updateMetaIfSubscribed failed', e)
+    return false
+  }
+}
+
+// compatibility name used by older UI
+export async function registerWithMetadata(meta: AqMeta): Promise<boolean> {
+  const ok = await subscribe()
+  if (!ok) return false
+  return await updateMetaIfSubscribed(meta)
+}
+
+async function ensureSubscription(): Promise<PushSubscription | null> {
+  let sub = await getSubscription()
+  if (sub) return sub
+  const ok = await subscribe()
+  if (!ok) return null
+  sub = await getSubscription()
+  return sub
+}
+
+export async function sendTest(title?: string, body?: string, url?: string): Promise<boolean> {
+  try {
+    const sub = await ensureSubscription()
+    if (!sub) {
+      console.warn('sendTest: no subscription')
+      return false
+    }
+    const payload = {
+      title: title || 'Test',
+      body: body || 'Dette er en testmelding',
+      url: url || '/'
+    }
+    const res = await fetch(`${API_BASE}/send-test`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ subscription: sub.toJSON(), ...payload })
+    })
+    if (!res.ok) {
+      const txt = await res.text().catch(()=>String(res.status))
+      console.warn('sendTest: server returned', res.status, txt)
+    }
+    return res.ok
+  } catch (e:any) {
+    console.error('sendTest failed:', e?.message || e)
+    return false
+  }
 }

@@ -1,4 +1,4 @@
-// frontend/src/PushControlsAuto.jsx (patched)
+// frontend/src/PushControlsAuto.jsx
 import React, { useState } from "react";
 import { registerWithMetadata, sendTest } from "./push";
 
@@ -11,13 +11,6 @@ export default function PushControlsAuto({ coords, city, countryCode, tz }) {
       setStatus("Mangler posisjon. Trykk 'Bruk stedstjenester' først.");
       return;
     }
-    try {
-      if ('Notification' in window && Notification.permission === 'default') {
-        const p = await Notification.requestPermission();
-        if (p !== 'granted') { setStatus('Du må tillate varsler for å aktivere push på iPhone.'); return; }
-      }
-    } catch {}
-
     setStatus("Aktiverer …");
     try {
       const ok = await registerWithMetadata({

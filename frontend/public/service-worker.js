@@ -1,4 +1,4 @@
-// public/service-worker.js — restored minimal (lets OS pick icon & sound)
+// public/service-worker.js
 self.addEventListener('install', () => self.skipWaiting());
 self.addEventListener('activate', () => self.clients.claim());
 
@@ -6,7 +6,6 @@ self.addEventListener('push', (event) => {
   let data = {};
   try { data = event.data?.json() || {}; } catch {}
   const title = data.title || 'Afkir Qibla';
-  // No icon/badge here → browser/OS picks apple-touch-icon or manifest icons
   const options = { body: data.body || 'Ny melding', data: { url: data.url || '/' } };
   event.waitUntil(self.registration.showNotification(title, options));
 });
