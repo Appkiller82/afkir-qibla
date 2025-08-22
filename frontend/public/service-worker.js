@@ -1,26 +1,13 @@
-/* public/service-worker.js — bruker apple-touch-icon */
+// public/service-worker.js — restored minimal (lets OS pick icon & sound)
 self.addEventListener('install', () => self.skipWaiting());
 self.addEventListener('activate', () => self.clients.claim());
 
 self.addEventListener('push', (event) => {
   let data = {};
   try { data = event.data?.json() || {}; } catch {}
-
   const title = data.title || 'Afkir Qibla';
-  const options = {
-    body: data.body || 'Ny melding',
-    data: { url: data.url || '/' },
-    silent: false,
-    renotify: true,
-    tag: data.tag || ('prayer-' + Date.now()),
-    requireInteraction: true,
-    timestamp: Date.now(),
-
-    // Bruk apple-touch-icon her
-    badge: '/icons/badge-72.png',
-    icon: '/icons/apple-touch-icon.png'
-  };
-
+  // No icon/badge here → browser/OS picks apple-touch-icon or manifest icons
+  const options = { body: data.body || 'Ny melding', data: { url: data.url || '/' } };
   event.waitUntil(self.registration.showNotification(title, options));
 });
 
