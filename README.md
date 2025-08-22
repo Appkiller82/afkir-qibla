@@ -1,16 +1,35 @@
-# Afkir Push – endelige filer
 
-Disse tre filene løser 400-feilen og aktiverer auto-metadata for push:
+# Afkir Qibla — Push i dvale (serverstyrt cron)
 
-- `netlify/functions/subscribe.ts` – tolerant versjon.
-  - Returnerer 200 OK uten Upstash/metadata (ingen planlagte varsler).
-  - Hvis `UPSTASH_*` og meta er satt, lagrer i Redis for planlagte varsler.
-- `frontend/src/PushControlsAuto.jsx` – knappen som sender lat/lng/country/tz.
-- `frontend/src/App.jsx` – oppdatert til å bruke `PushControlsAuto` og fjernet manglende bakgrunnsbilde.
+Denne pakken inneholder filene som trengs for å sende push-varsler på bønnetider selv om appen er i dvale.
 
-## Bruk
-1. Pakk ut over eksisterende filer (behold mappestrukturen).
-2. Sjekk env: `/.netlify/functions/debug-env` → alle VAPID true.
-3. I appen: Bruk stedstjenester → **Aktiver push (auto)** → **Send test**.
+## Filoversikt
+```
+netlify/functions/cron-dispatch.ts  -> kaller cron-run hvert minutt (med secret)
+netlify/functions/cron-run.ts       -> finner bønnetider og sender push
+netlify.toml                        -> aktiverer cron hvert minutt
+.env.example                        -> eksempel på miljøvariabler
+README.md                           -> denne filen
+```
 
-Når du senere legger inn Upstash‑nøkler, vil planlagte bønnevarsler begynne å gå uten nye kodeendringer.
+## Miljøvariabler (legg inn i Netlify → Site settings → Environment variables)
+```
+UPSTASH_REDIS_REST_URL=
+UPSTASH_REDIS_REST_TOKEN=
+
+VAPID_PUBLIC_KEY=
+VAPID_PRIVATE_KEY=
+
+CRON_SECRET=4g9sK2pM7hQvX9T0dNcLm82RbPqZj1Wy
+```
+
+## Deploy
+Fra prosjektmappen (der `netlify/` ligger):
+```
+netlify deploy --prod
+```
+
+## Rask test
+- Åpne appen på telefon, "Aktiver push".
+- Kjør manuelt i nettleser: `/.netlify/functions/cron-run?secret=4g9sK2pM7hQvX9T0dNcLm82RbPqZj1Wy`
+- Du skal motta push selv om appen er lukket og i dvale.
