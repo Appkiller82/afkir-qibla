@@ -637,20 +637,6 @@ export default function App(){
               countryCode={countryCode}
               tz={Intl.DateTimeFormat().resolvedOptions().timeZone}
             />
-          
-            <div style={{marginTop:10}}>
-              <button className="btn" onClick={async ()=>{
-                try {
-                  const info = await import("./push").then(m => m.getEndpointInfo());
-                  alert(`Apple endpoint: ${info.endpointIsApple}
-${info.endpoint || "no subscription"}`);
-                } catch (e) {
-                  alert("Debug feilet: " + (e?.message || e));
-                }
-              }}>
-                Vis push-debug
-              </button>
-            </div>
           </section>
         </div>
       </div>
