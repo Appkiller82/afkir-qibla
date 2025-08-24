@@ -1,74 +1,51 @@
 // frontend/src/PushControlsAuto.jsx
 import React, { useState } from "react";
-import { registerWithMetadata, sendTest, getEndpointInfo, getEndpointInfo } from "./push";
+import { registerWithMetadata, sendTest, getEndpointInfo } from "./push";
 
 export default function PushControlsAuto({ coords, city, countryCode, tz }) {
   const [status, setStatus] = useState("");
-  const subId = (typeof window !== "undefined" && localStorage.getItem("pushSubId")) || null;
 
-  async function onEnable() {
-    if (!coords) {
-      setStatus("Mangler posisjon. Trykk 'Bruk stedstjenester' først.");
-      return;
-    }
-    setStatus("Aktiverer …");
+  const handleRegister = async () => {
     try {
-      const ok = await registerWithMetadata({
-        lat: coords.latitude,
-        lng: coords.longitude,
-        city,
-        countryCode,
-        tz,
-        mode: "auto",
-        savedAt: Date.now(),
-      });
-      setStatus(ok ? "Aktivert!" : "Kunne ikke aktivere");
-    } catch (e) {
-      console.error(e);
-      setStatus("Feil ved aktivering (se konsoll)");
+      await registerWithMetadata(coords, city, countryCode, tz);
+      setStatus("Push-registrering fullført ✅");
+    } catch (err) {
+      console.error(err);
+      setStatus("Feil under registrering ❌");
     }
-  }
+  };
 
-  async function onSend() {
-    setStatus("Sender test …");
-    const ok = await sendTest();
-    setStatus("Sendt: " + String(ok));
-  }
-
-  async function onDisable() {
+  const handleSendTest = async () => {
     try {
-      if ("serviceWorker" in navigator) {
-        const reg = await navigator.serviceWorker.ready;
-        const sub = await reg.pushManager.getSubscription();
-        if (sub) await sub.unsubscribe();
-      }
-      localStorage.removeItem("pushSubId");
-      setStatus("Skrudd av");
-    } catch (e) {
-      console.error(e);
-      setStatus("Feil ved avskrudd");
+      await sendTest();
+      setStatus("Testvarsel sendt ✅");
+    } catch (err) {
+      console.error(err);
+      setStatus("Feil under test ❌");
     }
-  }
+  };
 
-  async function onDebug() {
+  const handleShowEndpoint = async () => {
     try {
       const info = await getEndpointInfo();
-      alert(`Apple endpoint: ${info.endpointIsApple}\n${info.endpoint || 'no subscription'}`);
-    } catch (e) {
-      alert('Debug fail: ' + (e?.message || e));
+      if (info) {
+        setStatus(`Endpoint: ${info.endpoint}`);
+      } else {
+        setStatus("Ingen aktiv push-subscription funnet ❌");
+      }
+    } catch (err) {
+      console.error(err);
+      setStatus("Kunne ikke hente endpoint ❌");
     }
-  }
+  };
 
   return (
-    <div className="space-x-2">
-      <button onClick={onEnable}>Aktiver push (auto)</button>
-      <button onClick={onSend}>Send test</button>
-      <button onClick={onDisable}>Skru av</button>
-      <button onClick={onDebug}>Vis push-debug</button>
-      <div style={{ marginTop: 8, opacity: 0.8 }}>
-        {subId ? `Lagret ID: ${String(subId).slice(0, 10)}…` : "Ingen lagret ID"}
-      </div>
-      <div style={{ marginTop: 6, fontSize: 12, opacity: 0.7 }}>{status}</div>
+    <div className="push-controls">
+      <h3>Push-kontroller (Auto)</h3>
+      <button onClick={handleRegister}>Aktiver push</button>
+      <button onClick={handleSendTest}>Send test</button>
+      <button onClick={handleShowEndpoint}>Vis endpoint</button>
+      <p>{status}</p>
     </div>
   );
 }
