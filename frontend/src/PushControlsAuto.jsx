@@ -1,6 +1,6 @@
 // frontend/src/PushControlsAuto.jsx
 import React, { useState } from "react";
-import { registerWithMetadata, sendTest } from "./push";
+import { registerWithMetadata, sendTest, getEndpointInfo, getEndpointInfo } from "./push";
 
 export default function PushControlsAuto({ coords, city, countryCode, tz }) {
   const [status, setStatus] = useState("");
@@ -50,11 +50,21 @@ export default function PushControlsAuto({ coords, city, countryCode, tz }) {
     }
   }
 
+  async function onDebug() {
+    try {
+      const info = await getEndpointInfo();
+      alert(`Apple endpoint: ${info.endpointIsApple}\n${info.endpoint || 'no subscription'}`);
+    } catch (e) {
+      alert('Debug fail: ' + (e?.message || e));
+    }
+  }
+
   return (
     <div className="space-x-2">
       <button onClick={onEnable}>Aktiver push (auto)</button>
       <button onClick={onSend}>Send test</button>
       <button onClick={onDisable}>Skru av</button>
+      <button onClick={onDebug}>Vis push-debug</button>
       <div style={{ marginTop: 8, opacity: 0.8 }}>
         {subId ? `Lagret ID: ${String(subId).slice(0, 10)}…` : "Ingen lagret ID"}
       </div>

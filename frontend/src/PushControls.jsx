@@ -1,6 +1,6 @@
 // frontend/src/PushControls.jsx
 import React, { useState } from 'react';
-import { enablePush, sendTest } from './push';
+import { enablePush, sendTest, getEndpointInfo, getEndpointInfo } from './push';
 
 export default function PushControls() {
   const [status, setStatus] = useState('');
@@ -33,11 +33,21 @@ export default function PushControls() {
     setStatus('Skrudd av lokalt.');
   }
 
+  async function onDebug() {
+    try {
+      const info = await getEndpointInfo();
+      alert(`Apple endpoint: ${info.endpointIsApple}\n${info.endpoint || 'no subscription'}`);
+    } catch (e) {
+      alert('Debug fail: ' + (e?.message || e));
+    }
+  }
+
   return (
     <div className="space-x-2">
       <button onClick={onEnable}>Aktiver push</button>
       <button onClick={onSend}>Send test</button>
       <button onClick={onDisable}>Skru av</button>
+      <button onClick={onDebug}>Vis push-debug</button>
       <div style={{ marginTop: 8, opacity: 0.8 }}>
         {status || (subId ? `Lagret ID: ${subId.slice(0, 10)}…` : 'Ingen lagret ID')}
       </div>

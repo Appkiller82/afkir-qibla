@@ -161,3 +161,28 @@ export async function sendTest(title?: string, body?: string, url?: string): Pro
     return false
   }
 }
+
+
+export async function getEndpointInfo() {
+  try {
+    const reg = await swReady();
+    const sub = await reg.pushManager.getSubscription();
+    const endpoint = sub?.endpoint || null;
+    return {
+      permission: Notification?.permission || 'default',
+      hasSubscription: !!sub,
+      endpoint,
+      endpointIsApple: endpoint ? endpoint.startsWith('https://web.push.apple.com') : false,
+      ua: (typeof navigator !== 'undefined' ? navigator.userAgent : 'n/a')
+    };
+  } catch (e) {
+    return {
+      permission: Notification?.permission || 'default',
+      hasSubscription: false,
+      endpoint: null,
+      endpointIsApple: false,
+      ua: (typeof navigator !== 'undefined' ? navigator.userAgent : 'n/a'),
+      error: String(e?.message || e)
+    };
+  }
+}
