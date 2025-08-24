@@ -5,15 +5,7 @@ self.addEventListener('activate', () => self.clients.claim());
 self.addEventListener('push', (event) => {
   let data = {};
   try { data = event.data?.json() || {}; } catch {}
-  \1
-const options = {
-  body: data.body || 'Ny melding',
-  icon: '/icons/icon-192.png',
-  badge: '/icons/badge-72.png',
-  tag: data.tag || 'afkir-qibla',
-  renotify: true,
-  data: { url: data.url || '/' }
-};
+  const title = data.title || 'Afkir Qibla';
   const options = { body: data.body || 'Ny melding', data: { url: data.url || '/' } };
   event.waitUntil(self.registration.showNotification(title, options));
 });
