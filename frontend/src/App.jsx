@@ -15,7 +15,7 @@ import { updateMetaIfSubscribed } from "./push";
 // ---------- Tuning ----------
 const NO_IRN_PROFILE = {
   fajrAngle: 16.0, ishaAngle: 15.0, latitudeAdj: 3, school: 0,
-  offsets: { Fajr: 0, Dhuhr: +12, Asr: 0, Maghrib: +8, Isha: 0 }
+  offsets: { Fajr: -10, Dhuhr: +12, Asr: 0, Maghrib: +5, Isha: 0 }
 };
 
 // ---------- Intl ----------
