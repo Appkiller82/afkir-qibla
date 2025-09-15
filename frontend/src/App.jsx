@@ -547,10 +547,14 @@ export default function App(){
         <header style={{marginBottom:10, textAlign:"center"}}>
           <h1>Afkir Qibla</h1>
           <div style={{margin:"6px 0 2px"}}>
-            <button className="btn" onClick={()=>{ const d = document.documentElement; d.dataset.theme = (d.dataset.theme==="light"?"dark":"light") }}>
-              Tema
-            </button>
-          </div>
+  <button className="btn" onClick={()=>{ const d = document.documentElement; d.dataset.theme = (d.dataset.theme==="light"?"dark":"light") }}>
+    Tema
+  </button>
+  <a href="/kids-suras" className="btn" style={{marginLeft:8}}>
+    Lær suraene
+  </a>
+</div>
+
           <div className="hint">{NB_DAY.format(new Date())}</div>
         </header>
 
