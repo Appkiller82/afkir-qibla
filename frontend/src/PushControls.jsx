@@ -1,6 +1,6 @@
 // frontend/src/PushControls.jsx
 import React, { useState } from "react";
-import { subscribeForPush, sendTest } from "./push";
+import { subscribeForPush } from "./push"; // behold denne – funker
 
 export default function PushControls() {
   const [status, setStatus] = useState(
@@ -12,8 +12,6 @@ export default function PushControls() {
   async function onEnable() {
     try {
       setStatus("Aktiverer …");
-
-      // 1) Tillatelser
       if ("Notification" in window && Notification.permission === "default") {
         await Notification.requestPermission();
       }
@@ -21,7 +19,7 @@ export default function PushControls() {
         throw new Error("Varsler er ikke tillatt.");
       }
 
-      // 2) Posisjon
+      // hent posisjon
       const pos = await new Promise((res, rej) => {
         if (!("geolocation" in navigator)) return rej(new Error("Geolokasjon ikke støttet"));
         navigator.geolocation.getCurrentPosition(res, rej, { enableHighAccuracy: true, timeout: 15000 });
@@ -30,11 +28,11 @@ export default function PushControls() {
       const lng = pos.coords.longitude;
       const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
-      // 3) Service worker
+      // service worker
       if (!("serviceWorker" in navigator)) throw new Error("Service Worker ikke støttet");
       const reg = await navigator.serviceWorker.register("/service-worker.js");
 
-      // 4) Abonner (lagres i backend + localStorage av push.ts)
+      // abonner (lagres i backend + localStorage av push.ts)
       await subscribeForPush(reg, lat, lng, timezone);
 
       const id = localStorage.getItem("pushSubId");
@@ -48,8 +46,10 @@ export default function PushControls() {
   async function onSend() {
     try {
       setStatus("Sender test …");
-      const msg = await sendTest();
-      setStatus(`Sendt: ${msg}`);
+      const res = await fetch("/.netlify/functions/send-test", { method: "POST" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const txt = await res.text();
+      setStatus(`Sendt: ${txt || "OK"}`);
     } catch (e) {
       console.error(e);
       setStatus(`Send-test feilet: ${e.message || e}`);
