@@ -1,3 +1,4 @@
+import PushControls from "./PushControls.jsx";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import PushControlsAuto from "./PushControlsAuto.jsx";
 import AutoLocationModal from "./AutoLocationModal.jsx";
@@ -728,15 +729,38 @@ export default function App(){
 
           {/* Push controls card (auto-metadata) */}
           <section className="card">
-            <h3>Push-varsler</h3>
-            <div className="hint" style={{marginBottom:8}}>Aktiver push for å få varsler om bønnetider på denne enheten.</div>
-            <PushControlsAuto
-              coords={coords}
-              city={city}
-              countryCode={countryCode}
-              tz={Intl.DateTimeFormat().resolvedOptions().timeZone}
-            />
-          </section>
+  <h3>Push-varsler</h3>
+  <div className="hint" style={{ marginBottom: 8 }}>
+    Aktiver push for å få varsler om bønnetider på denne enheten.
+  </div>
+
+  {/* Enkelt auto-abonnement */}
+  <PushControlsAuto
+    coords={coords}
+    city={city}
+    countryCode={countryCode}
+    tz={Intl.DateTimeFormat().resolvedOptions().timeZone}
+  />
+
+  {/* Avanserte verktøy (skjult bak meny-knapp) */}
+  <details style={{ marginTop: 12 }}>
+    <summary style={{ cursor: "pointer" }}>Flere alternativer</summary>
+    <div style={{ marginTop: 8 }}>
+      <PushControls />
+      <button
+        className="btn"
+        style={{ marginTop: 8 }}
+        onClick={() => {
+          const id = localStorage.getItem("pushSubId");
+          alert(id ? `pushSubId: ${id}` : "Ingen pushSubId i localStorage");
+        }}
+      >
+        Sjekk pushSubId
+      </button>
+    </div>
+  </details>
+</section>
+
         </div>
       </div>
 
