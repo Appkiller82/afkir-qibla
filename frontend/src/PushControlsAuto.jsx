@@ -1,64 +1,42 @@
-// frontend/src/PushControlsAuto.jsx
-import React, { useState } from "react";
-import { registerWithMetadata, sendTest } from "./push";
+import { useState } from "react";
+import { subscribeForPush } from "./push";
 
-export default function PushControlsAuto({ coords, city, countryCode, tz }) {
+export default function PushControlsAuto() {
   const [status, setStatus] = useState("");
-  const subId = (typeof window !== "undefined" && localStorage.getItem("pushSubId")) || null;
 
-  async function onEnable() {
-    if (!coords) {
-      setStatus("Mangler posisjon. Trykk 'Bruk stedstjenester' først.");
-      return;
-    }
-    setStatus("Aktiverer …");
+  async function handleSubscribe() {
     try {
-      const ok = await registerWithMetadata({
-        lat: coords.latitude,
-        lng: coords.longitude,
-        city,
-        countryCode,
-        tz,
-        mode: "auto",
-        savedAt: Date.now(),
+      // 1) Hent posisjon
+      const pos = await new Promise((resolve, reject) => {
+        if (!("geolocation" in navigator)) return reject(new Error("Geolokasjon ikke støttet"));
+        navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: true, timeout: 15000 });
       });
-      setStatus(ok ? "Aktivert!" : "Kunne ikke aktivere");
-    } catch (e) {
-      console.error(e);
-      setStatus("Feil ved aktivering (se konsoll)");
-    }
-  }
+      const lat = pos.coords.latitude;
+      const lng = pos.coords.longitude;
 
-  async function onSend() {
-    setStatus("Sender test …");
-    const ok = await sendTest();
-    setStatus("Sendt: " + String(ok));
-  }
+      // 2) Hent timezone
+      const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
-  async function onDisable() {
-    try {
-      if ("serviceWorker" in navigator) {
-        const reg = await navigator.serviceWorker.ready;
-        const sub = await reg.pushManager.getSubscription();
-        if (sub) await sub.unsubscribe();
-      }
-      localStorage.removeItem("pushSubId");
-      setStatus("Skrudd av");
-    } catch (e) {
-      console.error(e);
-      setStatus("Feil ved avskrudd");
+      // 3) Registrer service worker (om ikke allerede registrert)
+      if (!("serviceWorker" in navigator)) throw new Error("Service Worker ikke støttet i denne nettleseren");
+      const reg = await navigator.serviceWorker.register("/service-worker.js");
+
+      // 4) Abonner (lagrer sub + lat/lng/tz i backend)
+      await subscribeForPush(reg, lat, lng, timezone);
+
+      setStatus(`Abonnement opprettet for ${lat.toFixed(2)}, ${lng.toFixed(2)} (${timezone})`);
+    } catch (err) {
+      console.error("Subscription feilet:", err);
+      setStatus("Kunne ikke opprette push-abonnement. Sjekk tillatelser for varsler og posisjon.");
     }
   }
 
   return (
-    <div className="space-x-2">
-      <button onClick={onEnable}>Aktiver push (auto)</button>
-      <button onClick={onSend}>Send test</button>
-      <button onClick={onDisable}>Skru av</button>
-      <div style={{ marginTop: 8, opacity: 0.8 }}>
-        {subId ? `Lagret ID: ${String(subId).slice(0, 10)}…` : "Ingen lagret ID"}
-      </div>
-      <div style={{ marginTop: 6, fontSize: 12, opacity: 0.7 }}>{status}</div>
+    <div>
+      <button onClick={handleSubscribe}>
+        Abonner på bønnetidsvarsler
+      </button>
+      {status && <p>{status}</p>}
     </div>
   );
 }

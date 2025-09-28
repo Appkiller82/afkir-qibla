@@ -4,12 +4,13 @@ import AutoLocationModal from "./AutoLocationModal.jsx";
 import { updateMetaIfSubscribed } from "./push";
 
 /**
- * Afkir Qibla 7 – RESTORED UI
+ * Afkir Qibla 7 – RESTORED UI (+ Bonnetid.no integration for Norway)
  * - Brings back: Qibla retning (kompass + kart, grønn når på Qibla, viser grader),
  *   bakgrunnsbilder m/rotasjon, tema-knapp, original bønnetider og nedtelling,
  *   Adhan av/på + test-knapp.
  * - Adds: auto-modal for posisjon, auto watch når tillatelse er gitt,
  *   og auto oppdatering av push-metadata (always-on push ved bytte by).
+ * - NEW: Bonnetid.no provider brukes når countryCode === "NO" (IRN-standard).
  */
 
 // ---------- Tuning ----------
@@ -215,9 +216,107 @@ async function fetchAladhanCustomNO(lat, lng, when = "today") {
   };
 }
 
+// ---------- Bonnetid calls (NEW) ----------
+function ymdToday() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+}
+function mkFromYmd(hhmm, ymd) {
+  if (!hhmm) return null;
+  const m = String(hhmm).match(/(\d{1,2}):(\d{2})/);
+  if (!m) return null;
+  const hh = parseInt(m[1],10), mm = parseInt(m[2],10);
+  const d = new Date(`${ymd}T00:00:00`); d.setHours(hh, mm, 0, 0); return d;
+}
+function parseBonnetidToDates(json) {
+  const bag = json?.data || json?.times || json?.result || json || {};
+  let ymd = bag.date || json?.date || json?.ymd || json?.day || ymdToday();
+  if (/^\d{2}-\d{2}-\d{4}$/.test(ymd)) ymd = ddmmyyyyToYmd(ymd);
+
+  const get = (...keys) => {
+    for (const k of keys) {
+      const direct = bag[k]; if (direct) return direct;
+      const lower = bag[k?.toLowerCase?.()] || Object.entries(bag).find(([kk]) => kk.toLowerCase() === String(k).toLowerCase())?.[1];
+      if (lower) return lower;
+    }
+    return undefined;
+  };
+
+  const fajr      = get('Fajr','fajr');
+  const sunrise   = get('Sunrise','sunrise','Shuruq','shuruq','Soloppgang','soloppgang');
+  const dhuhr     = get('Dhuhr','dhuhr','Zuhr','zuhr');
+  const asr       = get('Asr','asr');
+  const maghrib   = get('Maghrib','maghrib');
+  const isha      = get('Isha','isha');
+
+  return {
+    Fajr:       mkFromYmd(fajr, ymd),
+    Soloppgang: mkFromYmd(sunrise, ymd),
+    Dhuhr:      mkFromYmd(dhuhr, ymd),
+    Asr:        mkFromYmd(asr, ymd),
+    Maghrib:    mkFromYmd(maghrib, ymd),
+    Isha:       mkFromYmd(isha, ymd),
+  };
+}
+async function fetchBonnetid(lat, lng, when = "today") {
+  const apiKey = import.meta.env.VITE_BONNETID_API_KEY;
+  if (!apiKey) throw new Error("Mangler VITE_BONNETID_API_KEY");
+  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+  // Prøv noen sannsynlige endepunkt-/header-varianter (robust til vi har eksakt spesifikasjon)
+  const endpoints = [
+    (w) => `https://api.bonnetid.no/v1/timings/${w}`,
+    (w) => `https://api.bonnetid.no/timings/${w}`,
+    (w) => `https://api.bonnetid.no/v1/prayer-times/${w}`,
+  ];
+  const headerVariants = [
+    (k) => ({ 'Authorization': `Api-Key ${k}` }),
+    (k) => ({ 'Authorization': `Bearer ${k}` }),
+    (k) => ({ 'X-API-Key': k }),
+  ];
+
+  const params = new URLSearchParams({ lat: String(lat), lon: String(lng), tz });
+
+  let lastErr = null;
+  for (const makeUrl of endpoints) {
+    for (const makeHeaders of headerVariants) {
+      const url = `${makeUrl(when)}?${params}`;
+      try {
+        const res = await fetch(url, { headers: { 'Accept': 'application/json', ...makeHeaders(apiKey) } });
+        if (!res.ok) { lastErr = new Error(`HTTP ${res.status}`); continue; }
+        const json = await res.json();
+
+        // Direkte objekt
+        const parsed = parseBonnetidToDates(json);
+        if (parsed?.Fajr instanceof Date && parsed?.Isha instanceof Date) return parsed;
+
+        // Evt. array av dager
+        if (Array.isArray(json)) {
+          const ymd = ymdToday();
+          const row = json.find(r => (r?.date || r?.day || '').includes?.(ymd) || r?.date === ymd);
+          if (row) {
+            const p2 = parseBonnetidToDates(row);
+            if (p2?.Fajr instanceof Date && p2?.Isha instanceof Date) return p2;
+          }
+        }
+      } catch (e) { lastErr = e; }
+    }
+  }
+  throw lastErr || new Error("Bonnetid API feilet");
+}
+
+// ---------- Smart selector (UPDATED to use Bonnetid in Norway) ----------
 async function fetchPrayerTimesSmart(lat, lng, when="today", countryCode="") {
   const inNorway = (countryCode||"").toUpperCase() === "NO";
-  if (inNorway) return await fetchAladhanCustomNO(lat, lng, when);
+  if (inNorway) {
+    // Bruk Bonnetid (IRN) som førstevalg i Norge; fallback = Aladhan NO-profilen din.
+    try { return await fetchBonnetid(lat, lng, when); }
+    catch (e) {
+      console.warn("[Bonnetid] faller tilbake til Aladhan (NO-profil):", e);
+      return await fetchAladhanCustomNO(lat, lng, when);
+    }
+  }
+  // Utenfor Norge → vanlig Aladhan
   return await fetchAladhan(lat, lng, when);
 }
 
