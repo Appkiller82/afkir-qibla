@@ -7,8 +7,9 @@ export const handler = async () => {
       VAPID_PRIVATE_KEY: !!process.env.VAPID_PRIVATE_KEY,
       VAPID_SUBJECT: !!process.env.VAPID_SUBJECT,
       VITE_VAPID_PUBLIC_KEY: !!process.env.VITE_VAPID_PUBLIC_KEY,
+      VITE_BONNETID_API_KEY: !!process.env.VITE_BONNETID_API_KEY, // ← NY
       UPSTASH_REDIS_REST_URL: !!process.env.UPSTASH_REDIS_REST_URL,
-      UPSTASH_REDIS_REST_TOKEN: !!process.env.UPSTASH_REDIS_REST_TOKEN
+      UPSTASH_REDIS_REST_TOKEN: !!process.env.UPSTASH_REDIS_REST_TOKEN,
     })
   };
 };
