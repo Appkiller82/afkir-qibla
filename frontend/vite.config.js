@@ -1,4 +1,4 @@
-// frontend/vite.config.js
+// /frontend/vite.config.js
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
@@ -7,5 +7,8 @@ export default defineConfig({
   server: {
     host: true,
     port: 5173,
-  }
+  },
+  resolve: {
+    extensions: ['.mjs', '.js', '.ts', '.jsx', '.tsx', '.json'],
+  },
 });
