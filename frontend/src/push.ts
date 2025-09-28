@@ -1,3 +1,31 @@
+// frontend/src/push.ts
+
+export async function updateMetaIfSubscribed(): Promise<void> {
+  try {
+    // Finn en SW-registrering hvis den finnes
+    const reg = await navigator.serviceWorker?.ready;
+    const sub = await reg?.pushManager.getSubscription();
+
+    // Oppdater dokumenttittel (safe no-op i SSR/build)
+    if (typeof document !== "undefined") {
+      document.title = sub ? "Afkir Qibla • Varsler på" : "Afkir Qibla";
+
+      // Oppdater evt. meta-tagger hvis de finnes
+      const metaAppName =
+        document.querySelector('meta[name="application-name"]') ||
+        document.querySelector('meta[name="apple-mobile-web-app-title"]');
+      if (metaAppName) {
+        metaAppName.setAttribute(
+          "content",
+          sub ? "Afkir Qibla • 🔔" : "Afkir Qibla"
+        );
+      }
+    }
+  } catch {
+    // bevisst no-op; vi vil aldri knekke build for dette
+  }
+}
+
 export async function subscribeForPush(reg: ServiceWorkerRegistration, lat?: number, lng?: number, timezone?: string) {
   const permission = await Notification.requestPermission();
   if (permission !== "granted") throw new Error("Notifications not granted");
