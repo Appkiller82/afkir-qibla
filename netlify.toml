@@ -1,11 +1,11 @@
 [build]
-  command = "npm --prefix frontend ci && npm --prefix frontend run build"
-  publish = "frontend/dist"
+  base = "frontend"
+  command = "npm run build"
+  publish = "dist"                   # relativ til base
 
 [functions]
-  directory = "netlify/functions"
+  directory = "../netlify/functions" # ett nivå opp fra base
   node_bundler = "esbuild"
 
 [[plugins]]
   package = "@netlify/plugin-functions-install-core"
-
