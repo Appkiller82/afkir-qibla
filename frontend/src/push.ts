@@ -1,116 +1,60 @@
 // frontend/src/push.ts
 
-// --- Helpers ---
-function urlBase64ToUint8Array(base64String: string): Uint8Array {
+export async function updateMetaIfSubscribed(): Promise<void> {
+  try {
+    // Finn en SW-registrering hvis den finnes
+    const reg = await navigator.serviceWorker?.ready;
+    const sub = await reg?.pushManager.getSubscription();
+
+    // Oppdater dokumenttittel (safe no-op i SSR/build)
+    if (typeof document !== "undefined") {
+      document.title = sub ? "Afkir Qibla • Varsler på" : "Afkir Qibla";
+
+      // Oppdater evt. meta-tagger hvis de finnes
+      const metaAppName =
+        document.querySelector('meta[name="application-name"]') ||
+        document.querySelector('meta[name="apple-mobile-web-app-title"]');
+      if (metaAppName) {
+        metaAppName.setAttribute(
+          "content",
+          sub ? "Afkir Qibla • 🔔" : "Afkir Qibla"
+        );
+      }
+    }
+  } catch {
+    // bevisst no-op; vi vil aldri knekke build for dette
+  }
+}
+
+export async function subscribeForPush(reg: ServiceWorkerRegistration, lat?: number, lng?: number, timezone?: string) {
+  const permission = await Notification.requestPermission();
+  if (permission !== "granted") throw new Error("Notifications not granted");
+
+  const vapidRes = await fetch("/.netlify/functions/vapid");
+  const { publicKey } = await vapidRes.json();
+
+  const sub = await reg.pushManager.subscribe({
+    userVisibleOnly: true,
+    applicationServerKey: urlBase64ToUint8Array(publicKey),
+  });
+
+  await fetch("/.netlify/functions/subscribe", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      subscription: sub.toJSON ? sub.toJSON() : sub,
+      lat, lng, timezone,
+    }),
+  });
+
+  return sub;
+}
+
+function urlBase64ToUint8Array(base64String: string) {
   const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
   const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
-  const raw = atob(base64);
-  const output = new Uint8Array(raw.length);
-  for (let i = 0; i < raw.length; ++i) {
-    output[i] = raw.charCodeAt(i);
-  }
-  return output;
-}
-
-async function getRegistration(): Promise<ServiceWorkerRegistration> {
-  if (!("serviceWorker" in navigator)) throw new Error("Service Worker ikke støttet");
-  return navigator.serviceWorker.register("/service-worker.js");
-}
-
-async function requestPermission() {
-  if (!("Notification" in window)) throw new Error("Varsler ikke støttet");
-  const permission = await Notification.requestPermission();
-  if (permission !== "granted") throw new Error("Varsler ikke tillatt av bruker");
-}
-
-async function subscribeClient(reg?: ServiceWorkerRegistration): Promise<PushSubscription> {
-  await requestPermission();
-  const registration = reg ?? (await getRegistration());
-  const vapidKey = import.meta.env.VITE_VAPID_PUBLIC_KEY;
-  if (!vapidKey) throw new Error("Mangler VITE_VAPID_PUBLIC_KEY");
-  return registration.pushManager.subscribe({
-    userVisibleOnly: true,
-    applicationServerKey: urlBase64ToUint8Array(vapidKey),
-  });
-}
-
-async function saveSubscription(subscription: PushSubscription, extra?: any) {
-  const res = await fetch("/.netlify/functions/subscribe", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ subscription, ...extra }),
-  });
-  return res.json().catch(() => ({}));
-}
-
-// --- Eksporter som brukes i JSX ---
-
-// Brukt av PushControls.jsx
-export async function enablePush(): Promise<string> {
-  const sub = await subscribeClient();
-  const data = await saveSubscription(sub);
-  const id = data?.id || data?.key || "OK";
-  try {
-    localStorage.setItem("pushSubId", String(id));
-  } catch {}
-  return String(id);
-}
-
-// Brukt av PushControlsAuto.jsx
-export async function subscribeForPush(
-  reg: ServiceWorkerRegistration,
-  lat: number,
-  lng: number,
-  timezone: string
-): Promise<string> {
-  const sub = await subscribeClient(reg);
-  const data = await saveSubscription(sub, { lat, lng, timezone });
-  const id = data?.id || data?.key || "OK";
-  try {
-    localStorage.setItem("pushSubId", String(id));
-  } catch {}
-  return String(id);
-}
-
-// Brukt av PushControls.jsx
-export async function sendTest(): Promise<string> {
-  const id = (() => {
-    try {
-      return localStorage.getItem("pushSubId") || undefined;
-    } catch {
-      return undefined;
-    }
-  })();
-  const res = await fetch("/.netlify/functions/send-test", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ id }),
-  });
-  const data = await res.json().catch(() => ({}));
-  return data?.message || data?.result || "Test sendt";
-}
-
-// Brukt av App.jsx
-export async function updateMetaIfSubscribed(): Promise<boolean> {
-  if (!("serviceWorker" in navigator)) return false;
-  const reg = await navigator.serviceWorker.getRegistration();
-  if (!reg) return false;
-
-  const sub = await reg.pushManager.getSubscription();
-  const isOn = !!sub;
-
-  // Sett attributt på <html>
-  try {
-    document.documentElement.setAttribute("data-push", isOn ? "on" : "off");
-  } catch {}
-
-  // Oppdater app-badge hvis støttet
-  try {
-    // @ts-ignore
-    if (isOn && "setAppBadge" in navigator) await (navigator as any).setAppBadge(1);
-    // @ts-ignore
-    if (!isOn && "clearAppBadge" in navigator) await (navigator as any).clearAppBadge();
-  } catch {}
-
-  return isOn;
+  const rawData = atob(base64);
+  const outputArray = new Uint8Array(rawData.length);
+  for (let i = 0; i < rawData.length; ++i) outputArray[i] = rawData.charCodeAt(i);
+  return outputArray;
 }
