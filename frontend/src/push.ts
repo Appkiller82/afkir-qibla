@@ -1,5 +1,6 @@
 // frontend/src/push.ts
 
+// --- Helpers ---
 function urlBase64ToUint8Array(base64String: string): Uint8Array {
   const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
   const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
@@ -42,7 +43,9 @@ async function saveSubscription(subscription: PushSubscription, extra?: any) {
   return res.json().catch(() => ({}));
 }
 
-// 🔹 Disse brukes i JSX-filene dine:
+// --- Eksporter som brukes i JSX ---
+
+// Brukt av PushControls.jsx
 export async function enablePush(): Promise<string> {
   const sub = await subscribeClient();
   const data = await saveSubscription(sub);
@@ -53,6 +56,7 @@ export async function enablePush(): Promise<string> {
   return String(id);
 }
 
+// Brukt av PushControlsAuto.jsx
 export async function subscribeForPush(
   reg: ServiceWorkerRegistration,
   lat: number,
@@ -68,6 +72,7 @@ export async function subscribeForPush(
   return String(id);
 }
 
+// Brukt av PushControls.jsx
 export async function sendTest(): Promise<string> {
   const id = (() => {
     try {
@@ -83,4 +88,29 @@ export async function sendTest(): Promise<string> {
   });
   const data = await res.json().catch(() => ({}));
   return data?.message || data?.result || "Test sendt";
+}
+
+// Brukt av App.jsx
+export async function updateMetaIfSubscribed(): Promise<boolean> {
+  if (!("serviceWorker" in navigator)) return false;
+  const reg = await navigator.serviceWorker.getRegistration();
+  if (!reg) return false;
+
+  const sub = await reg.pushManager.getSubscription();
+  const isOn = !!sub;
+
+  // Sett attributt på <html>
+  try {
+    document.documentElement.setAttribute("data-push", isOn ? "on" : "off");
+  } catch {}
+
+  // Oppdater app-badge hvis støttet
+  try {
+    // @ts-ignore
+    if (isOn && "setAppBadge" in navigator) await (navigator as any).setAppBadge(1);
+    // @ts-ignore
+    if (!isOn && "clearAppBadge" in navigator) await (navigator as any).clearAppBadge();
+  } catch {}
+
+  return isOn;
 }
