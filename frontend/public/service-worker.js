@@ -1,24 +1,24 @@
-self.addEventListener("install", (event) => { self.skipWaiting(); });
-self.addEventListener("activate", (event) => { event.waitUntil(self.clients.claim()); });
+// public/service-worker.js
+self.addEventListener('install', () => self.skipWaiting());
+self.addEventListener('activate', () => self.clients.claim());
 
-self.addEventListener("push", (event) => {
+self.addEventListener('push', (event) => {
   let data = {};
-  try { data = event.data ? event.data.json() : {}; } catch {}
-  const title = data.title || "Bønnetid";
-  const body = data.body || "Det er tid for bønn.";
-  const icon = data.icon || "/icons/icon-192.png";
-  const badge = data.badge || "/icons/badge-72.png";
-  const tag = data.tag || "bonnetid";
-  const options = { body, icon, badge, tag, renotify: true };
+  try { data = event.data?.json() || {}; } catch {}
+  const title = data.title || 'Afkir Qibla';
+  const options = { body: data.body || 'Ny melding', data: { url: data.url || '/' } };
   event.waitUntil(self.registration.showNotification(title, options));
 });
 
-self.addEventListener("notificationclick", (event) => {
+self.addEventListener('notificationclick', (event) => {
   event.notification.close();
-  event.waitUntil((async () => {
-    const allClients = await self.clients.matchAll({ includeUncontrolled: true, type: "window" });
-    const url = "/";
-    for (const client of allClients) { if ("focus" in client) return client.focus(); }
-    if (self.clients && "openWindow" in self.clients) return self.clients.openWindow(url);
-  })());
+  const url = event.notification.data?.url || '/';
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((list) => {
+      for (const client of list) {
+        if ('focus' in client) { client.navigate?.(url); return client.focus(); }
+      }
+      return self.clients.openWindow ? self.clients.openWindow(url) : null;
+    })
+  );
 });

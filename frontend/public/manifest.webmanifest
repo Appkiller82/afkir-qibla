@@ -1,10 +1,10 @@
 {
   "name": "Afkir Qibla",
-  "short_name": "Qibla",
+  "short_name": "Afkir Qibla",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#081b2a",
-  "theme_color": "#0a2d4f",
+  "background_color": "#0b1220",
+  "theme_color": "#0f172a",
   "icons": [
     {
       "src": "/icons/icon-192.png",
@@ -15,6 +15,18 @@
       "src": "/icons/icon-512.png",
       "sizes": "512x512",
       "type": "image/png"
+    },
+    {
+      "src": "/icons/maskable-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/icons/maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
     }
   ]
 }
