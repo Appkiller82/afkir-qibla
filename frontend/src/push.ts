@@ -1,165 +1,152 @@
 // frontend/src/push.ts
-// Minimal, BOM-free push helper for Netlify + Web Push
-// Works with either VITE_PUSH_SERVER_URL (preferred) or defaults to Netlify Functions path.
 
-const BASE =
-  (import.meta as any).env?.VITE_PUSH_SERVER_URL?.replace(/\/+$/, '') ||
-  '/.netlify/functions/push';
-
-const VAPID_PUBLIC_KEY = (import.meta as any).env?.VITE_VAPID_PUBLIC_KEY;
-
-/** Convert VAPID public key from URL-safe base64 string to Uint8Array */
+// --- Helpers ---
 function urlBase64ToUint8Array(base64String: string): Uint8Array {
-  const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
-  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
-  const rawData = atob(base64);
-  const outputArray = new Uint8Array(rawData.length);
-  for (let i = 0; i < rawData.length; ++i) outputArray[i] = rawData.charCodeAt(i);
-  return outputArray;
-}
-
-async function ensurePermission(): Promise<void> {
-  if (!('Notification' in window)) throw new Error('Varsler ikke støttet i denne nettleseren');
-  if (Notification.permission === 'default') {
-    const perm = await Notification.requestPermission();
-    if (perm !== 'granted') throw new Error('Varseltillatelse ikke gitt');
-  } else if (Notification.permission !== 'granted') {
-    throw new Error('Varseltillatelse ikke gitt');
+  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const raw = atob(base64);
+  const output = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; ++i) {
+    output[i] = raw.charCodeAt(i);
   }
+  return output;
 }
 
-async function ensureServiceWorker(): Promise<ServiceWorkerRegistration> {
-  if (!('serviceWorker' in navigator)) throw new Error('Service Worker ikke støttet');
-  return (await navigator.serviceWorker.getRegistration()) ||
-         (await navigator.serviceWorker.register('/service-worker.js'));
+async function getRegistration(): Promise<ServiceWorkerRegistration> {
+  if (!("serviceWorker" in navigator)) throw new Error("Service Worker ikke støttet");
+  return navigator.serviceWorker.register("/service-worker.js");
 }
 
-async function createBrowserSubscription(reg: ServiceWorkerRegistration): Promise<PushSubscription> {
-  if (!('pushManager' in reg)) throw new Error('Push API ikke tilgjengelig');
-  if (!VAPID_PUBLIC_KEY) throw new Error('Mangler VITE_VAPID_PUBLIC_KEY');
-  const appServerKey = urlBase64ToUint8Array(String(VAPID_PUBLIC_KEY));
-  const existing = await reg.pushManager.getSubscription();
-  if (existing) return existing;
-  return reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: appServerKey });
+async function requestPermission() {
+  if (!("Notification" in window)) throw new Error("Varsler ikke støttet");
+  const permission = await Notification.requestPermission();
+  if (permission !== "granted") throw new Error("Varsler ikke tillatt av bruker");
 }
 
-type SubscribeArgs =
-  | [ServiceWorkerRegistration, number, number, string]
-  | [{ lat: number; lng: number; timezone: string }];
-
-function isTuple(args: any[]): args is [ServiceWorkerRegistration, number, number, string] {
-  return args.length === 4 && 'pushManager' in args[0];
-}
-
-/**
- * Subscribe for push on the server.
- * Supports two call signatures:
- *   subscribeForPush(reg, lat, lng, timezone)
- *   subscribeForPush({ lat, lng, timezone })
- */
-export async function subscribeForPush(
-  ...args: SubscribeArgs
-): Promise<{ id?: string; endpoint?: string } & Record<string, any>> {
-  let reg: ServiceWorkerRegistration | null = null;
-  let lat: number, lng: number, timezone: string;
-
-  if (isTuple(args)) {
-    [reg, lat, lng, timezone] = args;
-  } else {
-    ({ lat, lng, timezone } = args[0]);
-  }
-
-  await ensurePermission();
-  reg = reg || (await ensureServiceWorker());
-  const subscription = await createBrowserSubscription(reg);
-
-  const resp = await fetch(`${BASE}/subscribe`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      subscription,
-      lat,
-      lng,
-      timezone,
-    }),
+async function subscribeClient(reg?: ServiceWorkerRegistration): Promise<PushSubscription> {
+  await requestPermission();
+  const registration = reg ?? (await getRegistration());
+  const vapidKey = import.meta.env.VITE_VAPID_PUBLIC_KEY;
+  if (!vapidKey) throw new Error("Mangler VITE_VAPID_PUBLIC_KEY");
+  return registration.pushManager.subscribe({
+    userVisibleOnly: true,
+    applicationServerKey: urlBase64ToUint8Array(vapidKey),
   });
-
-  if (!resp.ok) {
-    const txt = await resp.text().catch(() => '');
-    throw new Error(`Server subscribe ${resp.status}: ${txt}`);
-  }
-
-  const data = await resp.json().catch(() => ({}));
-  try {
-    const id = data?.id || subscription?.endpoint || null;
-    if (id) localStorage.setItem('pushSubId', String(id));
-  } catch {}
-
-  return { ...data, endpoint: subscription?.endpoint };
 }
 
-/**
- * Simple helper used by PushControls.jsx
- */
+async function saveSubscription(subscription: PushSubscription, extra?: any) {
+  const res = await fetch("/.netlify/functions/subscribe", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ subscription, ...extra }),
+  });
+  return res.json().catch(() => ({}));
+}
+
+// --- Eksporter som brukes i JSX ---
+
+// Brukt av PushControls.jsx
 export async function enablePush(): Promise<string> {
-  const reg = await ensureServiceWorker();
-  await ensurePermission();
-
-  // Location + timezone are useful to associate the sub with a user/region
-  const pos = await new Promise<GeolocationPosition>((resolve, reject) => {
-    if (!('geolocation' in navigator)) return reject(new Error('Geolokasjon ikke støttet'));
-    navigator.geolocation.getCurrentPosition(resolve, reject, {
-      enableHighAccuracy: true,
-      timeout: 15000,
-      maximumAge: 0,
-    });
-  });
-  const lat = pos.coords.latitude;
-  const lng = pos.coords.longitude;
-  const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
-
-  const result = await subscribeForPush(reg, lat, lng, timezone);
-  const id = result?.id || result?.endpoint || '';
-  if (!id) throw new Error('Manglende ID fra server');
-  return id;
+  const sub = await subscribeClient();
+  const data = await saveSubscription(sub);
+  const id = data?.id || data?.key || "OK";
+  try {
+    localStorage.setItem("pushSubId", String(id));
+  } catch {}
+  return String(id);
 }
 
-/**
- * Ask server to send a test notification to the stored subscription ID.
- */
+// Brukt av PushControlsAuto.jsx
+export async function subscribeForPush(
+  reg: ServiceWorkerRegistration,
+  lat: number,
+  lng: number,
+  timezone: string
+): Promise<string> {
+  const sub = await subscribeClient(reg);
+  const data = await saveSubscription(sub, { lat, lng, timezone });
+  const id = data?.id || data?.key || "OK";
+  try {
+    localStorage.setItem("pushSubId", String(id));
+  } catch {}
+  return String(id);
+}
+
+// Brukt av PushControls.jsx
 export async function sendTest(): Promise<string> {
-  const id = (typeof window !== 'undefined' && localStorage.getItem('pushSubId')) || '';
-  const resp = await fetch(`${BASE}/send-test`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+  const id = (() => {
+    try {
+      return localStorage.getItem("pushSubId") || undefined;
+    } catch {
+      return undefined;
+    }
+  })();
+  const res = await fetch("/.netlify/functions/send-test", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
     body: JSON.stringify({ id }),
   });
-  if (!resp.ok) {
-    const txt = await resp.text().catch(() => '');
-    throw new Error(`Server send-test ${resp.status}: ${txt}`);
-  }
-  const data = await resp.json().catch(() => ({}));
-  return data?.message || 'OK';
+  const data = await res.json().catch(() => ({}));
+  return data?.message || data?.result || "Test sendt";
 }
 
-/**
- * updateMetaIfSubscribed()
- * Some parts of the app may read a meta tag to know if push is active.
- * This function updates/creates <meta name="afkir:push"> with content "subscribed" | "unsubscribed".
- * Returns true if a subscription ID is present.
- */
-export function updateMetaIfSubscribed(): boolean {
+// Brukt av App.jsx
+export async function updateMetaIfSubscribed(): Promise<boolean> {
+  if (!("serviceWorker" in navigator)) return false;
+  const reg = await navigator.serviceWorker.getRegistration();
+  if (!reg) return false;
+
+  const sub = await reg.pushManager.getSubscription();
+  const isOn = !!sub;
+
+  // Sett attributt på <html>
   try {
-    const id = (typeof window !== 'undefined' && localStorage.getItem('pushSubId')) || '';
-    const name = 'afkir:push';
-    let m = document.querySelector(`meta[name="${name}"]`) as HTMLMetaElement | null;
-    if (!m) {
-      m = document.createElement('meta');
-      m.setAttribute('name', name);
-      document.head.appendChild(m);
+    document.documentElement.setAttribute("data-push", isOn ? "on" : "off");
+  } catch {}
+
+  // Oppdater app-badge hvis støttet
+  try {
+    // @ts-ignore
+    if (isOn && "setAppBadge" in navigator) await (navigator as any).setAppBadge(1);
+    // @ts-ignore
+    if (!isOn && "clearAppBadge" in navigator) await (navigator as any).clearAppBadge();
+  } catch {}
+
+  return isOn;
+}
+// src/push.ts
+
+/**
+ * Update lightweight UI/meta when user is subscribed to push.
+ * Safe no-op on platforms without SW/Push.
+ * Returns true if a subscription exists.
+ */
+export async function updateMetaIfSubscribed(): Promise<boolean> {
+  try {
+    if (!('serviceWorker' in navigator) || !('PushManager' in window)) return false;
+
+    const reg = await navigator.serviceWorker.ready;
+    const sub = await reg.pushManager.getSubscription();
+    const isOn = !!sub;
+
+    // Example: toggle an attribute the app can style against
+    document.documentElement.toggleAttribute('data-has-push', isOn);
+
+    // (Optional) nudge theme-color if you want a visual cue when push is on
+    const themeMeta =
+      document.querySelector('meta[name="theme-color"]') ||
+      document.querySelector('meta[name="apple-mobile-web-app-status-bar-style"]');
+
+    if (themeMeta && !themeMeta.getAttribute('data-initialized')) {
+      // Don’t clobber on every call; mark once
+      themeMeta.setAttribute('data-initialized', '1');
+      // If content is empty, set a sensible default
+      if (!themeMeta.getAttribute('content')) {
+        themeMeta.setAttribute('content', '#0f766e');
+      }
     }
-    m.setAttribute('content', id ? 'subscribed' : 'unsubscribed');
-    return Boolean(id);
+
+    return isOn;
   } catch {
     return false;
   }
