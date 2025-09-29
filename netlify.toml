@@ -1,14 +1,11 @@
 [build]
   base = "frontend"
   command = "npm run build"
-  publish = "dist"
+  publish = "dist"                   # <-- relativ til base
 
 [functions]
-  directory = "../netlify/functions"
+  directory = "../netlify/functions" # <-- ett hakk opp fra base
   node_bundler = "esbuild"
-
-[build.environment]
-  NODE_VERSION = "20"
 
 [[plugins]]
   package = "@netlify/plugin-functions-install-core"
