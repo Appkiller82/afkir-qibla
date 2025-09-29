@@ -1,71 +1,65 @@
-export async function subscribeForPush(reg: ServiceWorkerRegistration, lat?: number, lng?: number, timezone?: string) {
-  const permission = await Notification.requestPermission();
-  if (permission !== "granted") throw new Error("Notifications not granted");
+// frontend/src/push.ts
 
-  const vapidRes = await fetch("/.netlify/functions/vapid");
-  const { publicKey } = await vapidRes.json();
-
-  const sub = await reg.pushManager.subscribe({
-    userVisibleOnly: true,
-    applicationServerKey: urlBase64ToUint8Array(publicKey),
-  });
-
-  await fetch("/.netlify/functions/subscribe", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      subscription: sub.toJSON ? sub.toJSON() : sub,
-      lat, lng, timezone,
-    }),
-  });
-
-  return sub;
-}
-
-function urlBase64ToUint8Array(base64String: string) {
+// Konverter base64 til Uint8Array
+function urlBase64ToUint8Array(base64String: string): Uint8Array {
   const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
   const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
-  const rawData = atob(base64);
+  const rawData = window.atob(base64);
   const outputArray = new Uint8Array(rawData.length);
   for (let i = 0; i < rawData.length; ++i) outputArray[i] = rawData.charCodeAt(i);
   return outputArray;
 }
 
-// src/push.ts
-
-/**
- * Update lightweight UI/meta when user is subscribed to push.
- * Safe no-op on platforms without SW/Push.
- * Returns true if a subscription exists.
- */
-export async function updateMetaIfSubscribed(): Promise<boolean> {
-  try {
-    if (!('serviceWorker' in navigator) || !('PushManager' in window)) return false;
-
-    const reg = await navigator.serviceWorker.ready;
-    const sub = await reg.pushManager.getSubscription();
-    const isOn = !!sub;
-
-    // Example: toggle an attribute the app can style against
-    document.documentElement.toggleAttribute('data-has-push', isOn);
-
-    // (Optional) nudge theme-color if you want a visual cue when push is on
-    const themeMeta =
-      document.querySelector('meta[name="theme-color"]') ||
-      document.querySelector('meta[name="apple-mobile-web-app-status-bar-style"]');
-
-    if (themeMeta && !themeMeta.getAttribute('data-initialized')) {
-      // Don’t clobber on every call; mark once
-      themeMeta.setAttribute('data-initialized', '1');
-      // If content is empty, set a sensible default
-      if (!themeMeta.getAttribute('content')) {
-        themeMeta.setAttribute('content', '#0f766e');
-      }
-    }
-
-    return isOn;
-  } catch {
-    return false;
+async function getRegistration(): Promise<ServiceWorkerRegistration> {
+  if (!("serviceWorker" in navigator)) {
+    throw new Error("Service Worker ikke støttet");
   }
+  return navigator.serviceWorker.register("/service-worker.js");
 }
 
+async function subscribeClient(reg?: ServiceWorkerRegistration): Promise<PushSubscription> {
+  const permission = await Notification.requestPermission();
+  if (permission !== "granted") {
+    throw new Error("Varsling ble ikke tillatt av bruker");
+  }
+  const registration = reg || (await getRegistration());
+  const vapidKey = import.meta.env.VITE_VAPID_PUBLIC_KEY;
+  const appServerKey = urlBase64ToUint8Array(vapidKey);
+  return registration.pushManager.subscribe({
+    userVisibleOnly: true,
+    applicationServerKey: appServerKey,
+  });
+}
+
+async function saveSubscription(sub: PushSubscription, extra?: any) {
+  const res = await fetch("/.netlify/functions/subscribe", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ subscription: sub, ...extra }),
+  });
+  return res.json();
+}
+
+// 🔹 Disse må være med:
+export async function enablePush(): Promise<string> {
+  const sub = await subscribeClient();
+  const data = await saveSubscription(sub);
+  return data?.id || "OK";
+}
+
+export async function subscribeForPush(
+  reg: ServiceWorkerRegistration,
+  lat: number,
+  lng: number,
+  timezone: string
+): Promise<string> {
+  const sub = await subscribeClient(reg);
+  const data = await saveSubscription(sub, { lat, lng, timezone });
+  return data?.id || "OK";
+}
+
+export async function sendTest(): Promise<string> {
+  const res = await fetch("/.netlify/functions/send-test", { method: "POST" });
+  const data = await res.json();
+  return data?.message || "Test sendt";
+}
