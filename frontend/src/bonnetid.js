@@ -1,4 +1,4 @@
-export async function fetchBonnetid(lat: number, lng: number, when: string = "today") {
+export async function fetchBonnetid(lat, lng, when = "today") {
   const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const url = `/api/bonnetid-today?lat=${lat}&lng=${lng}&when=${when}&tz=${encodeURIComponent(tz)}`;
 
@@ -10,7 +10,7 @@ export async function fetchBonnetid(lat: number, lng: number, when: string = "to
   const timezone = json?.timezone || json?.data?.meta?.timezone || tz;
 
   const today = new Date().toISOString().slice(0,10);
-  const mk = (v: string) => {
+  const mk = (v) => {
     if (!v) return null;
     const [h,m] = String(v).slice(0,5).split(":").map(Number);
     const d = new Date(`${today}T00:00:00`);
