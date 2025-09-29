@@ -1,4 +1,3 @@
-// frontend/src/PushControlsAuto.jsx
 import { useState } from "react";
 import { subscribeForPush } from "./push";
 
@@ -7,68 +6,37 @@ export default function PushControlsAuto() {
 
   async function handleSubscribe() {
     try {
-      setStatus("Init …");
-
-      // 1) Varsel-tillatelse tidlig
-      if (!("Notification" in window)) throw new Error("Varsler ikke støttet");
-      if (Notification.permission === "default") {
-        const perm = await Notification.requestPermission();
-        if (perm !== "granted") throw new Error("Varseltillatelse ikke gitt");
-      } else if (Notification.permission !== "granted") {
-        throw new Error("Varseltillatelse ikke gitt");
-      }
-
-      // 2) Rebruk service worker hvis mulig (unngå dobbelt-registrering)
-      if (!("serviceWorker" in navigator)) throw new Error("Service Worker ikke støttet");
-      setStatus("Klargjør service worker …");
-      const reg =
-        (await navigator.serviceWorker.getRegistration()) ||
-        (await navigator.serviceWorker.register("/service-worker.js"));
-
-      // 3) Geolokasjon
-      setStatus("Henter posisjon …");
+      // 1) Hent posisjon
       const pos = await new Promise((resolve, reject) => {
         if (!("geolocation" in navigator)) return reject(new Error("Geolokasjon ikke støttet"));
-        navigator.geolocation.getCurrentPosition(resolve, reject, {
-          enableHighAccuracy: true,
-          timeout: 15000,
-          maximumAge: 0,
-        });
+        navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: true, timeout: 15000 });
       });
       const lat = pos.coords.latitude;
       const lng = pos.coords.longitude;
 
-      // 4) Timezone
-      const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+      // 2) Hent timezone
+      const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
-      // 5) Abonner (støtter begge signaturer av subscribeForPush)
-      setStatus("Oppretter push-abonnement …");
-      let sub;
-      try {
-        // variant som tar (reg, lat, lng, timezone)
-        sub = await subscribeForPush(reg, lat, lng, timezone);
-      } catch {
-        // fallback til variant som tar ({ lat, lng, timezone })
-        sub = await subscribeForPush({ lat, lng, timezone });
-      }
+      // 3) Registrer service worker (om ikke allerede registrert)
+      if (!("serviceWorker" in navigator)) throw new Error("Service Worker ikke støttet i denne nettleseren");
+      const reg = await navigator.serviceWorker.register("/service-worker.js");
 
-      // 6) Lagre ID lokalt (endpoint som fallback)
-      try {
-        const id = sub?.id || sub?.endpoint || null;
-        if (id) localStorage.setItem("pushSubId", String(id));
-      } catch {}
+      // 4) Abonner (lagrer sub + lat/lng/tz i backend)
+      await subscribeForPush(reg, lat, lng, timezone);
 
-      setStatus(`Ferdig! Aktivert for ${lat.toFixed(2)}, ${lng.toFixed(2)} (${timezone})`);
+      setStatus(`Abonnement opprettet for ${lat.toFixed(2)}, ${lng.toFixed(2)} (${timezone})`);
     } catch (err) {
-      console.error(err);
-      setStatus(err?.message || "Kunne ikke opprette abonnement");
+      console.error("Subscription feilet:", err);
+      setStatus("Kunne ikke opprette push-abonnement. Sjekk tillatelser for varsler og posisjon.");
     }
   }
 
   return (
-    <div className="space-y-2">
-      <button onClick={handleSubscribe}>Abonner på bønnetidsvarsler</button>
-      {status && <div style={{ opacity: 0.85 }}>{status}</div>}
+    <div>
+      <button onClick={handleSubscribe}>
+        Abonner på bønnetidsvarsler
+      </button>
+      {status && <p>{status}</p>}
     </div>
   );
 }

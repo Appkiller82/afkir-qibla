@@ -13,7 +13,7 @@ export default function PushControls() {
       setStatus(`Aktivert. ID: ${id.slice(0, 10)}…`);
     } catch (e) {
       console.error(e);
-      setStatus(`Feil ved aktivering: ${e.message || e}`);
+      setStatus(`Feil ved aktivering: ${e.message}`);
     }
   }
 
@@ -24,7 +24,7 @@ export default function PushControls() {
       setStatus(`Sendt: ${msg}`);
     } catch (e) {
       console.error(e);
-      setStatus(`Send-test feilet: ${e.message || e}`);
+      setStatus(`Send-test feilet: ${e.message}`);
     }
   }
 
