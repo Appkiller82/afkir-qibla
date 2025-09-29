@@ -12,3 +12,9 @@
 
 [[plugins]]
   package = "@netlify/plugin-functions-install-core"
+
+[[redirects]]
+  from = "/api/bonnetid-today"
+  to = "/.netlify/functions/bt-today"
+  status = 200
+  force = true
