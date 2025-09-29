@@ -81,7 +81,6 @@ export async function subscribeForPush(
       lat,
       lng,
       timezone,
-      // Optional: let server infer UA, etc.
     }),
   });
 
@@ -141,4 +140,27 @@ export async function sendTest(): Promise<string> {
   }
   const data = await resp.json().catch(() => ({}));
   return data?.message || 'OK';
+}
+
+/**
+ * updateMetaIfSubscribed()
+ * Some parts of the app may read a meta tag to know if push is active.
+ * This function updates/creates <meta name="afkir:push"> with content "subscribed" | "unsubscribed".
+ * Returns true if a subscription ID is present.
+ */
+export function updateMetaIfSubscribed(): boolean {
+  try {
+    const id = (typeof window !== 'undefined' && localStorage.getItem('pushSubId')) || '';
+    const name = 'afkir:push';
+    let m = document.querySelector(`meta[name="${name}"]`) as HTMLMetaElement | null;
+    if (!m) {
+      m = document.createElement('meta');
+      m.setAttribute('name', name);
+      document.head.appendChild(m);
+    }
+    m.setAttribute('content', id ? 'subscribed' : 'unsubscribed');
+    return Boolean(id);
+  } catch {
+    return false;
+  }
 }
