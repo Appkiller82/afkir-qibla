@@ -30,3 +30,42 @@ function urlBase64ToUint8Array(base64String: string) {
   for (let i = 0; i < rawData.length; ++i) outputArray[i] = rawData.charCodeAt(i);
   return outputArray;
 }
+
+// src/push.ts
+
+/**
+ * Update lightweight UI/meta when user is subscribed to push.
+ * Safe no-op on platforms without SW/Push.
+ * Returns true if a subscription exists.
+ */
+export async function updateMetaIfSubscribed(): Promise<boolean> {
+  try {
+    if (!('serviceWorker' in navigator) || !('PushManager' in window)) return false;
+
+    const reg = await navigator.serviceWorker.ready;
+    const sub = await reg.pushManager.getSubscription();
+    const isOn = !!sub;
+
+    // Example: toggle an attribute the app can style against
+    document.documentElement.toggleAttribute('data-has-push', isOn);
+
+    // (Optional) nudge theme-color if you want a visual cue when push is on
+    const themeMeta =
+      document.querySelector('meta[name="theme-color"]') ||
+      document.querySelector('meta[name="apple-mobile-web-app-status-bar-style"]');
+
+    if (themeMeta && !themeMeta.getAttribute('data-initialized')) {
+      // Don’t clobber on every call; mark once
+      themeMeta.setAttribute('data-initialized', '1');
+      // If content is empty, set a sensible default
+      if (!themeMeta.getAttribute('content')) {
+        themeMeta.setAttribute('content', '#0f766e');
+      }
+    }
+
+    return isOn;
+  } catch {
+    return false;
+  }
+}
+
