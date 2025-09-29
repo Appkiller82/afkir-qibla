@@ -1,3 +1,24 @@
+// Konverter "HH:MM" -> Date (i dag / i morgen)
+function hhmmToDate(hhmm, when = "today") {
+  if (!hhmm) return null;
+  const m = String(hhmm).match(/(\d{1,2}):(\d{2})/);
+  if (!m) return null;
+  const now = new Date();
+  const d = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+  if (when === "tomorrow") d.setDate(d.getDate() + 1);
+  d.setHours(parseInt(m[1], 10), parseInt(m[2], 10), 0, 0);
+  return d;
+}
+
+// Sørg for at et timings-objekt har Date-verdier (ikke strenger)
+function ensureDates(timings, when = "today") {
+  const map = {};
+  if (!timings) return map;
+  for (const [k, v] of Object.entries(timings)) {
+    map[k] = (v && typeof v.getTime === "function") ? v : hhmmToDate(v, when);
+  }
+  return map;
+}
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import PushControlsAuto from "./PushControlsAuto.jsx";
 import AutoLocationModal from "./AutoLocationModal.jsx";
@@ -182,7 +203,7 @@ async function fetchAladhan(lat, lng, when = "today") {
   if (!res.ok) throw new Error("API feilet");
   const json = await res.json();
   if (json.code !== 200 || !json.data?.timings) throw new Error("Ugyldig API-respons");
-  return parseAladhanToDates(json);
+  return ensureDates(parseAladhanToDates(json), when);
 }
 
 async function fetchAladhanCustomNO(lat, lng, when = "today") {
@@ -205,14 +226,15 @@ async function fetchAladhanCustomNO(lat, lng, when = "today") {
   if (json.code !== 200 || !json.data?.timings) throw new Error("Ugyldig API-respons");
   const base = parseAladhanToDates(json);
   const o = NO_IRN_PROFILE.offsets;
-  return {
-    Fajr: addMinutes(base.Fajr, o.Fajr || 0),
-    Soloppgang: base.Soloppgang,
-    Dhuhr: addMinutes(base.Dhuhr, o.Dhuhr || 0),
-    Asr: addMinutes(base.Asr, o.Asr || 0),
-    Maghrib: addMinutes(base.Maghrib, o.Maghrib || 0),
-    Isha: addMinutes(base.Isha, o.Isha || 0)
-  };
+ const obj = {
+  Fajr: addMinutes(base.Fajr, o.Fajr || 0),
+  Soloppgang: base.Soloppgang,
+  Dhuhr: addMinutes(base.Dhuhr, o.Dhuhr || 0),
+  Asr: addMinutes(base.Asr, o.Asr || 0),
+  Maghrib: addMinutes(base.Maghrib, o.Maghrib || 0),
+  Isha: addMinutes(base.Isha, o.Isha || 0)
+};
+return ensureDates(obj, when);
 }
 
 
@@ -660,7 +682,8 @@ async function fetchBonnetid(lat, lng, when = "today") {
   const res = await fetch(url);
   if (!res.ok) throw new Error("Bonnetid feilet");
   const json = await res.json();
-  return json.timings || json.data?.timings || {};
+  const raw = json.timings || json.data?.timings || {};
+return ensureDates(raw, when);
 }
 
 
