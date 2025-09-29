@@ -1,3 +1,4 @@
+import PushTestButton from "./PushTestButton.jsx";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import PushControlsAuto from "./PushControlsAuto.jsx";
 import AutoLocationModal from "./AutoLocationModal.jsx";
@@ -728,15 +729,24 @@ export default function App(){
 
           {/* Push controls card (auto-metadata) */}
           <section className="card">
-            <h3>Push-varsler</h3>
-            <div className="hint" style={{marginBottom:8}}>Aktiver push for å få varsler om bønnetider på denne enheten.</div>
-            <PushControlsAuto
-              coords={coords}
-              city={city}
-              countryCode={countryCode}
-              tz={Intl.DateTimeFormat().resolvedOptions().timeZone}
-            />
-          </section>
+  <h3>Push-varsler</h3>
+  <div className="hint" style={{marginBottom:8}}>
+    Aktiver push for å få varsler om bønnetider på denne enheten.
+  </div>
+
+  <PushControlsAuto
+    coords={coords}
+    city={city}
+    countryCode={countryCode}
+    tz={Intl.DateTimeFormat().resolvedOptions().timeZone}
+  />
+
+  {/* Admin-låst test/masseutsendelse (PIN 0199) */}
+  <div style={{marginTop:10}}>
+    <PushTestButton />
+  </div>
+</section>
+
         </div>
       </div>
 
