@@ -1,55 +1,55 @@
 // frontend/src/push.ts
 
-// --- helpers ---
 function urlBase64ToUint8Array(base64String: string): Uint8Array {
   const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
   const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
   const raw = atob(base64);
-  const out = new Uint8Array(raw.length);
-  for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
-  return out;
+  const output = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; ++i) {
+    output[i] = raw.charCodeAt(i);
+  }
+  return output;
 }
 
-async function getReg(): Promise<ServiceWorkerRegistration> {
+async function getRegistration(): Promise<ServiceWorkerRegistration> {
   if (!("serviceWorker" in navigator)) throw new Error("Service Worker ikke støttet");
-  // bruk samme sti som PWAen din
   return navigator.serviceWorker.register("/service-worker.js");
 }
 
-async function ensurePermission() {
+async function requestPermission() {
   if (!("Notification" in window)) throw new Error("Varsler ikke støttet");
-  const p = await Notification.requestPermission();
-  if (p !== "granted") throw new Error("Varsling ikke tillatt");
+  const permission = await Notification.requestPermission();
+  if (permission !== "granted") throw new Error("Varsler ikke tillatt av bruker");
 }
 
-async function subscribeBrowser(reg?: ServiceWorkerRegistration): Promise<PushSubscription> {
-  await ensurePermission();
-  const registration = reg ?? (await getReg());
-  const vapid = import.meta.env.VITE_VAPID_PUBLIC_KEY;
-  if (!vapid) throw new Error("Mangler VITE_VAPID_PUBLIC_KEY");
+async function subscribeClient(reg?: ServiceWorkerRegistration): Promise<PushSubscription> {
+  await requestPermission();
+  const registration = reg ?? (await getRegistration());
+  const vapidKey = import.meta.env.VITE_VAPID_PUBLIC_KEY;
+  if (!vapidKey) throw new Error("Mangler VITE_VAPID_PUBLIC_KEY");
   return registration.pushManager.subscribe({
     userVisibleOnly: true,
-    applicationServerKey: urlBase64ToUint8Array(vapid),
+    applicationServerKey: urlBase64ToUint8Array(vapidKey),
   });
 }
 
-async function postJSON(url: string, body: unknown) {
-  const res = await fetch(url, {
+async function saveSubscription(subscription: PushSubscription, extra?: any) {
+  const res = await fetch("/.netlify/functions/subscribe", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify(body ?? {}),
+    body: JSON.stringify({ subscription, ...extra }),
   });
-  if (!res.ok) throw new Error(`${url} -> ${res.status}`);
   return res.json().catch(() => ({}));
 }
 
-// --- required exports ---
-
+// 🔹 Disse brukes i JSX-filene dine:
 export async function enablePush(): Promise<string> {
-  const sub = await subscribeBrowser();
-  const data = await postJSON("/.netlify/functions/subscribe", { subscription: sub });
-  const id = data?.id || data?.key || data?.subscriptionId || "OK";
-  try { localStorage.setItem("pushSubId", String(id)); } catch {}
+  const sub = await subscribeClient();
+  const data = await saveSubscription(sub);
+  const id = data?.id || data?.key || "OK";
+  try {
+    localStorage.setItem("pushSubId", String(id));
+  } catch {}
   return String(id);
 }
 
@@ -59,20 +59,28 @@ export async function subscribeForPush(
   lng: number,
   timezone: string
 ): Promise<string> {
-  const sub = await subscribeBrowser(reg);
-  const data = await postJSON("/.netlify/functions/subscribe", {
-    subscription: sub,
-    lat,
-    lng,
-    timezone,
-  });
-  const id = data?.id || data?.key || data?.subscriptionId || "OK";
-  try { localStorage.setItem("pushSubId", String(id)); } catch {}
+  const sub = await subscribeClient(reg);
+  const data = await saveSubscription(sub, { lat, lng, timezone });
+  const id = data?.id || data?.key || "OK";
+  try {
+    localStorage.setItem("pushSubId", String(id));
+  } catch {}
   return String(id);
 }
 
 export async function sendTest(): Promise<string> {
-  const id = (() => { try { return localStorage.getItem("pushSubId") || undefined; } catch { return undefined; }})();
-  const data = await postJSON("/.netlify/functions/send-test", { id });
+  const id = (() => {
+    try {
+      return localStorage.getItem("pushSubId") || undefined;
+    } catch {
+      return undefined;
+    }
+  })();
+  const res = await fetch("/.netlify/functions/send-test", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ id }),
+  });
+  const data = await res.json().catch(() => ({}));
   return data?.message || data?.result || "Test sendt";
 }
