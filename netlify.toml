@@ -1,15 +1,14 @@
-# --- Build (samme oppsett du har brukt) ---
+# --- Build ---
 [build]
   base = "frontend"
   command = "npm run build"
   publish = "dist"
 
-# --- Functions (ligger i repo-roten under netlify/functions) ---
+# --- Functions ---
 [functions]
   directory = "../netlify/functions"
   node_bundler = "esbuild"
 
-# (valgfritt, men lurt – lar Netlify bygge TS funcs riktig)
 [[plugins]]
   package = "@netlify/plugin-functions-install-core"
 
