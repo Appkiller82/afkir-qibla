@@ -1,4 +1,3 @@
-// Enkel klient-wrapper som henter via Netlify Function (server-proxy)
 export type PrayerTimes = {
   Fajr?: string; Sunrise?: string; Dhuhr?: string; Asr?: string; Maghrib?: string; Isha?: string;
   [k: string]: any;
@@ -14,12 +13,13 @@ export async function fetchBonnetid(lat: number, lon: number, when: string = "to
   }
   const json = await res.json();
 
-  // API kan være { timings: {...} } eller { data: { timings: {...} } }
-  const timings = json?.timings || json?.data?.timings || json;
+  const timings = json?.timings || json?.data?.timings;
+  if (!timings || typeof timings !== "object") {
+    throw new Error("Ugyldig datastruktur fra API");
+  }
   return ensureDates(timings, when);
 }
 
-// Mapper "HH:mm" til Date-objekter samme dato (lokal tid) + beholder strenger
 export function ensureDates(raw: Record<string, string>, when: string) {
   const keys = ["Fajr","Sunrise","Dhuhr","Asr","Maghrib","Isha"];
   const out: any = {};

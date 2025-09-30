@@ -1,9 +1,7 @@
 import type { Handler } from "@netlify/functions";
 
-// Valgfri fallback til Aladhan API dersom Bonnetid ikke er tilgjengelig.
-// Ingen API-nøkkel nødvendig. Dette brukes f.eks. for test eller backup.
 export const handler: Handler = async (event) => {
-  try {
+  try:
     const { lat, lon, tz, date = "today" } = event.queryStringParameters || {};
     if (!lat || !lon || !tz) {
       return { statusCode: 400, body: "Missing lat/lon/tz" };

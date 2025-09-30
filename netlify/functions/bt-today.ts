@@ -1,9 +1,7 @@
 import type { Handler } from "@netlify/functions";
 
-// Proxy til Bonnetid API: /v1/prayertimes
-// Bruker server-side header X-API-Key fra env (BONNETID_API_KEY)
 export const handler: Handler = async (event) => {
-  try {
+  try:
     const { lat, lon, tz, date = "today" } = event.queryStringParameters || {};
     if (!lat || !lon || !tz) {
       return { statusCode: 400, body: "Missing lat/lon/tz" };
@@ -17,7 +15,7 @@ export const handler: Handler = async (event) => {
     url.searchParams.set("lat", String(lat));
     url.searchParams.set("lon", String(lon));
     url.searchParams.set("tz", String(tz));
-    url.searchParams.set("date", String(date)); // 'today' eller YYYY-MM-DD
+    url.searchParams.set("date", String(date));
 
     const upstream = await fetch(url.toString(), {
       headers: {
@@ -31,7 +29,6 @@ export const handler: Handler = async (event) => {
       return { statusCode: upstream.status, body: text || "Upstream error" };
     }
 
-    // Viderekoble svaret uendret for fleksibilitet i frontend
     return {
       statusCode: 200,
       headers: { "Content-Type": "application/json" },

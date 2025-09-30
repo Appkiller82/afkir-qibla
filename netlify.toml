@@ -1,10 +1,8 @@
-# --- Build ---
 [build]
   base = "frontend"
   command = "npm run build"
   publish = "dist"
 
-# --- Functions ---
 [functions]
   directory = "../netlify/functions"
   node_bundler = "esbuild"
@@ -12,9 +10,15 @@
 [[plugins]]
   package = "@netlify/plugin-functions-install-core"
 
-# --- API redirects -> Netlify Functions ---
 [[redirects]]
   from = "/api/bonnetid-today"
+  to = "/.netlify/functions/bt-today"
+  status = 200
+  force = true
+
+# Catch mistaken route '/api/bonnetid-today2'
+[[redirects]]
+  from = "/api/bonnetid-today2"
   to = "/.netlify/functions/bt-today"
   status = 200
   force = true

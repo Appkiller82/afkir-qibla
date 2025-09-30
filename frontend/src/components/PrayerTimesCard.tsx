@@ -17,6 +17,7 @@ export default function PrayerTimesCard({ coords }: { coords: Coords | null }) {
         setData(res);
       } catch (e: any) {
         setError(e?.message || "Feil ved henting av bønnetider");
+        setData(null);
       } finally {
         setLoading(false);
       }
@@ -28,16 +29,18 @@ export default function PrayerTimesCard({ coords }: { coords: Coords | null }) {
   if (error) return <div style={{ color: "crimson" }}>Feil: {error}</div>;
   if (!data) return null;
 
+  const get = (k: string) => (data && data[k]) || "–";
+
   return (
     <section className="card">
       <h3>Bønnetider (i dag)</h3>
       <ul>
-        <li>Fajr: {data.Fajr || "-"}</li>
-        <li>Soloppgang: {data.Sunrise || "-"}</li>
-        <li>Dhuhr: {data.Dhuhr || "-"}</li>
-        <li>Asr: {data.Asr || "-"}</li>
-        <li>Maghrib: {data.Maghrib || "-"}</li>
-        <li>Isha: {data.Isha || "-"}</li>
+        <li>Fajr: {get("Fajr")}</li>
+        <li>Soloppgang: {get("Sunrise")}</li>
+        <li>Dhuhr: {get("Dhuhr")}</li>
+        <li>Asr: {get("Asr")}</li>
+        <li>Maghrib: {get("Maghrib")}</li>
+        <li>Isha: {get("Isha")}</li>
       </ul>
     </section>
   );
