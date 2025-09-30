@@ -1,43 +1,17 @@
-// Konverter "HH:MM" -> Date (i dag / i morgen)
-function hhmmToDate(hhmm, when = "today") {
-  if (!hhmm) return null;
-  const m = String(hhmm).match(/(\d{1,2}):(\d{2})/);
-  if (!m) return null;
-  const now = new Date();
-  const d = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
-  if (when === "tomorrow") d.setDate(d.getDate() + 1);
-  d.setHours(parseInt(m[1], 10), parseInt(m[2], 10), 0, 0);
-  return d;
-}
-
-// Sørg for at et timings-objekt har Date-verdier (ikke strenger)
-function ensureDates(timings, when = "today") {
-  const map = {};
-  if (!timings) return map;
-  for (const [k, v] of Object.entries(timings)) {
-    map[k] = (v && typeof v.getTime === "function") ? v : hhmmToDate(v, when);
-  }
-  return map;
-}
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import PushControlsAuto from "./PushControlsAuto.jsx";
 import AutoLocationModal from "./AutoLocationModal.jsx";
 import { updateMetaIfSubscribed } from "./push";
+import { fetchTimings } from "./prayer";
 
 /**
- * Afkir Qibla 7 – RESTORED UI
- * - Brings back: Qibla retning (kompass + kart, grønn når på Qibla, viser grader),
- *   bakgrunnsbilder m/rotasjon, tema-knapp, original bønnetider og nedtelling,
- *   Adhan av/på + test-knapp.
- * - Adds: auto-modal for posisjon, auto watch når tillatelse er gitt,
- *   og auto oppdatering av push-metadata (always-on push ved bytte by).
+ * Afkir Qibla 7 – RESTORED UI (oppdatert for unified bønnetider)
+ * - Qibla retning (kompass + kart), bakgrunnsbilder m/rotasjon, tema-knapp,
+ *   bønnetider og nedtelling, Adhan av/på + test-knapp.
+ * - Auto-modal for posisjon, auto watch ved tillatelse,
+ *   auto-oppdatering av push-metadata (always-on push ved bytte by).
+ * - Bønnetider hentes via fetchTimings (Bonnetid→Aladhan NO tuned i Norge, Aladhan global ellers).
  */
-
-// ---------- Tuning ----------
-const NO_IRN_PROFILE = {
-  fajrAngle: 16.0, ishaAngle: 15.0, latitudeAdj: 3, school: 0,
-  offsets: { Fajr: -10, Dhuhr: +12, Asr: 0, Maghrib: +5, Isha: 0 }
-};
 
 // ---------- Intl ----------
 const NB_TIME = new Intl.DateTimeFormat("nb-NO", { hour: "2-digit", minute: "2-digit" });
@@ -155,98 +129,26 @@ function qiblaBearing(lat, lng) {
   return (brng * 180 / Math.PI + 360) % 360;
 }
 
-// ---------- Helpers ----------
-function ddmmyyyyToYmd(ddmmyyyy) {
-  const [dd, mm, yyyy] = String(ddmmyyyy).split("-").map(v => parseInt(v, 10));
-  const y = String(yyyy);
-  const m = String(mm).padStart(2, "0");
-  const d = String(dd).padStart(2, "0");
-  return `${y}-${m}-${d}`;
+// ---------- Helpers (ny) ----------
+// Konverter "HH:mm" til Date (for i dag)
+function hhmmToToday(hhmm) {
+  if (!hhmm) return null;
+  const m = String(hhmm).match(/^(\d{1,2}):(\d{2})/);
+  if (!m) return null;
+  const now = new Date();
+  const d = new Date(now.getFullYear(), now.getMonth(), now.getDate(), parseInt(m[1],10), parseInt(m[2],10), 0, 0);
+  return d;
 }
-
-function parseAladhanToDates(json) {
-  const t = json.data.timings;
-  const greg = json?.data?.date?.gregorian?.date; // DD-MM-YYYY
-  const ymd = greg ? ddmmyyyyToYmd(greg) : (() => {
-    const d = new Date();
-    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
-  })();
-  const mk = (hhmm) => {
-    const m = String(hhmm).match(/(\d{1,2}):(\d{2})/);
-    const hh = parseInt(m[1],10), mm = parseInt(m[2],10);
-    const d = new Date(`${ymd}T00:00:00`); d.setHours(hh,mm,0,0); return d;
-  };
+function ensureDates(strTimings /* {Fajr:"05:15", ...} */) {
   return {
-    Fajr: mk(t.Fajr),
-    Soloppgang: mk(t.Sunrise),
-    Dhuhr: mk(t.Dhuhr),
-    Asr: mk(t.Asr),
-    Maghrib: mk(t.Maghrib),
-    Isha: mk(t.Isha)
+    Fajr: hhmmToToday(strTimings.Fajr),
+    Soloppgang: hhmmToToday(strTimings.Sunrise), // i UI heter den Soloppgang
+    Dhuhr: hhmmToToday(strTimings.Dhuhr),
+    Asr: hhmmToToday(strTimings.Asr),
+    Maghrib: hhmmToToday(strTimings.Maghrib),
+    Isha: hhmmToToday(strTimings.Isha),
   };
 }
-const addMinutes = (d, m) => { const x = new Date(d); x.setMinutes(x.getMinutes()+m); return x; };
-
-// ---------- Aladhan calls ----------
-async function fetchAladhan(lat, lng, when = "today") {
-  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-  const params = new URLSearchParams({
-    latitude: String(lat),
-    longitude: String(lng),
-    method: "5",
-    school: "0",
-    timezonestring: tz,
-    iso8601: "true"
-  });
-  const url = `https://api.aladhan.com/v1/timings/${when}?${params.toString()}`;
-  const res = await fetch(url);
-  if (!res.ok) throw new Error("API feilet");
-  const json = await res.json();
-  if (json.code !== 200 || !json.data?.timings) throw new Error("Ugyldig API-respons");
-  return ensureDates(parseAladhanToDates(json), when);
-}
-
-async function fetchAladhanCustomNO(lat, lng, when = "today") {
-  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-  const params = new URLSearchParams({
-    latitude: String(lat),
-    longitude: String(lng),
-    method: "99",
-    fajr: String(NO_IRN_PROFILE.fajrAngle),
-    isha: String(NO_IRN_PROFILE.ishaAngle),
-    school: String(NO_IRN_PROFILE.school),
-    latitudeAdjustmentMethod: String(NO_IRN_PROFILE.latitudeAdj),
-    timezonestring: tz,
-    iso8601: "true"
-  });
-  const url = `https://api.aladhan.com/v1/timings/${when}?${params.toString()}`;
-  const res = await fetch(url);
-  if (!res.ok) throw new Error("API feilet");
-  const json = await res.json();
-  if (json.code !== 200 || !json.data?.timings) throw new Error("Ugyldig API-respons");
-  const base = parseAladhanToDates(json);
-  const o = NO_IRN_PROFILE.offsets;
- const obj = {
-  Fajr: addMinutes(base.Fajr, o.Fajr || 0),
-  Soloppgang: base.Soloppgang,
-  Dhuhr: addMinutes(base.Dhuhr, o.Dhuhr || 0),
-  Asr: addMinutes(base.Asr, o.Asr || 0),
-  Maghrib: addMinutes(base.Maghrib, o.Maghrib || 0),
-  Isha: addMinutes(base.Isha, o.Isha || 0)
-};
-return ensureDates(obj, when);
-}
-
-
-async function fetchPrayerTimesSmart(lat, lng, when = "today", countryCode = "") {
-  const inNorway = (countryCode || "").toUpperCase() === "NO";
-  if (inNorway) {
-    try { return await fetchBonnetid(lat, lng, when); }
-    catch { return await fetchAladhanCustomNO(lat, lng, when); }
-  }
-  return await fetchAladhan(lat, lng, when);
-}
-
 
 // ---------- Countdown ----------
 const ORDER = ["Fajr","Soloppgang","Dhuhr","Asr","Maghrib","Isha"];
@@ -518,16 +420,28 @@ export default function App(){
   async function refreshTimes(lat, lng) {
     try {
       setApiError("");
-      const today = await fetchPrayerTimesSmart(lat, lng, "today", countryCode);
-      const info = nextPrayerInfo(today);
+      const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+      // Hent dagens tider via unified fetchTimings (Bonnetid→Aladhan NO tuned i Norge, Aladhan global ellers)
+      const todayStr = await fetchTimings(lat, lng, tz, countryCode, "today");
+      const today = ensureDates(todayStr);
+      setTimes(today);
+
+      // Beregn nedtelling som før
+      let info = nextPrayerInfo(today);
+      setCountdown(info);
+
+      // Hvis alle dagens bønner er passert -> hent Fajr for i morgen
       if (info.tomorrow) {
-        const tomorrow = await fetchPrayerTimesSmart(lat, lng, "tomorrow", countryCode);
+        const tomorrowStr = await fetchTimings(lat, lng, tz, countryCode, "tomorrow");
+        const tomorrow = ensureDates(tomorrowStr);
         const fajr = tomorrow.Fajr;
-        setTimes(today);
-        setCountdown({ name: "Fajr", at: fajr, diffText: diffToText(fajr.getTime() - Date.now()), tomorrow: true });
-      } else {
-        setTimes(today);
-        setCountdown(info);
+        setCountdown({
+          name: "Fajr",
+          at: fajr,
+          diffText: diffToText(fajr.getTime() - Date.now()),
+          tomorrow: true
+        });
       }
     } catch (e) {
       console.error(e);
@@ -596,7 +510,7 @@ export default function App(){
 
         {/* Compass + Map + Times */}
         <div style={{display:"grid", gap:12, marginTop:12}}>
-          {/* Qibla retning (RESTORED) */}
+          {/* Qibla retning */}
           <section className="card">
             <div style={{display:"flex", justifyContent:"space-between", alignItems:"center"}}>
               <h3>Qibla retning</h3>
@@ -620,7 +534,7 @@ export default function App(){
 
           {/* Bønnetider */}
           <section className="card">
-            <h3>Bønnetider (Maliki)</h3>
+            <h3>Bønnetider</h3>
             {apiError && <div className="error" style={{margin:"8px 0"}}>{apiError}</div>}
             {times ? (
               <>
@@ -672,19 +586,3 @@ export default function App(){
     </div>
   );
 }
-
-
-// --- Added: Bonnetid helper + smart switch ---
-
-async function fetchBonnetid(lat, lng, when = "today") {
-  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-  const url = `/api/bonnetid-today?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lng)}&tz=${encodeURIComponent(tz)}&when=${encodeURIComponent(when)}`;
-  const res = await fetch(url);
-  if (!res.ok) throw new Error("Bonnetid feilet");
-  const json = await res.json();
-  const raw = json.timings || json.data?.timings || {};
-return ensureDates(raw, when);
-}
-
-
-// Render <PushToggle/> i passende seksjon i UI dersom du vil ha bryter.
