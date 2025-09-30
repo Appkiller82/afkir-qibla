@@ -1,61 +1,61 @@
-/**
- * Netlify Function: aladhan-today
- * Query: ?lat=..&lon=..&tz=..&when=today|tomorrow&cc=NO|..
- * Env: ALADHAN_API_URL, ALADHAN_METHOD, ALADHAN_METHOD_NORWAY, ALADHAN_SCHOOL_NORWAY,
- *      ALADHAN_LAT_ADJ_NORWAY, ALADHAN_FAJR_ANGLE, ALADHAN_ISHA_ANGLE
- */
-export default async (request: Request) => {
+
+// Netlify Node Function (exports.handler) for Aladhan
+exports.handler = async (event) => {
   try {
-    const url = new URL(request.url);
-    const lat = url.searchParams.get("lat");
-    const lon = url.searchParams.get("lon");
-    const tz = url.searchParams.get("tz") || "UTC";
-    const when = url.searchParams.get("when") || "today";
-    const cc = (url.searchParams.get("cc") || "").toUpperCase();
+    const qs = event.queryStringParameters || {};
+    const lat = qs.lat;
+    const lon = qs.lon;
+    const tz = qs.tz || "UTC";
+    const when = qs.when || "today";
+    const cc = (qs.cc || "").toUpperCase();
 
     if (!lat || !lon) {
-      return new Response(JSON.stringify({ error: "Missing lat/lon" }), { status: 400 });
+      return json(400, { error: "Missing lat/lon" });
     }
 
-    const API = (process.env.ALADHAN_API_URL || "https://api.aladhan.com").replace(/\/+$/,"");
+    const API = (process.env.ALADHAN_API_URL || "https://api.aladhan.com").replace(/\/+$/, "");
     const base = `${API}/v1/timings/${encodeURIComponent(when)}`;
 
-    const params: Record<string, string> = {
+    const params = new URLSearchParams({
       latitude: String(lat),
       longitude: String(lon),
       timezonestring: tz,
-    };
+    });
 
     if (cc === "NO") {
-      if (process.env.ALADHAN_METHOD_NORWAY) params.method = process.env.ALADHAN_METHOD_NORWAY;
-      if (process.env.ALADHAN_SCHOOL_NORWAY) params.school = process.env.ALADHAN_SCHOOL_NORWAY;
-      if (process.env.ALADHAN_LAT_ADJ_NORWAY) params.latitudeAdjustmentMethod = process.env.ALADHAN_LAT_ADJ_NORWAY;
-      if (process.env.ALADHAN_FAJR_ANGLE) params.fajr = process.env.ALADHAN_FAJR_ANGLE;
-      if (process.env.ALADHAN_ISHA_ANGLE) params.isha = process.env.ALADHAN_ISHA_ANGLE;
+      if (process.env.ALADHAN_METHOD_NORWAY) params.set("method", process.env.ALADHAN_METHOD_NORWAY);
+      if (process.env.ALADHAN_SCHOOL_NORWAY) params.set("school", process.env.ALADHAN_SCHOOL_NORWAY);
+      if (process.env.ALADHAN_LAT_ADJ_NORWAY) params.set("latitudeAdjustmentMethod", process.env.ALADHAN_LAT_ADJ_NORWAY);
+      if (process.env.ALADHAN_FAJR_ANGLE) params.set("fajr", process.env.ALADHAN_FAJR_ANGLE);
+      if (process.env.ALADHAN_ISHA_ANGLE) params.set("isha", process.env.ALADHAN_ISHA_ANGLE);
     } else {
-      if (process.env.ALADHAN_METHOD) params.method = process.env.ALADHAN_METHOD;
+      if (process.env.ALADHAN_METHOD) params.set("method", process.env.ALADHAN_METHOD);
     }
 
-    const finalUrl = base + "?" + new URLSearchParams(params).toString();
+    const finalUrl = `${base}?${params.toString()}`;
     const res = await fetch(finalUrl);
     if (!res.ok) {
-      return new Response(JSON.stringify({ error: `Aladhan ${res.status}` }), { status: 502 });
+      return json(502, { error: `Aladhan ${res.status}`, url: finalUrl });
     }
     const j = await res.json();
-
     const timings = j?.data?.timings || j?.data || {};
     const normalized = normalizeTimings(timings);
-
-    return new Response(JSON.stringify({ provider: "aladhan", url: finalUrl, timings: normalized }), {
-      headers: { "content-type": "application/json" },
-    });
-  } catch (err: any) {
-    return new Response(JSON.stringify({ error: String(err?.message || err) }), { status: 500 });
+    return json(200, { provider: "aladhan", url: finalUrl, timings: normalized });
+  } catch (err) {
+    return json(500, { error: String(err && err.message ? err.message : err) });
   }
 };
 
-function pad2(n: number) { return (n < 10 ? "0" : "") + n; }
-function toHHMM(v: any) {
+function json(statusCode, body) {
+  return {
+    statusCode,
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  };
+}
+
+function pad2(n) { return (n < 10 ? "0" : "") + n; }
+function toHHMM(v) {
   if (!v) return v;
   const s = String(v).trim();
   if (/^\d{1,2}:\d{2}$/.test(s)) {
@@ -66,7 +66,7 @@ function toHHMM(v: any) {
   if (m) return m[1];
   return s;
 }
-function normalizeTimings(t: any) {
+function normalizeTimings(t) {
   return {
     Fajr: toHHMM(t.Fajr || t.fajr),
     Sunrise: toHHMM(t.Sunrise || t.sunrise),
