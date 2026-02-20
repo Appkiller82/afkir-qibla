@@ -1,8 +1,11 @@
 import type { Handler } from "@netlify/functions";
 
 export const handler: Handler = async (event) => {
-  try:
-    const { lat, lon, tz, date = "today" } = event.queryStringParameters || {};
+  try {
+    const qs = event.queryStringParameters || {};
+    // Frontend uses "when"; keep "date" for backwards compatibility.
+    const { lat, lon, tz } = qs as any;
+    const date = (qs as any).when || (qs as any).date || "today";
     if (!lat || !lon || !tz) {
       return { statusCode: 400, body: "Missing lat/lon/tz" };
     }
@@ -29,10 +32,19 @@ export const handler: Handler = async (event) => {
       return { statusCode: upstream.status, body: text || "Upstream error" };
     }
 
+    // Normalize to { timings: {...} }
+    let timings: any = null;
+    try {
+      const j = JSON.parse(text);
+      timings = j?.timings || j?.data?.timings || j?.result?.timings || null;
+    } catch {
+      timings = null;
+    }
+
     return {
       statusCode: 200,
       headers: { "Content-Type": "application/json" },
-      body: text,
+      body: JSON.stringify({ timings, source: "bonnetid" }),
     };
   } catch (e: any) {
     return { statusCode: 500, body: e?.message || "Server error" };
