@@ -16,14 +16,14 @@ export async function fetchTimings(
   if (cc === "NO") {
     // Try Bonnetid first
     try {
-      const u = `/api/bonnetid-today?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}&tz=${encodeURIComponent(tz)}&when=${encodeURIComponent(when)}`;
+      const u = `/api/bonnetid-today?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}&tz=${encodeURIComponent(tz)}&date=${encodeURIComponent(when)}`;
       const r = await fetch(u);
       if (!r.ok) throw new Error(`Bonnetid ${r.status}`);
       const j = await r.json();
       return ensure(j.timings);
     } catch (err) {
       // Fallback: Aladhan tuned for Norway
-      const u2 = `/api/aladhan-today?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}&tz=${encodeURIComponent(tz)}&when=${encodeURIComponent(when)}&cc=NO`;
+      const u2 = `/api/aladhan-today?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}&tz=${encodeURIComponent(tz)}&date=${encodeURIComponent(when)}&cc=NO`;
       const r2 = await fetch(u2);
       if (!r2.ok) throw new Error(`Aladhan fallback ${r2.status}`);
       const j2 = await r2.json();
@@ -32,7 +32,7 @@ export async function fetchTimings(
   }
 
   // Rest of world: Aladhan global
-  const u3 = `/api/aladhan-today?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}&tz=${encodeURIComponent(tz)}&when=${encodeURIComponent(when)}`;
+  const u3 = `/api/aladhan-today?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}&tz=${encodeURIComponent(tz)}&date=${encodeURIComponent(when)}`;
   const r3 = await fetch(u3);
   if (!r3.ok) throw new Error(`Aladhan ${r3.status}`);
   const j3 = await r3.json();

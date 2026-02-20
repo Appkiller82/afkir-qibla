@@ -28,3 +28,9 @@
   to = "/.netlify/functions/aladhan-today"
   status = 200
   force = true
+
+[[redirects]]
+  from = "/api/prayer-calendar"
+  to = "/.netlify/functions/prayer-calendar"
+  status = 200
+  force = true
