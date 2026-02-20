@@ -16,6 +16,7 @@ import { fetchTimings } from "./prayer";
 // ---------- Intl ----------
 const NB_TIME = new Intl.DateTimeFormat("nb-NO", { hour: "2-digit", minute: "2-digit" });
 const NB_DAY  = new Intl.DateTimeFormat("nb-NO", { weekday: "long", day: "2-digit", month: "long" });
+const NB_TEMP = new Intl.NumberFormat("nb-NO", { maximumFractionDigits: 0 });
 
 function useLocalStorage(key, init) {
   const [v, setV] = useState(() => {
@@ -172,6 +173,124 @@ function nextPrayerInfo(times) {
     }
   }
   return { name: null, at: null, diffText: null, tomorrow: true };
+}
+
+const WEATHER_CODES = {
+  0: "Klart",
+  1: "For det meste klart",
+  2: "Delvis skyet",
+  3: "Overskyet",
+  45: "Tåke",
+  48: "Rimtåke",
+  51: "Lett yr",
+  53: "Yr",
+  55: "Tett yr",
+  61: "Lett regn",
+  63: "Regn",
+  65: "Kraftig regn",
+  71: "Lett snø",
+  73: "Snø",
+  75: "Kraftig snø",
+  80: "Regnbyger",
+  81: "Regnbyger",
+  82: "Kraftige byger",
+  95: "Tordenvær",
+};
+
+function weatherCodeToText(code) {
+  return WEATHER_CODES[code] || "Oppdatert vær";
+}
+
+async function fetchWeather(lat, lng) {
+  const url = new URL("https://api.open-meteo.com/v1/forecast");
+  url.searchParams.set("latitude", String(lat));
+  url.searchParams.set("longitude", String(lng));
+  url.searchParams.set("timezone", "auto");
+  url.searchParams.set("current", "temperature_2m,apparent_temperature,wind_speed_10m,weather_code");
+  url.searchParams.set("daily", "temperature_2m_max,temperature_2m_min,sunrise,sunset");
+  const res = await fetch(url.toString());
+  if (!res.ok) throw new Error("Weather API failed");
+  const data = await res.json();
+  return {
+    currentTemp: data?.current?.temperature_2m,
+    feelsLike: data?.current?.apparent_temperature,
+    wind: data?.current?.wind_speed_10m,
+    code: data?.current?.weather_code,
+    min: data?.daily?.temperature_2m_min?.[0],
+    max: data?.daily?.temperature_2m_max?.[0],
+    sunrise: data?.daily?.sunrise?.[0] ? new Date(data.daily.sunrise[0]) : null,
+    sunset: data?.daily?.sunset?.[0] ? new Date(data.daily.sunset[0]) : null,
+  };
+}
+
+
+async function fetchMonthlyCalendar(lat, lng, month, year) {
+  const url = new URL("https://api.aladhan.com/v1/calendar");
+  url.searchParams.set("latitude", String(lat));
+  url.searchParams.set("longitude", String(lng));
+  url.searchParams.set("method", "3");
+  url.searchParams.set("month", String(month));
+  url.searchParams.set("year", String(year));
+  const res = await fetch(url.toString());
+  if (!res.ok) throw new Error("Calendar API failed");
+  const body = await res.json();
+  return (body?.data || []).map((d) => ({
+    date: d?.date?.gregorian?.date,
+    weekday: d?.date?.gregorian?.weekday?.en,
+    timings: {
+      Fajr: String(d?.timings?.Fajr || "").slice(0,5),
+      Dhuhr: String(d?.timings?.Dhuhr || "").slice(0,5),
+      Asr: String(d?.timings?.Asr || "").slice(0,5),
+      Maghrib: String(d?.timings?.Maghrib || "").slice(0,5),
+      Isha: String(d?.timings?.Isha || "").slice(0,5),
+    },
+  }));
+}
+
+function saveCache(key, value) {
+  try { localStorage.setItem(key, JSON.stringify({ value, ts: Date.now() })); } catch {}
+}
+
+function loadCache(key) {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
+    const obj = JSON.parse(raw);
+    return obj?.value ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function exportCalendarIcs(city, days) {
+  if (!days?.length) return;
+  const pad = (n) => String(n).padStart(2, "0");
+  const dt = (dateStr, time) => {
+    const [d,m,y] = dateStr.split("-").map(Number);
+    const [hh,mm] = time.split(":").map(Number);
+    return `${y}${pad(m)}${pad(d)}T${pad(hh)}${pad(mm)}00`;
+  };
+  const lines = ["BEGIN:VCALENDAR","VERSION:2.0","PRODID:-//Afkir Qibla//NO"];
+  days.slice(0, 10).forEach((day) => {
+    ["Fajr","Dhuhr","Asr","Maghrib","Isha"].forEach((name) => {
+      const time = day.timings[name];
+      if (!time) return;
+      lines.push("BEGIN:VEVENT");
+      lines.push(`UID:${day.date.replaceAll('-','')}-${name.toLowerCase()}@afkir`);
+      lines.push(`DTSTAMP:${dt(day.date, "00:00")}`);
+      lines.push(`DTSTART:${dt(day.date, time)}`);
+      lines.push(`SUMMARY:${name} (${city || "Afkir"})`);
+      lines.push("END:VEVENT");
+    });
+  });
+  lines.push("END:VCALENDAR");
+  const blob = new Blob([lines.join("\r\n")], { type: "text/calendar;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "afkir-bonnetider.ics";
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 // ---------- Compass (restored) ----------
@@ -350,7 +469,7 @@ export default function App(){
   const { coords, loading, permission, requestOnce, startWatch } = useGeolocationWatch(5);
   const [city, setCity]   = useLocalStorage("aq_city", "");
   const [countryCode, setCountryCode] = useLocalStorage("aq_country", "");
-  const [times, setTimes] = useState(null);
+  const [times, setTimes] = useState(() => { const c = loadCache("aq_times_cache"); return c ? ensureDates(c) : null; });
   const [apiError, setApiError] = useState("");
   const [bgList, setBgList] = useState(CANDIDATE_BACKGROUNDS);
   const [bgIdx, setBgIdx] = useState(0);
@@ -358,6 +477,12 @@ export default function App(){
   const [remindersOn, setRemindersOn] = useLocalStorage("aq_reminders_on", false);
   const [showMap, setShowMap] = useState(false);
   const [showModal, setShowModal] = useState(false);
+  const [quranMode, setQuranMode] = useLocalStorage("aq_quran_mode", false);
+  const [weather, setWeather] = useState(() => loadCache("aq_weather_cache"));
+  const [weatherError, setWeatherError] = useState("");
+  const [calendarRows, setCalendarRows] = useState([]);
+  const [calendarError, setCalendarError] = useState("");
+  const [offline, setOffline] = useState(typeof navigator !== "undefined" ? !navigator.onLine : false);
   const audioRef = useRef(null);
   const timersRef = useRef([]);
 
@@ -371,6 +496,17 @@ export default function App(){
   useEffect(() => { setShowModal(!coords && (permission === "prompt" || permission === "denied")) }, [coords, permission]);
   const allowLocation = () => { requestOnce(); startWatch(); setShowModal(false); };
 
+  useEffect(() => {
+    const onOnline = () => setOffline(false);
+    const onOffline = () => setOffline(true);
+    window.addEventListener("online", onOnline);
+    window.addEventListener("offline", onOffline);
+    return () => {
+      window.removeEventListener("online", onOnline);
+      window.removeEventListener("offline", onOffline);
+    };
+  }, []);
+
   // midnight refresh + smooth countdown
   useEffect(() => {
     let last = new Date().toDateString();
@@ -381,7 +517,7 @@ export default function App(){
         if (coords) await refreshTimes(coords.latitude, coords.longitude);
       }
     }, 60000);
-    const idTick = setInterval(() => { setCountdown(nextPrayerInfo(times)); }, 500);
+    const idTick = setInterval(() => { setCountdown(nextPrayerInfo(times)); }, 1000);
     return () => { clearInterval(idDay); clearInterval(idTick) };
   }, [coords?.latitude, coords?.longitude, times?.Fajr?.getTime?.()]);
 
@@ -426,6 +562,7 @@ export default function App(){
       const todayStr = await fetchTimings(lat, lng, tz, countryCode, "today");
       const today = ensureDates(todayStr);
       setTimes(today);
+      saveCache("aq_times_cache", todayStr);
 
       // Beregn nedtelling som før
       let info = nextPrayerInfo(today);
@@ -445,14 +582,51 @@ export default function App(){
       }
     } catch (e) {
       console.error(e);
-      setApiError("Klarte ikke hente bønnetider (API).");
-      setTimes(null);
+      const cached = loadCache("aq_times_cache");
+      if (cached) {
+        setApiError("Viser sist lagrede bønnetider (offline/fallback).");
+        setTimes(ensureDates(cached));
+      } else {
+        setApiError("Klarte ikke hente bønnetider (API).");
+        setTimes(null);
+      }
     }
   }
 
   // initial fetch and start watch
   const onUseLocation = () => { requestOnce(); startWatch(); };
   useEffect(() => { if (!coords) return; refreshTimes(coords.latitude, coords.longitude) }, [coords?.latitude, coords?.longitude, countryCode]);
+
+  useEffect(() => {
+    if (!coords) return;
+    let active = true;
+    setWeatherError("");
+    fetchWeather(coords.latitude, coords.longitude)
+      .then((w) => {
+        if (!active) return;
+        setWeather(w);
+        saveCache("aq_weather_cache", w);
+      })
+      .catch(() => {
+        if (!active) return;
+        const cached = loadCache("aq_weather_cache");
+        setWeather(cached || null);
+        setWeatherError(cached ? "Viser sist lagrede værdata." : "Kunne ikke hente værdata akkurat nå.");
+      });
+    return () => { active = false; };
+  }, [coords?.latitude, coords?.longitude]);
+
+  useEffect(() => {
+    if (!coords) return;
+    setCalendarError("");
+    const now = new Date();
+    fetchMonthlyCalendar(coords.latitude, coords.longitude, now.getMonth() + 1, now.getFullYear())
+      .then((rows) => setCalendarRows(rows))
+      .catch(() => {
+        setCalendarRows([]);
+        setCalendarError("Klarte ikke hente månedskalender nå.");
+      });
+  }, [coords?.latitude, coords?.longitude]);
 
   // Keep push metadata up to date automatically (always-on across city changes)
   useEffect(() => {
@@ -467,32 +641,46 @@ export default function App(){
   }, [coords?.latitude, coords?.longitude, city, countryCode]);
 
   return (
-    <div style={{minHeight:"100dvh", color:"var(--fg)", backgroundSize:"cover", backgroundPosition:"center", backgroundImage:`linear-gradient(rgba(4,6,12,.65), rgba(4,6,12,.65)), url(${bg})`, transition:"background-image .8s ease"}}>
+    <div style={{minHeight:"100dvh", color:"var(--fg)", backgroundSize:"cover", backgroundPosition:"center", backgroundImage:`linear-gradient(${quranMode ? "rgba(3, 12, 16, .78), rgba(3, 12, 16, .78)" : "rgba(4,6,12,.65), rgba(4,6,12,.65)"}), url(${bg})`, transition:"background-image .8s ease"}}>
       <style>{`
-        :root { --fg:#e5e7eb; --muted:#cbd5e1; --card:rgba(15,23,42,.78); --border:#334155; --btn:#0b1220; --accent:#16a34a; }
-        :root[data-theme="light"] { --fg:#0f172a; --muted:#475569; --card:rgba(255,255,255,.93); --border:#d1d5db; --btn:#f8fafc; --accent:#16a34a; }
-        .container { padding: calc(env(safe-area-inset-top) + 14px) 16px 16px; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
-        .card { border:1px solid var(--border); border-radius: 16px; padding: 14px; background: var(--card); backdrop-filter: blur(10px); }
-        .btn { padding:10px 14px; border-radius:12px; border:1px solid var(--border); background: var(--btn); color: var(--fg); cursor:pointer; }
+        :root { --fg:#e5e7eb; --muted:#cbd5e1; --card:rgba(15,23,42,.78); --border:#334155; --btn:#0b1220; --accent:#16a34a; --accent-secondary:#38bdf8; }
+        :root[data-theme="light"] { --fg:#0f172a; --muted:#475569; --card:rgba(255,255,255,.93); --border:#d1d5db; --btn:#f8fafc; --accent:#16a34a; --accent-secondary:#0284c7; }
+        .container { max-width: 1060px; margin: 0 auto; padding: calc(env(safe-area-inset-top) + 18px) 16px 24px; font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+        .card { border:1px solid var(--border); border-radius: 18px; padding: 16px; background: var(--card); backdrop-filter: blur(14px); box-shadow: 0 12px 28px rgba(2, 6, 23, 0.22); }
+        .hero { background: linear-gradient(135deg, rgba(22,163,74,.22), rgba(56,189,248,.2)); }
+        .btn { padding:10px 14px; border-radius:12px; border:1px solid var(--border); background: var(--btn); color: var(--fg); cursor:pointer; font-weight: 600; }
         .btn:hover { opacity:.95 }
         .btn-green { background: var(--accent); border-color: var(--accent); color: white; }
         .hint { color: var(--muted); font-size: 13px; }
         .row { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
-        h1 { margin:0 0 6px 0; font-size: 28px; line-height:1.15 }
+        h1 { margin:0 0 6px 0; font-size: clamp(32px, 5vw, 44px); line-height:1.1 }
+        h3 { margin: 0; font-size: 18px; }
         ul.times { list-style:none; padding:0; margin:0 }
         .time-item { display:flex; justify-content:space-between; padding:8px 0; border-bottom:1px dashed var(--border); font-size:16px }
         .error { color:#fecaca; background:rgba(239,68,68,.12); border:1px solid rgba(239,68,68,.35); padding:10px; border-radius:12px; }
+        .hero-grid { display:grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); margin-top: 16px; }
+        .hero-stat { border: 1px solid var(--border); border-radius: 14px; padding: 12px; background: rgba(2, 6, 23, .25); }
+        .kpi { font-size: 24px; font-weight: 700; }
+        .section-grid { display:grid; gap:12px; margin-top:12px; grid-template-columns: 1.2fr .8fr; }
+        @media (max-width: 920px){ .section-grid { grid-template-columns: 1fr; } }
       `}</style>
 
       <div className="container">
-        <header style={{marginBottom:10, textAlign:"center"}}>
+        <header className="card hero" style={{marginBottom:12, textAlign:"center"}}>
           <h1>Afkir Qibla</h1>
+          <div className="hint">Din profesjonelle Qibla-assistent med bønnetider, vær og smart varsling.</div>
           <div style={{margin:"6px 0 2px"}}>
             <button className="btn" onClick={()=>{ const d = document.documentElement; d.dataset.theme = (d.dataset.theme==="light"?"dark":"light") }}>
               Tema
             </button>
           </div>
           <div className="hint">{NB_DAY.format(new Date())}</div>
+
+          <div className="hero-grid">
+            <div className="hero-stat"><div className="hint">Sted</div><div className="kpi">{city || "Ukjent"}</div></div>
+            <div className="hero-stat"><div className="hint">Qibla</div><div className="kpi">{qiblaDeg != null ? `${Math.round(qiblaDeg)}°` : "--"}</div></div>
+            <div className="hero-stat"><div className="hint">Neste bønn</div><div className="kpi">{countdown?.name || "--"}</div></div>
+          </div>
         </header>
 
         {/* Location */}
@@ -500,6 +688,7 @@ export default function App(){
           <h3>Plassering</h3>
           <div className="row" style={{marginTop:8}}>
             <button className="btn" onClick={onUseLocation} disabled={loading}>{loading ? "Henter…" : "Bruk stedstjenester"}</button>
+            <span className="hint" style={{color: offline ? "#fbbf24" : "var(--muted)"}}>{offline ? "Offline-modus aktiv" : "Online"}</span>
             <span className="hint">
               {coords
                 ? ((city ? city + " • " : "") + coords.latitude.toFixed(4) + ", " + coords.longitude.toFixed(4))
@@ -509,7 +698,7 @@ export default function App(){
         </section>
 
         {/* Compass + Map + Times */}
-        <div style={{display:"grid", gap:12, marginTop:12}}>
+        <div className="section-grid">
           {/* Qibla retning */}
           <section className="card">
             <div style={{display:"flex", justifyContent:"space-between", alignItems:"center"}}>
@@ -531,6 +720,75 @@ export default function App(){
               </>
             ) : <div className="hint">Velg/bekreft posisjon for å vise Qibla og kart.</div>}
           </section>
+
+          <div style={{display:"grid", gap:12}}>
+            <section className="card">
+              <h3>Været nå</h3>
+              {weatherError && <div className="error" style={{marginTop:8}}>{weatherError}</div>}
+              {!weather && !weatherError && <div className="hint" style={{marginTop:8}}>Henter værdata…</div>}
+              {weather && (
+                <>
+                  <div style={{display:"flex", justifyContent:"space-between", marginTop:10, alignItems:"baseline"}}>
+                    <div>
+                      <div className="kpi">{NB_TEMP.format(weather.currentTemp)}°C</div>
+                      <div className="hint">{weatherCodeToText(weather.code)}</div>
+                    </div>
+                    <div className="hint">Føles som {NB_TEMP.format(weather.feelsLike)}°C</div>
+                  </div>
+                  <div className="row" style={{marginTop:10, justifyContent:"space-between"}}>
+                    <span className="hint">Min/maks: {NB_TEMP.format(weather.min)}° / {NB_TEMP.format(weather.max)}°</span>
+                    <span className="hint">Vind: {NB_TEMP.format(weather.wind)} km/t</span>
+                  </div>
+                  <div className="row" style={{marginTop:6, justifyContent:"space-between"}}>
+                    <span className="hint">Soloppgang: {weather.sunrise ? NB_TIME.format(weather.sunrise) : "--"}</span>
+                    <span className="hint">Solnedgang: {weather.sunset ? NB_TIME.format(weather.sunset) : "--"}</span>
+                  </div>
+                </>
+              )}
+            </section>
+
+            <section className="card">
+              <div style={{display:"flex", justifyContent:"space-between", alignItems:"center"}}>
+                <h3>Månedskalender</h3>
+                <button className="btn" onClick={() => exportCalendarIcs(city, calendarRows)} disabled={!calendarRows.length}>Eksporter .ics</button>
+              </div>
+              {calendarError && <div className="error" style={{marginTop:8}}>{calendarError}</div>}
+              {!calendarRows.length && !calendarError && <div className="hint" style={{marginTop:8}}>Henter månedens bønnetider…</div>}
+              {!!calendarRows.length && (
+                <div style={{maxHeight: 240, overflow: "auto", marginTop: 10}}>
+                  <table style={{width:"100%", borderCollapse:"collapse", fontSize:13}}>
+                    <thead>
+                      <tr style={{textAlign:"left", borderBottom:"1px solid var(--border)"}}>
+                        <th>Dato</th><th>Fajr</th><th>Dhuhr</th><th>Asr</th><th>Maghrib</th><th>Isha</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {calendarRows.slice(new Date().getDate()-1, new Date().getDate()+6).map((day) => (
+                        <tr key={day.date} style={{borderBottom:"1px dashed var(--border)"}}>
+                          <td>{day.date}</td><td>{day.timings.Fajr}</td><td>{day.timings.Dhuhr}</td><td>{day.timings.Asr}</td><td>{day.timings.Maghrib}</td><td>{day.timings.Isha}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </section>
+
+            <section className="card">
+              <div style={{display:"flex", justifyContent:"space-between", alignItems:"center"}}>
+                <h3>Quran & Dhikr</h3>
+                <button className={quranMode ? "btn btn-green" : "btn"} onClick={() => setQuranMode(v => !v)}>{quranMode ? "På" : "Av"}</button>
+              </div>
+              <div className="hint" style={{marginTop:8}}>Stillere modus for moské/ramadan med korte påminnelser.</div>
+              {quranMode && (
+                <ul style={{margin:"10px 0 0", paddingLeft:18}}>
+                  <li className="hint">"Hasbunallahu wa ni'mal wakeel" × 7</li>
+                  <li className="hint">"Astaghfirullah" × 33</li>
+                  <li className="hint">Surah Al-Ikhlas, Al-Falaq, An-Nas før søvn.</li>
+                </ul>
+              )}
+            </section>
+          </div>
 
           {/* Bønnetider */}
           <section className="card">
