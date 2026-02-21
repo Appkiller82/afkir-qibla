@@ -241,7 +241,20 @@ async function fetchWeather(lat, lng) {
 }
 
 
-async function fetchMonthlyCalendar(lat, lng, month, year, signal) {
+async function fetchMonthlyCalendar(lat, lng, month, year, countryCode, tz, signal) {
+  const cc = (countryCode || "").toUpperCase();
+  if (cc === "NO") {
+    const url = new URL("/api/bonnetid-month", window.location.origin);
+    url.searchParams.set("lat", String(lat));
+    url.searchParams.set("lon", String(lng));
+    url.searchParams.set("tz", String(tz));
+    url.searchParams.set("month", String(month));
+    url.searchParams.set("year", String(year));
+    const res = await fetch(url.toString(), { signal });
+    if (!res.ok) throw new Error("Bonnetid month API failed");
+    const body = await res.json();
+    return body?.rows || [];
+  }
 
   const url = new URL("https://api.aladhan.com/v1/calendar");
   url.searchParams.set("latitude", String(lat));
@@ -686,7 +699,7 @@ export default function App(){
     setCalendarError("");
     const now = new Date();
     const controller = new AbortController();
-    fetchMonthlyCalendar(activeCoords.latitude, activeCoords.longitude, now.getMonth() + 1, now.getFullYear(), controller.signal)
+    fetchMonthlyCalendar(activeCoords.latitude, activeCoords.longitude, now.getMonth() + 1, now.getFullYear(), effectiveCountryCode, timeZone, controller.signal)
       .then((rows) => {
         if (!active) return;
         setCalendarRows(rows);
@@ -760,10 +773,14 @@ export default function App(){
             </button>
           </div>
 
-          <div className="hero-grid" style={{display:"grid", gridTemplateColumns:"repeat(3, minmax(0,1fr))", gap:10}}>
-            <div className="hero-stat"><div className="hint">Sted</div><div className="kpi">{city || "Ukjent"}</div></div>
-            <div className="hero-stat"><div className="hint">Qibla</div><div className="kpi">{qiblaDeg != null ? `${Math.round(qiblaDeg)}°` : "--"}</div></div>
-            <div className="hero-stat"><div className="hint">Neste bønn</div><div className="kpi">{countdown?.name || "--"}</div></div>
+          <div className="hero-grid" style={{display:"grid", gridTemplateColumns:"1fr", gap:10}}>
+            <div className="hero-stat"><div className="hint">Sted</div><div className="kpi" style={{fontSize:34, lineHeight:1.1, overflowWrap:"anywhere"}}>{city || "Ukjent"}</div></div>
+            <div className="hero-stat"><div className="hint">Kibla</div><div className="kpi" style={{fontSize:34, lineHeight:1.1}}>{qiblaDeg != null ? `${Math.round(qiblaDeg)}°` : "--"}</div></div>
+            <div className="hero-stat">
+              <div className="hint">Neste bønn</div>
+              <div className="kpi">{countdown?.name || "--"}</div>
+              <div className="hint" style={{marginTop:4}}>{countdown?.diffText ? `Om ${countdown.diffText}` : "Venter på oppdatering"}</div>
+            </div>
           </div>
         </header>
 
