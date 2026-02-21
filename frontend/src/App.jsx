@@ -465,6 +465,8 @@ async function validateBackgrounds(list) {
 }
 
 // ---------- App ----------
+const DEFAULT_COORDS = { latitude: 59.9139, longitude: 10.7522 }; // Oslo fallback
+
 export default function App(){
   const { coords, loading, permission, requestOnce, startWatch } = useGeolocationWatch(5);
   const [city, setCity]   = useLocalStorage("aq_city", "");
@@ -478,6 +480,8 @@ export default function App(){
   const [showMap, setShowMap] = useState(false);
   const [showModal, setShowModal] = useState(false);
   const [quranMode, setQuranMode] = useLocalStorage("aq_quran_mode", false);
+  const [theme, setTheme] = useLocalStorage("aq_theme", "light");
+  const [lastCoords, setLastCoords] = useLocalStorage("aq_last_coords", null);
   const [weather, setWeather] = useState(() => loadCache("aq_weather_cache"));
   const [weatherError, setWeatherError] = useState("");
   const [calendarRows, setCalendarRows] = useState([]);
@@ -491,6 +495,15 @@ export default function App(){
   // Rotate backgrounds
   useEffect(() => { const id = setInterval(()=> setBgIdx(i => (i+1)%bgList.length), 25000); return () => clearInterval(id) }, [bgList.length]);
   const bg = bgList[bgIdx % bgList.length];
+  const activeCoords = coords || lastCoords || DEFAULT_COORDS;
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme === "dark" ? "dark" : "light";
+  }, [theme]);
+
+  useEffect(() => {
+    if (coords?.latitude && coords?.longitude) setLastCoords(coords);
+  }, [coords?.latitude, coords?.longitude]);
 
   // Show modal if permission prompt/denied and no coords
   useEffect(() => { setShowModal(!coords && (permission === "prompt" || permission === "denied")) }, [coords, permission]);
@@ -514,21 +527,23 @@ export default function App(){
       const nowStr = new Date().toDateString();
       if (nowStr !== last) {
         last = nowStr;
-        if (coords) await refreshTimes(coords.latitude, coords.longitude);
+        if (activeCoords) await refreshTimes(activeCoords.latitude, activeCoords.longitude);
       }
     }, 60000);
     const idTick = setInterval(() => { setCountdown(nextPrayerInfo(times)); }, 1000);
     return () => { clearInterval(idDay); clearInterval(idTick) };
-  }, [coords?.latitude, coords?.longitude, times?.Fajr?.getTime?.()]);
+  }, [activeCoords?.latitude, activeCoords?.longitude, times?.Fajr?.getTime?.(), countryCode]);
 
   // reverse geocode on coords change
   useEffect(() => {
-    if (!coords) return;
-    reverseGeocode(coords.latitude, coords.longitude).then(r => {
+    if (!activeCoords) return;
+    if (!coords && !city) setCity("Oslo");
+    if (!coords && !countryCode) setCountryCode("NO");
+    reverseGeocode(activeCoords.latitude, activeCoords.longitude).then(r => {
       if (r?.name) setCity(r.name);
       if (r?.countryCode) setCountryCode(r.countryCode);
     });
-  }, [coords?.latitude, coords?.longitude]);
+  }, [activeCoords?.latitude, activeCoords?.longitude]);
 
   // schedule reminders (tab-only)
   useEffect(() => {
@@ -551,7 +566,7 @@ export default function App(){
     return () => { timersRef.current.forEach(id => clearTimeout(id)); timersRef.current = [] };
   }, [remindersOn, times?.Fajr?.getTime?.()]);
 
-  const qiblaDeg = useMemo(() => coords ? qiblaBearing(coords.latitude, coords.longitude) : null, [coords?.latitude, coords?.longitude]);
+  const qiblaDeg = useMemo(() => activeCoords ? qiblaBearing(activeCoords.latitude, activeCoords.longitude) : null, [activeCoords?.latitude, activeCoords?.longitude]);
 
   async function refreshTimes(lat, lng) {
     try {
@@ -595,13 +610,13 @@ export default function App(){
 
   // initial fetch and start watch
   const onUseLocation = () => { requestOnce(); startWatch(); };
-  useEffect(() => { if (!coords) return; refreshTimes(coords.latitude, coords.longitude) }, [coords?.latitude, coords?.longitude, countryCode]);
+  useEffect(() => { if (!activeCoords) return; refreshTimes(activeCoords.latitude, activeCoords.longitude) }, [activeCoords?.latitude, activeCoords?.longitude, countryCode]);
 
   useEffect(() => {
-    if (!coords) return;
+    if (!activeCoords) return;
     let active = true;
     setWeatherError("");
-    fetchWeather(coords.latitude, coords.longitude)
+    fetchWeather(activeCoords.latitude, activeCoords.longitude)
       .then((w) => {
         if (!active) return;
         setWeather(w);
@@ -614,19 +629,19 @@ export default function App(){
         setWeatherError(cached ? "Viser sist lagrede værdata." : "Kunne ikke hente værdata akkurat nå.");
       });
     return () => { active = false; };
-  }, [coords?.latitude, coords?.longitude]);
+  }, [activeCoords?.latitude, activeCoords?.longitude]);
 
   useEffect(() => {
-    if (!coords) return;
+    if (!activeCoords) return;
     setCalendarError("");
     const now = new Date();
-    fetchMonthlyCalendar(coords.latitude, coords.longitude, now.getMonth() + 1, now.getFullYear())
+    fetchMonthlyCalendar(activeCoords.latitude, activeCoords.longitude, now.getMonth() + 1, now.getFullYear())
       .then((rows) => setCalendarRows(rows))
       .catch(() => {
         setCalendarRows([]);
         setCalendarError("Klarte ikke hente månedskalender nå.");
       });
-  }, [coords?.latitude, coords?.longitude]);
+  }, [activeCoords?.latitude, activeCoords?.longitude]);
 
   // Keep push metadata up to date automatically (always-on across city changes)
   useEffect(() => {
@@ -643,8 +658,8 @@ export default function App(){
   return (
     <div style={{minHeight:"100dvh", color:"var(--fg)", backgroundSize:"cover", backgroundPosition:"center", backgroundImage:`linear-gradient(${quranMode ? "rgba(3, 12, 16, .78), rgba(3, 12, 16, .78)" : "rgba(4,6,12,.65), rgba(4,6,12,.65)"}), url(${bg})`, transition:"background-image .8s ease"}}>
       <style>{`
-        :root { --fg:#e5e7eb; --muted:#cbd5e1; --card:rgba(15,23,42,.78); --border:#334155; --btn:#0b1220; --accent:#16a34a; --accent-secondary:#38bdf8; }
-        :root[data-theme="light"] { --fg:#0f172a; --muted:#475569; --card:rgba(255,255,255,.93); --border:#d1d5db; --btn:#f8fafc; --accent:#16a34a; --accent-secondary:#0284c7; }
+        :root { --fg:#0f172a; --muted:#475569; --card:rgba(255,255,255,.93); --border:#d1d5db; --btn:#f8fafc; --accent:#16a34a; --accent-secondary:#0284c7; }
+        :root[data-theme="dark"] { --fg:#e5e7eb; --muted:#cbd5e1; --card:rgba(15,23,42,.78); --border:#334155; --btn:#0b1220; --accent:#16a34a; --accent-secondary:#38bdf8; }
         .container { max-width: 1060px; margin: 0 auto; padding: calc(env(safe-area-inset-top) + 18px) 16px 24px; font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
         .card { border:1px solid var(--border); border-radius: 18px; padding: 16px; background: var(--card); backdrop-filter: blur(14px); box-shadow: 0 12px 28px rgba(2, 6, 23, 0.22); }
         .hero { background: linear-gradient(135deg, rgba(22,163,74,.22), rgba(56,189,248,.2)); }
@@ -670,8 +685,8 @@ export default function App(){
           <h1>Afkir Qibla</h1>
           <div className="hint">Din profesjonelle Qibla-assistent med bønnetider, vær og smart varsling.</div>
           <div style={{margin:"6px 0 2px"}}>
-            <button className="btn" onClick={()=>{ const d = document.documentElement; d.dataset.theme = (d.dataset.theme==="light"?"dark":"light") }}>
-              Tema
+            <button className="btn" onClick={()=> setTheme(t => t === "dark" ? "light" : "dark") }>
+              Tema: {theme === "dark" ? "Mørk" : "Lys"}
             </button>
           </div>
           <div className="hint">{NB_DAY.format(new Date())}</div>
@@ -690,8 +705,8 @@ export default function App(){
             <button className="btn" onClick={onUseLocation} disabled={loading}>{loading ? "Henter…" : "Bruk stedstjenester"}</button>
             <span className="hint" style={{color: offline ? "#fbbf24" : "var(--muted)"}}>{offline ? "Offline-modus aktiv" : "Online"}</span>
             <span className="hint">
-              {coords
-                ? ((city ? city + " • " : "") + coords.latitude.toFixed(4) + ", " + coords.longitude.toFixed(4))
+              {activeCoords
+                ? ((city ? city + " • " : "") + activeCoords.latitude.toFixed(4) + ", " + activeCoords.longitude.toFixed(4))
                 : (permission === "denied" ? "Posisjon er blokkert i nettleseren." : "Gi tilgang for automatisk lokasjon")}
             </span>
           </div>
@@ -705,7 +720,7 @@ export default function App(){
               <h3>Qibla retning</h3>
               <button className="btn" onClick={()=>setShowMap(v=>!v)}>{showMap ? "Skjul kart" : "Vis kart"}</button>
             </div>
-            {coords ? (
+            {activeCoords ? (
               <>
                 <div className="hint" style={{marginBottom:8}}>
                   {qiblaDeg != null ? `Qibla: ${Math.round(qiblaDeg)}°` : "Finne retning…"}
@@ -713,7 +728,7 @@ export default function App(){
                 <ModernCompass bearing={qiblaDeg ?? 0} />
                 {showMap && (
                   <div style={{marginTop:12}}>
-                    <QiblaMap coords={coords} />
+                    <QiblaMap coords={activeCoords} />
                     <div className="hint" style={{marginTop:6}}>Linjen viser retningen fra din posisjon til Kaaba (Mekka).</div>
                   </div>
                 )}
