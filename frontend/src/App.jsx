@@ -18,15 +18,6 @@ const NB_TIME = new Intl.DateTimeFormat("nb-NO", { hour: "2-digit", minute: "2-d
 const NB_DAY  = new Intl.DateTimeFormat("nb-NO", { weekday: "long", day: "2-digit", month: "long" });
 const NB_TEMP = new Intl.NumberFormat("nb-NO", { maximumFractionDigits: 0 });
 
-// ---------- Norway tuning (historisk fungerende profil) ----------
-const NO_IRN_PROFILE = {
-  fajrAngle: 16.0,
-  ishaAngle: 15.0,
-  latitudeAdj: 3,
-  school: 0,
-  offsets: { Fajr: -9, Dhuhr: +6, Asr: 0, Maghrib: +5, Isha: 0 },
-};
-
 function useLocalStorage(key, init) {
   const [v, setV] = useState(() => {
     try { const j = localStorage.getItem(key); return j ? JSON.parse(j) : init } catch { return init }
@@ -178,6 +169,16 @@ function ensureDates(strTimings /* {Fajr:"05:15", ...} */, baseDate) {
 }
 
 
+function formatPrayerTime(value) {
+  if (!(value instanceof Date) || Number.isNaN(value.getTime())) return "--:--";
+  return NB_TIME.format(value);
+}
+
+// ---------- Norway fallback tuning (Aladhan reserve) ----------
+const NO_IRN_PROFILE = {
+  offsets: { Fajr: -9, Dhuhr: +6, Asr: 0, Maghrib: +5, Isha: 0 },
+};
+
 function hhmmToMinutes(hhmm) {
   const m = String(hhmm || "").match(/^(\d{1,2}):(\d{2})$/);
   if (!m) return null;
@@ -192,32 +193,20 @@ function minutesToHHMM(total) {
   return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
 }
 
-function tuneNorwayTimings(raw, countryCode, tz) {
+function tuneNorwayFallbackTimings(raw, countryCode, tz) {
   if (!raw || typeof raw !== "object") return raw;
   const cc = String(countryCode || "").toUpperCase();
-  if (!(cc === "NO" || (!cc && String(tz || "") === "Europe/Oslo"))) return raw;
+  const isNo = cc === "NO" || String(tz || "") === "Europe/Oslo";
+  if (!isNo) return raw;
 
   const out = { ...raw };
   const o = NO_IRN_PROFILE.offsets;
-
-  const apply = (key, minutes) => {
-    const value = hhmmToMinutes(out[key]);
-    if (value == null || !Number.isFinite(minutes)) return;
-    out[key] = minutesToHHMM(value + minutes);
-  };
-
-  apply("Fajr", o.Fajr || 0);
-  apply("Dhuhr", o.Dhuhr || 0);
-  apply("Asr", o.Asr || 0);
-  apply("Maghrib", o.Maghrib || 0);
-  apply("Isha", o.Isha || 0);
-
+  for (const key of ["Fajr", "Dhuhr", "Asr", "Maghrib", "Isha"]) {
+    const v = hhmmToMinutes(out[key]);
+    if (v == null) continue;
+    out[key] = minutesToHHMM(v + (o[key] || 0));
+  }
   return out;
-}
-
-function formatPrayerTime(value) {
-  if (!(value instanceof Date) || Number.isNaN(value.getTime())) return "--:--";
-  return NB_TIME.format(value);
 }
 
 // ---------- Countdown ----------
@@ -618,7 +607,7 @@ export default function App(){
   useEffect(() => { const id = setInterval(()=> setBgIdx(i => (i+1)%bgList.length), 25000); return () => clearInterval(id) }, [bgList.length]);
   const bg = bgList[bgIdx % bgList.length];
   const activeCoords = coords || lastCoords || DEFAULT_COORDS;
-  const effectiveCountryCode = inferCountryCode(activeCoords?.latitude, activeCoords?.longitude, countryCode);
+  const effectiveCountryCode = inferCountryCode(activeCoords?.latitude, activeCoords?.longitude, countryCode || (timeZone === "Europe/Oslo" ? "NO" : ""));
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme === "dark" ? "dark" : "light";
@@ -705,10 +694,12 @@ export default function App(){
       let todayRaw;
       try {
         todayRaw = await fetchTimings(lat, lng, tz, effectiveCountryCode, "today");
-      } catch {
-        todayRaw = await fetchAladhanFallbackDay(lat, lng, tz, "today", effectiveCountryCode || "NO");
+      } catch (err) {
+        console.error("[Prayer] Unified fetch failed, using Aladhan fallback for today", err);
+        setApiError("Bonnetid svarte ikke. Viser reservekilde (Aladhan).");
+        todayRaw = tuneNorwayFallbackTimings(await fetchAladhanFallbackDay(lat, lng, tz, "today", effectiveCountryCode || "NO"), effectiveCountryCode, tz);
       }
-      const todayStr = tuneNorwayTimings(todayRaw, effectiveCountryCode, tz);
+      const todayStr = todayRaw;
       const today = ensureDates(todayStr);
       setTimes(today);
       saveCache("aq_times_cache", todayStr);
@@ -722,10 +713,12 @@ export default function App(){
         let tomorrowRaw;
         try {
           tomorrowRaw = await fetchTimings(lat, lng, tz, effectiveCountryCode, "tomorrow");
-        } catch {
-          tomorrowRaw = await fetchAladhanFallbackDay(lat, lng, tz, "tomorrow", effectiveCountryCode || "NO");
+        } catch (err) {
+          console.error("[Prayer] Unified fetch failed, using Aladhan fallback for tomorrow", err);
+          setApiError("Bonnetid svarte ikke. Viser reservekilde (Aladhan).");
+          tomorrowRaw = tuneNorwayFallbackTimings(await fetchAladhanFallbackDay(lat, lng, tz, "tomorrow", effectiveCountryCode || "NO"), effectiveCountryCode, tz);
         }
-        const tomorrowStr = tuneNorwayTimings(tomorrowRaw, effectiveCountryCode, tz);
+        const tomorrowStr = tomorrowRaw;
         const now = new Date();
         const tomorrowDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
         const tomorrowIso = `${tomorrowDate.getFullYear()}-${String(tomorrowDate.getMonth() + 1).padStart(2, "0")}-${String(tomorrowDate.getDate()).padStart(2, "0")}`;
@@ -796,11 +789,7 @@ export default function App(){
     )
       .then((rows) => {
         if (!active) return;
-        const tunedRows = (rows || []).map((row) => ({
-          ...row,
-          timings: tuneNorwayTimings(row?.timings || {}, effectiveCountryCode, timeZone),
-        }));
-        setCalendarRows(tunedRows);
+        setCalendarRows(rows || []);
       })
       .catch(async (err) => {
         if (!active) return;
@@ -817,11 +806,7 @@ export default function App(){
             controller.signal,
           );
           if (!active) return;
-          const tunedRows = (rows || []).map((row) => ({
-            ...row,
-            timings: tuneNorwayTimings(row?.timings || {}, effectiveCountryCode, timeZone),
-          }));
-          setCalendarRows(tunedRows);
+          setCalendarRows((rows || []).map((row) => ({ ...row, timings: tuneNorwayFallbackTimings(row?.timings || {}, effectiveCountryCode, timeZone) })));
           setCalendarError(effectiveCountryCode === "NO" ? "Viser tunet reservekalender (Aladhan)." : "");
           return;
         } catch {

@@ -70,7 +70,9 @@ export function authHeaders() {
   return {
     Accept: "application/json",
     "Api-Token": token,
+    "api-token": token,
     "X-API-Key": token,
+    "x-api-key": token,
     Authorization: `Bearer ${token}`,
   };
 }
@@ -141,17 +143,54 @@ export function normalizeDate(when: string, tz: string) {
 }
 
 export async function fetchLegacyDay(base: URL, headers: Record<string, string>, lat: string, lon: string, tz: string, isoDate: string) {
-  const legacy = new URL(base.toString());
-  const path = (legacy.pathname || "/").replace(/\/+$/, "");
-  if (!path || path === "/") legacy.pathname = "/v1/prayertimes";
-  legacy.searchParams.set("lat", lat);
-  legacy.searchParams.set("lon", lon);
-  legacy.searchParams.set("tz", tz);
   const [y, m, d] = isoDate.split("-");
-  legacy.searchParams.set("date", `${d}-${m}-${y}`);
+  const dateFormats = [`${d}-${m}-${y}`, isoDate];
 
-  const res = await fetch(legacy.toString(), { headers });
-  if (!res.ok) throw new Error(`legacy ${res.status}`);
-  const json = await res.json();
-  return mapTimings(json);
+  const candidates: URL[] = [];
+  const direct = new URL(base.toString());
+  direct.search = "";
+  direct.hash = "";
+  candidates.push(direct);
+
+  const fallback = new URL("/v1/times", base);
+  fallback.search = "";
+  fallback.hash = "";
+  if (!candidates.some((u) => u.toString() == fallback.toString())) {
+    candidates.push(fallback);
+  }
+
+  const errors: string[] = [];
+  for (const endpoint of candidates) {
+    for (const dateValue of dateFormats) {
+      const u = new URL(endpoint.toString());
+      u.searchParams.set("lat", lat);
+      u.searchParams.set("lon", lon);
+      u.searchParams.set("tz", tz);
+      u.searchParams.set("date", dateValue);
+
+      const res = await fetch(u.toString(), { headers });
+      const text = await res.text();
+      if (!res.ok) {
+        errors.push(`${u.pathname} ${res.status}`);
+        continue;
+      }
+
+      let json: any = null;
+      try {
+        json = JSON.parse(text);
+      } catch {
+        errors.push(`${u.pathname} invalid_json`);
+        continue;
+      }
+
+      const mapped = mapTimings(json);
+      if (mapped?.Fajr && mapped?.Dhuhr && mapped?.Asr && mapped?.Maghrib && mapped?.Isha) {
+        return mapped;
+      }
+      errors.push(`${u.pathname} empty_timings`);
+    }
+  }
+
+  throw new Error(`legacy failed: ${errors.join(", ") || "unknown"}`);
 }
+
