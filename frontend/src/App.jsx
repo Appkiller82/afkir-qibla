@@ -225,7 +225,7 @@ async function fetchWeather(lat, lng) {
   url.searchParams.set("timezone", "auto");
   url.searchParams.set("current", "temperature_2m,apparent_temperature,wind_speed_10m,weather_code");
   url.searchParams.set("daily", "temperature_2m_max,temperature_2m_min,sunrise,sunset");
-  const res = await fetch(url.toString());
+  const res = await fetch(url.toString(), { signal });
   if (!res.ok) throw new Error("Weather API failed");
   const data = await res.json();
   return {
@@ -241,10 +241,7 @@ async function fetchWeather(lat, lng) {
 }
 
 
-async function fetchMonthlyCalendar(lat, lng, month, year, countryCode, tz) {
-  const cc = (countryCode || "").toUpperCase();
-
-  }
+async function fetchMonthlyCalendar(lat, lng, month, year, signal) {
 
   const url = new URL("https://api.aladhan.com/v1/calendar");
   url.searchParams.set("latitude", String(lat));
@@ -252,7 +249,7 @@ async function fetchMonthlyCalendar(lat, lng, month, year, countryCode, tz) {
   url.searchParams.set("method", "3");
   url.searchParams.set("month", String(month));
   url.searchParams.set("year", String(year));
-  const res = await fetch(url.toString());
+  const res = await fetch(url.toString(), { signal });
   if (!res.ok) throw new Error("Calendar API failed");
   const body = await res.json();
   return (body?.data || []).map((d) => ({
@@ -297,6 +294,12 @@ function normalizeWeatherCache(w) {
 function safeNum(value) {
   const n = Number(value);
   return Number.isFinite(n) ? n : null;
+}
+
+function formatMetric(value, unit = "") {
+  const n = safeNum(value);
+  if (n == null) return "--";
+  return `${NB_TEMP.format(n)}${unit}`;
 }
 
 function exportCalendarIcs(city, days) {
@@ -525,6 +528,7 @@ export default function App(){
   const [calendarExpanded, setCalendarExpanded] = useState(false);
   const [calendarError, setCalendarError] = useState("");
   const [offline, setOffline] = useState(typeof navigator !== "undefined" ? !navigator.onLine : false);
+  const timeZone = useMemo(() => Intl.DateTimeFormat().resolvedOptions().timeZone, []);
   const audioRef = useRef(null);
   const timersRef = useRef([]);
 
@@ -576,13 +580,18 @@ export default function App(){
   // reverse geocode on coords change
   useEffect(() => {
     if (!activeCoords) return;
+    let active = true;
     if (!coords && !city) setCity("Oslo");
     if (!coords && !countryCode) setCountryCode("NO");
-    reverseGeocode(activeCoords.latitude, activeCoords.longitude).then(r => {
+    reverseGeocode(activeCoords.latitude, activeCoords.longitude).then((r) => {
+      if (!active) return;
       if (r?.name) setCity(r.name);
       if (r?.countryCode) setCountryCode(r.countryCode);
     });
-
+    return () => {
+      active = false;
+    };
+  }, [activeCoords?.latitude, activeCoords?.longitude, coords, city, countryCode]);
 
   // schedule reminders (tab-only)
   useEffect(() => {
@@ -610,7 +619,7 @@ export default function App(){
   async function refreshTimes(lat, lng) {
     try {
       setApiError("");
-      const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      const tz = timeZone;
 
       // Hent dagens tider via unified fetchTimings (Bonnetid→Aladhan NO tuned i Norge, Aladhan global ellers)
       const todayStr = await fetchTimings(lat, lng, tz, effectiveCountryCode, "today");
@@ -672,11 +681,17 @@ export default function App(){
 
   useEffect(() => {
     if (!activeCoords) return;
+    let active = true;
     setCalendarError("");
     const now = new Date();
-
-      .then((rows) => setCalendarRows(rows))
+    const controller = new AbortController();
+    fetchMonthlyCalendar(activeCoords.latitude, activeCoords.longitude, now.getMonth() + 1, now.getFullYear(), controller.signal)
+      .then((rows) => {
+        if (!active) return;
+        setCalendarRows(rows);
+      })
       .catch((err) => {
+        if (!active) return;
         setCalendarRows([]);
         const m = String(err?.message || "");
         if (effectiveCountryCode === "NO") {
@@ -689,7 +704,11 @@ export default function App(){
           setCalendarError("Klarte ikke hente månedskalender nå.");
         }
       });
-
+    return () => {
+      active = false;
+      controller.abort();
+    };
+  }, [activeCoords?.latitude, activeCoords?.longitude, effectiveCountryCode]);
 
   // Keep push metadata up to date automatically (always-on across city changes)
   useEffect(() => {
@@ -699,7 +718,7 @@ export default function App(){
       lng: coords.longitude,
       city,
       countryCode: effectiveCountryCode,
-      tz: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      tz: timeZone,
     }).catch(()=>{});
   }, [coords?.latitude, coords?.longitude, city, effectiveCountryCode]);
 
@@ -730,13 +749,17 @@ export default function App(){
 
       <div className="container">
         <header className="card hero" style={{marginBottom:12, textAlign:"left"}}>
-
+          <div className="row" style={{justifyContent:"space-between", marginBottom:10}}>
+            <div>
+              <h1>Afkir Qibla</h1>
+              <div className="hint">{NB_DAY.format(new Date())}</div>
+            </div>
             <button className="btn" onClick={()=> setTheme(t => t === "dark" ? "light" : "dark") }>
               Tema: {theme === "dark" ? "Mørk" : "Lys"}
             </button>
           </div>
 
-          <div className="hero-grid">
+          <div className="hero-grid" style={{display:"grid", gridTemplateColumns:"repeat(3, minmax(0,1fr))", gap:10}}>
             <div className="hero-stat"><div className="hint">Sted</div><div className="kpi">{city || "Ukjent"}</div></div>
             <div className="hero-stat"><div className="hint">Qibla</div><div className="kpi">{qiblaDeg != null ? `${Math.round(qiblaDeg)}°` : "--"}</div></div>
             <div className="hero-stat"><div className="hint">Neste bønn</div><div className="kpi">{countdown?.name || "--"}</div></div>
@@ -787,10 +810,30 @@ export default function App(){
               {weatherError && <div className="error" style={{marginTop:8}}>{weatherError}</div>}
               {!weather && !weatherError && <div className="hint" style={{marginTop:8}}>Henter værdata…</div>}
               {weather && (
-                <>
-                  <div style={{display:"flex", justifyContent:"space-between", marginTop:10, alignItems:"baseline"}}>
-                    <div>
+                <div style={{marginTop:10}}>
+                  <div style={{fontSize:28, fontWeight:700}}>{weatherIcon(weather.code)} {formatMetric(weather.currentTemp, "°")}</div>
+                  <div className="hint" style={{marginTop:4}}>{weatherCodeToText(weather.code)} · Føles som {formatMetric(weather.feelsLike, "°")}</div>
+                  <div className="hint" style={{marginTop:4}}>Vind: {formatMetric(weather.wind, " m/s")} · Min/maks: {formatMetric(weather.min, "°")} / {formatMetric(weather.max, "°")}</div>
+                </div>
+              )}
+            </section>
 
+            <section className="card">
+              <div style={{display:"flex", justifyContent:"space-between", alignItems:"center"}}>
+                <h3>Månedskalender</h3>
+                <button className="btn" onClick={() => setCalendarExpanded((v) => !v)}>{calendarExpanded ? "Skjul" : "Vis"}</button>
+              </div>
+              {calendarError && <div className="error" style={{marginTop:8}}>{calendarError}</div>}
+              {calendarExpanded && (
+                <div style={{marginTop:8, maxHeight:220, overflow:"auto"}}>
+                  <table style={{width:"100%", borderCollapse:"collapse", fontSize:14}}>
+                    <thead>
+                      <tr><th style={{textAlign:"left"}}>Dato</th><th style={{textAlign:"left"}}>Fajr</th><th style={{textAlign:"left"}}>Dhuhr</th><th style={{textAlign:"left"}}>Asr</th><th style={{textAlign:"left"}}>Maghrib</th><th style={{textAlign:"left"}}>Isha</th></tr>
+                    </thead>
+                    <tbody>
+                      {calendarRows.map((row) => (
+                        <tr key={row.date}>
+                          <td>{row.date}</td><td>{row.timings.Fajr}</td><td>{row.timings.Dhuhr}</td><td>{row.timings.Asr}</td><td>{row.timings.Maghrib}</td><td>{row.timings.Isha}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -859,7 +902,7 @@ export default function App(){
               coords={coords}
               city={city}
               countryCode={effectiveCountryCode}
-              tz={Intl.DateTimeFormat().resolvedOptions().timeZone}
+              tz={timeZone}
             />
           </section>
         </div>
