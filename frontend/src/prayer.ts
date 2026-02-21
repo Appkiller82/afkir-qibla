@@ -312,32 +312,28 @@ export async function fetchTimings(
 
   if (isNorway(cc, tz)) {
     const isoDate = normalizeDateInput(when, tz);
-    const year = Number(isoDate.slice(0, 4));
-    const month = Number(isoDate.slice(5, 7));
+    const btUrl = new URL("/api/bonnetid-today", window.location.origin);
+    btUrl.searchParams.set("lat", String(lat));
+    btUrl.searchParams.set("lon", String(lon));
+    btUrl.searchParams.set("tz", String(tz));
+    btUrl.searchParams.set("when", isoDate);
 
     try {
-      const rows = await fetchMonthTimingsNO(year, month, lat, lon, tz);
-      const dayRow = rows.find((r) => r.date === isoDate);
-      if (dayRow && !looksSuspiciousNorway(dayRow.timings)) return dayRow.timings;
-    } catch {
-      // Try dedicated day endpoint below.
-    }
-
-    try {
-      const btUrl = new URL("/api/bonnetid-today", window.location.origin);
-      btUrl.searchParams.set("lat", String(lat));
-      btUrl.searchParams.set("lon", String(lon));
-      btUrl.searchParams.set("tz", String(tz));
-      btUrl.searchParams.set("when", when);
       const btRes = await fetch(btUrl.toString());
       const btBody = await readJsonOrThrow(btRes, "Bonnetid today");
       const timings = ensure(btBody?.timings || btBody?.data?.timings || {});
       if (!looksSuspiciousNorway(timings)) return timings;
     } catch {
-      // Continue to Aladhan fallback so user still gets data.
+      // Fall back to month data path below.
     }
 
-    return fetchAladhan(lat, lon, tz, when, "NO");
+    const year = Number(isoDate.slice(0, 4));
+    const month = Number(isoDate.slice(5, 7));
+    const rows = await fetchMonthTimingsNO(year, month, lat, lon, tz);
+    const dayRow = rows.find((r) => r.date === isoDate);
+    if (dayRow && !looksSuspiciousNorway(dayRow.timings)) return dayRow.timings;
+
+    throw new Error(`Bonnetid mangler gyldige tider for ${isoDate}`);
   }
 
   // Rest of world: Aladhan unchanged
