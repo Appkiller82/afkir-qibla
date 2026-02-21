@@ -320,6 +320,13 @@ function formatMetric(value, unit = "") {
   return `${NB_TEMP.format(n)}${unit}`;
 }
 
+function formatCalendarDate(value) {
+  if (!value) return "--.--.----";
+  const [y, m, d] = String(value).split("-");
+  if (!y || !m || !d) return String(value);
+  return `${d}.${m}.${y}`;
+}
+
 function exportCalendarIcs(city, days) {
   if (!days?.length) return;
   const pad = (n) => String(n).padStart(2, "0");
@@ -869,7 +876,7 @@ export default function App(){
                     <tbody>
                       {calendarRows.map((row) => (
                         <tr key={row.date}>
-                          <td>{row.date}</td><td>{row.timings.Fajr}</td><td>{row.timings.Dhuhr}</td><td>{row.timings.Asr}</td><td>{row.timings.Maghrib}</td><td>{row.timings.Isha}</td>
+                          <td>{formatCalendarDate(row.date)}</td><td>{row.timings.Fajr || "--:--"}</td><td>{row.timings.Dhuhr || "--:--"}</td><td>{row.timings.Asr || "--:--"}</td><td>{row.timings.Maghrib || "--:--"}</td><td>{row.timings.Isha || "--:--"}</td>
                         </tr>
                       ))}
                     </tbody>
