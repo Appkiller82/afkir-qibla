@@ -265,6 +265,7 @@ async function fetchMonthlyCalendar(lat, lng, month, year, signal) {
   }));
 }
 
+
 function saveCache(key, value) {
   try { localStorage.setItem(key, JSON.stringify({ value, ts: Date.now() })); } catch {}
 }
@@ -647,7 +648,7 @@ export default function App(){
       console.error(e);
       const cached = loadCache("aq_times_cache");
       if (cached) {
-        setApiError("Viser sist lagrede bønnetider (offline/fallback).");
+        setApiError("");
         setTimes(ensureDates(cached));
       } else {
         setApiError("Klarte ikke hente bønnetider (API).");
@@ -674,7 +675,7 @@ export default function App(){
         if (!active) return;
         const cached = loadCache("aq_weather_cache");
         setWeather(normalizeWeatherCache(cached));
-        setWeatherError(cached ? "Viser sist lagrede værdata." : "Kunne ikke hente værdata akkurat nå.");
+        setWeatherError(cached ? "" : "Kunne ikke hente værdata akkurat nå.");
       });
     return () => { active = false; };
   }, [activeCoords?.latitude, activeCoords?.longitude]);
