@@ -34,3 +34,9 @@
   to = "/.netlify/functions/bt-month"
   status = 200
   force = true
+
+[[redirects]]
+  from = "/api/bonnetid-health"
+  to = "/.netlify/functions/bonnetid-health"
+  status = 200
+  force = true
