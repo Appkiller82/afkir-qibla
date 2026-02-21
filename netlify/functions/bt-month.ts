@@ -54,9 +54,9 @@ async function fetchDay(baseUrl: URL | string, apiKey: string, lat: string, lon:
     date,
     weekday: new Date(year, month - 1, day).toLocaleDateString("nb-NO", { weekday: "short" }),
     timings: {
-      Fajr: pickTiming(t, "Fajr", "fajr"),
-      Dhuhr: pickTiming(t, "Duhr", "Dhuhr", "dhuhr"),
-      Asr: pickTiming(t, "Asr", "2x-skygge", "asr", "1x-skygge"),
+      Fajr: pickTiming(t, "Morgengry 16°", "Morgengry16°", "Morgengry", "Fajr", "fajr"),
+      Dhuhr: pickTiming(t, "Duhr", "Dhor", "Dhuhr", "Zuhr", "zuhr", "dhuhr"),
+      Asr: pickTiming(t, "2x-skygge", "Asr", "asr_2x", "asr2x", "asr", "1x-skygge"),
       Maghrib: pickTiming(t, "Maghrib", "maghrib"),
       Isha: pickTiming(t, "Isha", "isha"),
     },
