@@ -12,7 +12,7 @@
 - `netlify.toml` – Redirects til funksjonene
 
 ## Miljøvariabler (Netlify)
-- `BONNETID_API_URL` (f.eks. `https://api.bonnetid.no`)
+- `BONNETID_API_URL` (f.eks. `https://api.bonnetid.no` eller full sti; appen normaliserer til `/v1/prayertimes` hvis sti mangler)
 - `BONNETID_API_KEY` (**din nøkkel**)
 - `ALADHAN_API_URL` (f.eks. `https://api.aladhan.com`)
 - `ALADHAN_METHOD`

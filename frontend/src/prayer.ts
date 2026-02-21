@@ -4,6 +4,14 @@ export type Timings = {
   Fajr: string; Sunrise: string; Dhuhr: string; Asr: string; Maghrib: string; Isha: string;
 };
 
+async function readJsonOrThrow(res: Response, source: string) {
+  const ct = res.headers.get("content-type") || "";
+  const text = await res.text();
+  if (!res.ok) throw new Error(`${source} ${res.status}: ${text || "empty"}`);
+  if (!ct.includes("application/json")) throw new Error(`${source} returned non-JSON response`);
+  try { return JSON.parse(text); } catch { throw new Error(`${source} invalid JSON`); }
+}
+
 export async function fetchTimings(
   lat: number,
   lon: number,
@@ -16,16 +24,14 @@ export async function fetchTimings(
   if (cc === "NO") {
     const u = `/api/bonnetid-today?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}&tz=${encodeURIComponent(tz)}&when=${encodeURIComponent(when)}`;
     const r = await fetch(u);
-    if (!r.ok) throw new Error(`Bonnetid ${r.status}`);
-    const j = await r.json();
+    const j = await readJsonOrThrow(r, "Bonnetid");
     return ensure(j.timings);
   }
 
   // Rest of world: Aladhan global
   const u3 = `/api/aladhan-today?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}&tz=${encodeURIComponent(tz)}&when=${encodeURIComponent(when)}`;
   const r3 = await fetch(u3);
-  if (!r3.ok) throw new Error(`Aladhan ${r3.status}`);
-  const j3 = await r3.json();
+  const j3 = await readJsonOrThrow(r3, "Aladhan");
   return ensure(j3.timings);
 }
 

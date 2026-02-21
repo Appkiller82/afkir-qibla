@@ -1,5 +1,20 @@
 import type { Handler } from "@netlify/functions";
 
+function resolveBonnetidUrl(rawBase?: string) {
+  const candidate = String(rawBase || "https://api.bonnetid.no").trim();
+  const withScheme = /^https?:\/\//i.test(candidate) ? candidate : `https://${candidate}`;
+  const url = new URL(withScheme);
+  url.search = "";
+  url.hash = "";
+  const path = (url.pathname || "/").replace(/\/+$/, "");
+  if (!path || path === "") {
+    url.pathname = "/v1/prayertimes";
+  } else if (path === "/") {
+    url.pathname = "/v1/prayertimes";
+  }
+  return url;
+}
+
 export const handler: Handler = async (event) => {
   try {
     const qs = event.queryStringParameters || {};
@@ -21,9 +36,9 @@ export const handler: Handler = async (event) => {
     }
 
     // Bruk env hvis du har, ellers default:
-    const baseUrl = process.env.BONNETID_API_URL || "https://api.bonnetid.no/v1/prayertimes";
+    const baseUrl = resolveBonnetidUrl(process.env.BONNETID_API_URL);
 
-    const url = new URL(baseUrl);
+    const url = new URL(baseUrl.toString());
     url.searchParams.set("lat", String(lat));
     url.searchParams.set("lon", String(lon));
     url.searchParams.set("tz", String(tz));
