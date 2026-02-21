@@ -540,6 +540,7 @@ export default function App(){
   const [city, setCity]   = useLocalStorage("aq_city", "");
   const [countryCode, setCountryCode] = useLocalStorage("aq_country", "");
   const [times, setTimes] = useState(null);
+  const [timesText, setTimesText] = useState(null);
   const [apiError, setApiError] = useState("");
   const [bgList, setBgList] = useState(CANDIDATE_BACKGROUNDS);
   const [bgIdx, setBgIdx] = useState(0);
@@ -607,11 +608,14 @@ export default function App(){
         if (prev?.tomorrow && prev?.at instanceof Date) {
           return { ...prev, diffText: diffToText(prev.at.getTime() - Date.now()) };
         }
-        return nextPrayerInfo(times);
+        const info = nextPrayerInfo(times);
+        if (!info?.name) return info;
+        const atText = info.name === "Soloppgang" ? timesText?.Soloppgang : timesText?.[info.name];
+        return { ...info, atText: atText || (info.at ? formatPrayerTime(info.at) : null) };
       });
     }, 1000);
     return () => { clearInterval(idDay); clearInterval(idTick) };
-  }, [activeCoords?.latitude, activeCoords?.longitude, times?.Fajr?.getTime?.(), effectiveCountryCode]);
+  }, [activeCoords?.latitude, activeCoords?.longitude, times?.Fajr?.getTime?.(), effectiveCountryCode, timesText?.Fajr]);
 
   // reverse geocode on coords change
   useEffect(() => {
@@ -677,10 +681,21 @@ export default function App(){
       const today = ensureDates(todayStr, todayIso);
       if (seq !== refreshSeqRef.current) return;
       setTimes(today);
+      setTimesText({
+        Fajr: todayStr.Fajr || "",
+        Soloppgang: todayStr.Sunrise || "",
+        Dhuhr: todayStr.Dhuhr || "",
+        Asr: todayStr.Asr || "",
+        Maghrib: todayStr.Maghrib || "",
+        Isha: todayStr.Isha || "",
+      });
       saveCache(timesCacheKey(lat, lng, todayIso), todayStr);
 
       const info = nextPrayerInfo(today);
-      setCountdown(info);
+      const infoAtText = info?.name
+        ? (info.name === "Soloppgang" ? todayStr.Sunrise : todayStr[info.name])
+        : null;
+      setCountdown({ ...info, atText: infoAtText || (info.at ? formatPrayerTime(info.at) : null) });
 
       if (info.tomorrow) {
         let tomorrowRows = monthRows;
@@ -697,6 +712,7 @@ export default function App(){
         setCountdown({
           name: "Fajr",
           at: fajr,
+          atText: tomorrowStr.Fajr || formatPrayerTime(fajr),
           diffText: diffToText(fajr.getTime() - Date.now()),
           tomorrow: true
         });
@@ -715,9 +731,18 @@ export default function App(){
       if (cached) {
         setApiError("Viser lagrede tider for denne posisjonen.");
         setTimes(ensureDates(cached, todayIso));
+        setTimesText({
+          Fajr: cached.Fajr || "",
+          Soloppgang: cached.Sunrise || "",
+          Dhuhr: cached.Dhuhr || "",
+          Asr: cached.Asr || "",
+          Maghrib: cached.Maghrib || "",
+          Isha: cached.Isha || "",
+        });
       } else {
         setApiError("Klarte ikke hente bønnetider (API).");
         setTimes(null);
+        setTimesText(null);
       }
     }
   }
@@ -915,17 +940,17 @@ export default function App(){
             {times ? (
               <>
                 <ul className="times">
-                  <li className="time-item"><span>Fajr</span><span>{formatPrayerTime(times.Fajr)}</span></li>
-                  <li className="time-item"><span>Soloppgang</span><span>{formatPrayerTime(times.Soloppgang)}</span></li>
-                  <li className="time-item"><span>Dhuhr</span><span>{formatPrayerTime(times.Dhuhr)}</span></li>
-                  <li className="time-item"><span>Asr</span><span>{formatPrayerTime(times.Asr)}</span></li>
-                  <li className="time-item"><span>Maghrib</span><span>{formatPrayerTime(times.Maghrib)}</span></li>
-                  <li className="time-item"><span>Isha</span><span>{formatPrayerTime(times.Isha)}</span></li>
+                  <li className="time-item"><span>Fajr</span><span>{timesText?.Fajr || formatPrayerTime(times.Fajr)}</span></li>
+                  <li className="time-item"><span>Soloppgang</span><span>{timesText?.Soloppgang || formatPrayerTime(times.Soloppgang)}</span></li>
+                  <li className="time-item"><span>Dhuhr</span><span>{timesText?.Dhuhr || formatPrayerTime(times.Dhuhr)}</span></li>
+                  <li className="time-item"><span>Asr</span><span>{timesText?.Asr || formatPrayerTime(times.Asr)}</span></li>
+                  <li className="time-item"><span>Maghrib</span><span>{timesText?.Maghrib || formatPrayerTime(times.Maghrib)}</span></li>
+                  <li className="time-item"><span>Isha</span><span>{timesText?.Isha || formatPrayerTime(times.Isha)}</span></li>
                 </ul>
 
                 <div style={{marginTop:10, fontSize:15}}>
                   {countdown?.name
-                    ? <>Neste bønn: <b>{countdown.name}</b> kl <b>{formatPrayerTime(countdown.at)}</b> (<span className="hint">{countdown.diffText}</span>)</>
+                    ? <>Neste bønn: <b>{countdown.name}</b> kl <b>{countdown.atText || formatPrayerTime(countdown.at)}</b> (<span className="hint">{countdown.diffText}</span>)</>
                     : <span className="hint">Alle dagens bønner er passert – oppdateres ved midnatt.</span>
                   }
                 </div>
