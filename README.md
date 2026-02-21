@@ -1,47 +1,26 @@
-# Qibla Prayer Integration (Bonnetid + Aladhan)
+# Qibla Prayer Integration (AlAdhan only)
 
 ## Hva gjør pakken?
-- **Norge:** Bruker **Bonnetid** (via serverless proxy/endepunkter).
-- **Utenfor Norge:** **Aladhan global** (standard method).
-- Returnerer normaliserte tider: `Fajr, Sunrise, Dhuhr, Asr, Maghrib, Isha` (HH:mm).
+- Bruker **kun AlAdhan** for alle bønnetider.
+- Henter både **dagens tider** og **månedskalender** via AlAdhan-endepunkter.
+- Returnerer normaliserte tider: `Fajr, Sunrise, Dhuhr, Asr, Maghrib, Isha` (`HH:mm`).
 
-## Filtre
-- `netlify/functions/bonnetid.ts` – sikker proxy til `api.bonnetid.no` (sender `Api-Token` fra env)
-- `netlify/functions/aladhan-today.ts` – Aladhan (tuner automatisk for `cc=NO`)
-- `frontend/src/prayer.ts` – Frontend hjelper (månedshenting + caching + Norway-routing)
-- `netlify.toml` – Redirects til funksjonene
+## Viktige filer
+- `netlify/functions/aladhan-today.ts` – AlAdhan dag-endepunkt (proxy)
+- `netlify/functions/aladhan-month.ts` – AlAdhan måned-endepunkt (proxy)
+- `frontend/src/prayer.ts` – Frontend fetch/normalisering (AlAdhan only)
+- `netlify.toml` + `frontend/public/_redirects` – kun AlAdhan-ruter
 
 ## Miljøvariabler (Netlify)
-- `BONNETID_API_TOKEN` (**anbefalt**, token for Bonnetid)
-- `BONNETID_API_KEY` (fallback)
-- `ALADHAN_API_URL` (f.eks. `https://api.aladhan.com`)
-- `ALADHAN_METHOD` (global)
-- `ALADHAN_SCHOOL` (global)
-- `ALADHAN_LAT_ADJ` (global)
-- `ALADHAN_FAJR_ANGLE` (global fallback)
-- `ALADHAN_ISHA_ANGLE` (global fallback)
-- `ALADHAN_TUNE` (global fallback)
+- `ALADHAN_METHOD` (valgfri, brukes likt for dag + måned)
 
-**Valgfri Norge-tuning for Aladhan-endepunkter**
-- `ALADHAN_METHOD_NORWAY`
-- `ALADHAN_SCHOOL_NORWAY`
-- `ALADHAN_LAT_ADJ_NORWAY`
-- `ALADHAN_FAJR_ANGLE_NORWAY`
-- `ALADHAN_ISHA_ANGLE_NORWAY`
-- `ALADHAN_MAGHRIB_MINUTES_NORWAY`
-- `ALADHAN_TUNE_NORWAY`
+Ingen Bonnetid-variabler trengs.
 
 ## Frontend bruk
 ```ts
-import { fetchTimings } from "./prayer";
+import { fetchTimings, fetchMonthTimings } from "./prayer";
 
 const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-const timings = await fetchTimings(lat, lon, tz, countryCode, "today");
+const day = await fetchTimings(lat, lon, tz, null, "today");
+const month = await fetchMonthTimings(lat, lon, 2, 2026, tz, null);
 ```
-
-> **countryCode**: send `"NO"` i Norge for Bonnetid-ruting. Ellers landets ISO2, eller tom streng.
-
-
-## Lokal utvikling
-- Sett `BONNETID_API_TOKEN` i Netlify miljø (deploy contexts) og i lokal `.env`/`netlify dev` miljø.
-- Klienten bruker kun `GET /api/bonnetid?path=...` (proxy); token sendes aldri i browser-kode.

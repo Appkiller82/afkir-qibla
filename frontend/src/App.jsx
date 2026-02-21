@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import PushControlsAuto from "./PushControlsAuto.jsx";
 import AutoLocationModal from "./AutoLocationModal.jsx";
 import { updateMetaIfSubscribed } from "./push";
-import { debugCheckBonnetidOsloFebruary2026, fetchMonthTimings, fetchTimings } from "./prayer";
+import { fetchMonthTimings } from "./prayer";
 
 /**
  * Afkir Qibla 7 – RESTORED UI (oppdatert for unified bønnetider)
@@ -10,7 +10,7 @@ import { debugCheckBonnetidOsloFebruary2026, fetchMonthTimings, fetchTimings } f
  *   bønnetider og nedtelling, Adhan av/på + test-knapp.
  * - Auto-modal for posisjon, auto watch ved tillatelse,
  *   auto-oppdatering av push-metadata (always-on push ved bytte by).
- * - Bønnetider hentes via fetchTimings (Bonnetid→Aladhan NO tuned i Norge, Aladhan global ellers).
+ * - Bønnetider hentes via fetchTimings (Aladhan).
  */
 
 // ---------- Intl ----------
@@ -131,10 +131,7 @@ function qiblaBearing(lat, lng) {
 }
 
 
-function inferCountryCode(lat, lng, fallback = "") {
-  if (typeof lat !== "number" || typeof lng !== "number") return (fallback || "").toUpperCase();
-  const inNorway = lat >= 57 && lat <= 72.5 && lng >= 4 && lng <= 32;
-  if (inNorway) return "NO";
+function inferCountryCode(_lat, _lng, fallback = "") {
   return (fallback || "").toUpperCase();
 }
 
@@ -277,6 +274,12 @@ function loadCache(key) {
   }
 }
 
+function timesCacheKey(lat, lng, isoDate) {
+  const latKey = Number(lat).toFixed(2);
+  const lngKey = Number(lng).toFixed(2);
+  return `aq_times_cache:${latKey}:${lngKey}:${isoDate}`;
+}
+
 function normalizeWeatherCache(w) {
   if (!w || typeof w !== "object") return null;
   const sunrise = w.sunrise ? new Date(w.sunrise) : null;
@@ -306,6 +309,24 @@ function formatCalendarDate(value) {
   return `${d}.${m}.${y}`;
 }
 
+function isoDateInTz(tz, dayOffset = 0) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: tz || "Europe/Oslo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+  const y = Number(parts.find((p) => p.type === "year")?.value);
+  const m = Number(parts.find((p) => p.type === "month")?.value);
+  const d = Number(parts.find((p) => p.type === "day")?.value);
+  const utcDate = new Date(Date.UTC(y, m - 1, d));
+  utcDate.setUTCDate(utcDate.getUTCDate() + dayOffset);
+  const yyyy = utcDate.getUTCFullYear();
+  const mm = String(utcDate.getUTCMonth() + 1).padStart(2, "0");
+  const dd = String(utcDate.getUTCDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+
 function exportCalendarIcs(city, days) {
   if (!days?.length) return;
   const pad = (n) => String(n).padStart(2, "0");
@@ -332,7 +353,7 @@ function exportCalendarIcs(city, days) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = "afkir-bonnetider.ics";
+  a.download = "afkir-prayertider.ics";
   a.click();
   URL.revokeObjectURL(url);
 }
@@ -515,7 +536,8 @@ export default function App(){
   const { coords, loading, permission, requestOnce, startWatch } = useGeolocationWatch(5);
   const [city, setCity]   = useLocalStorage("aq_city", "");
   const [countryCode, setCountryCode] = useLocalStorage("aq_country", "");
-  const [times, setTimes] = useState(() => { const c = loadCache("aq_times_cache"); return c ? ensureDates(c) : null; });
+  const [times, setTimes] = useState(null);
+  const [timesText, setTimesText] = useState(null);
   const [apiError, setApiError] = useState("");
   const [bgList, setBgList] = useState(CANDIDATE_BACKGROUNDS);
   const [bgIdx, setBgIdx] = useState(0);
@@ -535,6 +557,7 @@ export default function App(){
   const timeZone = useMemo(() => Intl.DateTimeFormat().resolvedOptions().timeZone, []);
   const audioRef = useRef(null);
   const timersRef = useRef([]);
+  const refreshSeqRef = useRef(0);
 
   // Validate backgrounds once
   useEffect(() => { validateBackgrounds(CANDIDATE_BACKGROUNDS).then(setBgList) }, []);
@@ -542,7 +565,8 @@ export default function App(){
   useEffect(() => { const id = setInterval(()=> setBgIdx(i => (i+1)%bgList.length), 25000); return () => clearInterval(id) }, [bgList.length]);
   const bg = bgList[bgIdx % bgList.length];
   const activeCoords = coords || lastCoords || DEFAULT_COORDS;
-  const effectiveCountryCode = inferCountryCode(activeCoords?.latitude, activeCoords?.longitude, countryCode || (timeZone === "Europe/Oslo" ? "NO" : ""));
+  const effectiveCountryCode = inferCountryCode(activeCoords?.latitude, activeCoords?.longitude, countryCode || "");
+  const todayIsoForView = isoDateInTz(timeZone, 0);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme === "dark" ? "dark" : "light";
@@ -577,16 +601,25 @@ export default function App(){
         if (activeCoords) await refreshTimes(activeCoords.latitude, activeCoords.longitude);
       }
     }, 60000);
-    const idTick = setInterval(() => { setCountdown(nextPrayerInfo(times)); }, 1000);
+    const idTick = setInterval(() => {
+      setCountdown((prev) => {
+        if (prev?.tomorrow && prev?.at instanceof Date) {
+          return { ...prev, diffText: diffToText(prev.at.getTime() - Date.now()) };
+        }
+        const info = nextPrayerInfo(times);
+        if (!info?.name) return info;
+        const atText = info.name === "Soloppgang" ? timesText?.Soloppgang : timesText?.[info.name];
+        return { ...info, atText: atText || (info.at ? formatPrayerTime(info.at) : null) };
+      });
+    }, 1000);
     return () => { clearInterval(idDay); clearInterval(idTick) };
-  }, [activeCoords?.latitude, activeCoords?.longitude, times?.Fajr?.getTime?.(), effectiveCountryCode]);
+  }, [activeCoords?.latitude, activeCoords?.longitude, times?.Fajr?.getTime?.(), effectiveCountryCode, timesText?.Fajr]);
 
   // reverse geocode on coords change
   useEffect(() => {
     if (!activeCoords) return;
     let active = true;
     if (!coords && !city) setCity("Oslo");
-    if (!coords && !countryCode) setCountryCode("NO");
     reverseGeocode(activeCoords.latitude, activeCoords.longitude).then((r) => {
       if (!active) return;
       if (r?.name) setCity(r.name);
@@ -621,47 +654,96 @@ export default function App(){
   const qiblaDeg = useMemo(() => activeCoords ? qiblaBearing(activeCoords.latitude, activeCoords.longitude) : null, [activeCoords?.latitude, activeCoords?.longitude]);
 
   async function refreshTimes(lat, lng) {
+    const seq = ++refreshSeqRef.current;
     try {
       setApiError("");
       const tz = timeZone;
 
-      // Hent dagens tider via unified fetchTimings (Bonnetid→Aladhan NO tuned i Norge, Aladhan global ellers)
-      const todayRaw = await fetchTimings(lat, lng, tz, effectiveCountryCode, "today");
-      const todayStr = todayRaw;
-      const today = ensureDates(todayStr);
+      const todayIso = isoDateInTz(tz, 0);
+      const tomorrowIso = isoDateInTz(tz, 1);
+      const [todayYear, todayMonth] = todayIso.split("-").map(Number);
+      const [tomorrowYear, tomorrowMonth] = tomorrowIso.split("-").map(Number);
+
+      const monthRows = await fetchMonthlyCalendar(lat, lng, todayMonth, todayYear, tz, effectiveCountryCode);
+      if (seq !== refreshSeqRef.current) return;
+      setCalendarRows(monthRows || []);
+      setCalendarError("");
+      const todayRow = monthRows.find((row) => row.date === todayIso);
+
+      if (!todayRow?.timings) {
+        throw new Error(`Mangler tider i månedskalender for ${todayIso}`);
+      }
+
+      const todayStr = todayRow.timings;
+      if (todayStr?.Maghrib && todayStr?.Isha && todayStr.Maghrib === todayStr.Isha) {
+        console.warn("[Aladhan] Maghrib equals Isha for selected date", { date: todayIso, timings: todayStr });
+      }
+      const today = ensureDates(todayStr, todayIso);
+      if (seq !== refreshSeqRef.current) return;
       setTimes(today);
-      saveCache("aq_times_cache", todayStr);
+      setTimesText({
+        Fajr: todayStr.Fajr || "",
+        Soloppgang: todayStr.Sunrise || "",
+        Dhuhr: todayStr.Dhuhr || "",
+        Asr: todayStr.Asr || "",
+        Maghrib: todayStr.Maghrib || "",
+        Isha: todayStr.Isha || "",
+      });
+      saveCache(timesCacheKey(lat, lng, todayIso), todayStr);
 
-      // Beregn nedtelling som før
-      let info = nextPrayerInfo(today);
-      setCountdown(info);
+      const info = nextPrayerInfo(today);
+      const infoAtText = info?.name
+        ? (info.name === "Soloppgang" ? todayStr.Sunrise : todayStr[info.name])
+        : null;
+      setCountdown({ ...info, atText: infoAtText || (info.at ? formatPrayerTime(info.at) : null) });
 
-      // Hvis alle dagens bønner er passert -> hent Fajr for i morgen
       if (info.tomorrow) {
-        const tomorrowRaw = await fetchTimings(lat, lng, tz, effectiveCountryCode, "tomorrow");
-        const tomorrowStr = tomorrowRaw;
-        const now = new Date();
-        const tomorrowDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
-        const tomorrowIso = `${tomorrowDate.getFullYear()}-${String(tomorrowDate.getMonth() + 1).padStart(2, "0")}-${String(tomorrowDate.getDate()).padStart(2, "0")}`;
+        let tomorrowRows = monthRows;
+        if (tomorrowMonth !== todayMonth || tomorrowYear !== todayYear) {
+          tomorrowRows = await fetchMonthlyCalendar(lat, lng, tomorrowMonth, tomorrowYear, tz, effectiveCountryCode);
+          if (seq !== refreshSeqRef.current) return;
+        }
+        const tomorrowRow = tomorrowRows.find((row) => row.date === tomorrowIso);
+        if (!tomorrowRow?.timings) throw new Error(`Mangler tider i månedskalender for ${tomorrowIso}`);
+        const tomorrowStr = tomorrowRow.timings;
         const tomorrow = ensureDates(tomorrowStr, tomorrowIso);
         const fajr = tomorrow.Fajr;
         if (!fajr) throw new Error("Mangler Fajr for i morgen");
+        if (seq !== refreshSeqRef.current) return;
         setCountdown({
           name: "Fajr",
           at: fajr,
+          atText: tomorrowStr.Fajr || formatPrayerTime(fajr),
           diffText: diffToText(fajr.getTime() - Date.now()),
           tomorrow: true
         });
       }
     } catch (e) {
+      if (seq !== refreshSeqRef.current) return;
       console.error(e);
-      const cached = loadCache("aq_times_cache");
+      const msg = String(e?.message || "");
+      if (msg.includes("ALADHAN_")) {
+        setCalendarError("Aladhan-konfigurasjon mangler i miljøvariabler.");
+      } else {
+        setCalendarError("Klarte ikke hente månedskalender akkurat nå.");
+      }
+      const todayIso = isoDateInTz(timeZone, 0);
+      const cached = loadCache(timesCacheKey(lat, lng, todayIso));
       if (cached) {
-        setApiError("");
-        setTimes(ensureDates(cached));
+        setApiError("Viser lagrede tider for denne posisjonen.");
+        setTimes(ensureDates(cached, todayIso));
+        setTimesText({
+          Fajr: cached.Fajr || "",
+          Soloppgang: cached.Sunrise || "",
+          Dhuhr: cached.Dhuhr || "",
+          Asr: cached.Asr || "",
+          Maghrib: cached.Maghrib || "",
+          Isha: cached.Isha || "",
+        });
       } else {
         setApiError("Klarte ikke hente bønnetider (API).");
         setTimes(null);
+        setTimesText(null);
       }
     }
   }
@@ -695,51 +777,8 @@ export default function App(){
 
   useEffect(() => {
     if (!activeCoords) return;
-    let active = true;
     setCalendarError("");
-    const now = new Date();
-    const controller = new AbortController();
-    fetchMonthlyCalendar(
-      activeCoords.latitude,
-      activeCoords.longitude,
-      now.getMonth() + 1,
-      now.getFullYear(),
-      timeZone,
-      effectiveCountryCode,
-      controller.signal,
-    )
-      .then((rows) => {
-        if (!active) return;
-        setCalendarRows(rows || []);
-      })
-      .catch((err) => {
-        if (!active) return;
-        const m = String(err?.message || "");
-        setCalendarRows([]);
-        if (effectiveCountryCode === "NO") {
-          if (m.includes("ALADHAN_")) {
-            setCalendarError("Aladhan-konfigurasjon mangler i miljøvariabler.");
-          } else {
-            setCalendarError("Klarte ikke hente månedskalender akkurat nå.");
-          }
-        } else {
-          setCalendarError("Klarte ikke hente månedskalender nå.");
-        }
-      });
-    return () => {
-      active = false;
-      controller.abort();
-    };
   }, [activeCoords?.latitude, activeCoords?.longitude, effectiveCountryCode, timeZone]);
-
-  useEffect(() => {
-    if (!import.meta.env.DEV || effectiveCountryCode !== "NO") return;
-    debugCheckBonnetidOsloFebruary2026().then((actual) => {
-      console.info("[Bonnetid spot-check] 2026-02-21 OK", actual);
-    }).catch((err) => {
-      console.error("[Bonnetid spot-check] FAILED", err);
-    });
-  }, [effectiveCountryCode]);
 
   // Keep push metadata up to date automatically (always-on across city changes)
   useEffect(() => {
@@ -865,14 +904,17 @@ export default function App(){
                 <div style={{marginTop:8, maxHeight:220, overflow:"auto"}}>
                   <table style={{width:"100%", borderCollapse:"collapse", fontSize:14}}>
                     <thead>
-                      <tr><th style={{textAlign:"left"}}>Dato</th><th style={{textAlign:"left"}}>Fajr</th><th style={{textAlign:"left"}}>Soloppgang</th><th style={{textAlign:"left"}}>Dhuhr</th><th style={{textAlign:"left"}}>Asr</th><th style={{textAlign:"left"}}>Maghrib</th><th style={{textAlign:"left"}}>Isha</th></tr>
+                      <tr><th style={{textAlign:"left"}}>Dato</th><th style={{textAlign:"left"}}>Fajr</th><th style={{textAlign:"left"}}>Dhuhr</th><th style={{textAlign:"left"}}>Asr</th><th style={{textAlign:"left"}}>Maghrib</th><th style={{textAlign:"left"}}>Isha</th></tr>
                     </thead>
                     <tbody>
-                      {calendarRows.map((row) => (
-                        <tr key={row.date}>
-                          <td>{formatCalendarDate(row.date)}</td><td>{row.timings.Fajr || "--:--"}</td><td>{row.timings.Sunrise || "--:--"}</td><td>{row.timings.Dhuhr || "--:--"}</td><td>{row.timings.Asr || "--:--"}</td><td>{row.timings.Maghrib || "--:--"}</td><td>{row.timings.Isha || "--:--"}</td>
-                        </tr>
-                      ))}
+                      {calendarRows.map((row) => {
+                        const isTodayRow = row.date === todayIsoForView;
+                        return (
+                          <tr key={row.date} style={isTodayRow ? { background: "rgba(56,189,248,.14)", fontWeight: 700 } : undefined}>
+                            <td>{formatCalendarDate(row.date)}{isTodayRow ? " (i dag)" : ""}</td><td>{row.timings.Fajr || "--:--"}</td><td>{row.timings.Dhuhr || "--:--"}</td><td>{row.timings.Asr || "--:--"}</td><td>{row.timings.Maghrib || "--:--"}</td><td>{row.timings.Isha || "--:--"}</td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -902,17 +944,17 @@ export default function App(){
             {times ? (
               <>
                 <ul className="times">
-                  <li className="time-item"><span>Fajr</span><span>{formatPrayerTime(times.Fajr)}</span></li>
-                  <li className="time-item"><span>Soloppgang</span><span>{formatPrayerTime(times.Soloppgang)}</span></li>
-                  <li className="time-item"><span>Dhuhr</span><span>{formatPrayerTime(times.Dhuhr)}</span></li>
-                  <li className="time-item"><span>Asr</span><span>{formatPrayerTime(times.Asr)}</span></li>
-                  <li className="time-item"><span>Maghrib</span><span>{formatPrayerTime(times.Maghrib)}</span></li>
-                  <li className="time-item"><span>Isha</span><span>{formatPrayerTime(times.Isha)}</span></li>
+                  <li className="time-item"><span>Fajr</span><span>{timesText?.Fajr || formatPrayerTime(times.Fajr)}</span></li>
+                  <li className="time-item"><span>Soloppgang</span><span>{timesText?.Soloppgang || formatPrayerTime(times.Soloppgang)}</span></li>
+                  <li className="time-item"><span>Dhuhr</span><span>{timesText?.Dhuhr || formatPrayerTime(times.Dhuhr)}</span></li>
+                  <li className="time-item"><span>Asr</span><span>{timesText?.Asr || formatPrayerTime(times.Asr)}</span></li>
+                  <li className="time-item"><span>Maghrib</span><span>{timesText?.Maghrib || formatPrayerTime(times.Maghrib)}</span></li>
+                  <li className="time-item"><span>Isha</span><span>{timesText?.Isha || formatPrayerTime(times.Isha)}</span></li>
                 </ul>
 
                 <div style={{marginTop:10, fontSize:15}}>
                   {countdown?.name
-                    ? <>Neste bønn: <b>{countdown.name}</b> kl <b>{formatPrayerTime(countdown.at)}</b> (<span className="hint">{countdown.diffText}</span>)</>
+                    ? <>{countdown.tomorrow ? "Neste bønn i morgen: " : "Neste bønn: "}<b>{countdown.name}</b> kl <b>{countdown.atText || formatPrayerTime(countdown.at)}</b> (<span className="hint">{countdown.diffText}</span>)</>
                     : <span className="hint">Alle dagens bønner er passert – oppdateres ved midnatt.</span>
                   }
                 </div>
