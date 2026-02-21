@@ -1,8 +1,16 @@
 
-// Frontend helper: unified timings fetch with Norway->Bonnetid then Aladhan (tuned), World->Aladhan
+// Frontend helper: unified timings fetch with Norway->Bonnetid (strict), World->Aladhan
 export type Timings = {
   Fajr: string; Sunrise: string; Dhuhr: string; Asr: string; Maghrib: string; Isha: string;
 };
+
+async function readJsonOrThrow(res: Response, source: string) {
+  const ct = res.headers.get("content-type") || "";
+  const text = await res.text();
+  if (!res.ok) throw new Error(`${source} ${res.status}: ${text || "empty"}`);
+  if (!ct.includes("application/json")) throw new Error(`${source} returned non-JSON response`);
+  try { return JSON.parse(text); } catch { throw new Error(`${source} invalid JSON`); }
+}
 
 export async function fetchTimings(
   lat: number,
@@ -14,28 +22,16 @@ export async function fetchTimings(
   const cc = (countryCode || "").toUpperCase();
 
   if (cc === "NO") {
-    // Try Bonnetid first
-    try {
-      const u = `/api/bonnetid-today?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}&tz=${encodeURIComponent(tz)}&when=${encodeURIComponent(when)}`;
-      const r = await fetch(u);
-      if (!r.ok) throw new Error(`Bonnetid ${r.status}`);
-      const j = await r.json();
-      return ensure(j.timings);
-    } catch (err) {
-      // Fallback: Aladhan tuned for Norway
-      const u2 = `/api/aladhan-today?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}&tz=${encodeURIComponent(tz)}&when=${encodeURIComponent(when)}&cc=NO`;
-      const r2 = await fetch(u2);
-      if (!r2.ok) throw new Error(`Aladhan fallback ${r2.status}`);
-      const j2 = await r2.json();
-      return ensure(j2.timings);
-    }
+    const u = `/api/bonnetid-today?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}&tz=${encodeURIComponent(tz)}&when=${encodeURIComponent(when)}`;
+    const r = await fetch(u);
+    const j = await readJsonOrThrow(r, "Bonnetid");
+    return ensure(j.timings);
   }
 
   // Rest of world: Aladhan global
   const u3 = `/api/aladhan-today?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}&tz=${encodeURIComponent(tz)}&when=${encodeURIComponent(when)}`;
   const r3 = await fetch(u3);
-  if (!r3.ok) throw new Error(`Aladhan ${r3.status}`);
-  const j3 = await r3.json();
+  const j3 = await readJsonOrThrow(r3, "Aladhan");
   return ensure(j3.timings);
 }
 
