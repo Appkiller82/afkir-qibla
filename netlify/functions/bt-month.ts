@@ -15,10 +15,30 @@ function resolveBonnetidUrl(rawBase?: string) {
   return url;
 }
 
-function pickTiming(t: any, ...keys: string[]) {
-  for (const k of keys) {
-    const v = t?.[k];
-    if (v !== undefined && v !== null && String(v).trim() !== "") return String(v).slice(0, 5);
+function normalizeFieldKey(key: string) {
+  return String(key || "")
+    .normalize("NFKD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
+}
+
+function createTimingLookup(t: any) {
+  const map = new Map<string, string>();
+  if (!t || typeof t !== "object") return map;
+  for (const [rawKey, rawValue] of Object.entries(t)) {
+    if (rawValue === undefined || rawValue === null) continue;
+    const value = String(rawValue).trim();
+    if (!value) continue;
+    map.set(normalizeFieldKey(String(rawKey)), value);
+  }
+  return map;
+}
+
+function pickTiming(lookup: Map<string, string>, ...aliases: string[]) {
+  for (const alias of aliases) {
+    const hit = lookup.get(normalizeFieldKey(alias));
+    if (hit) return hit.slice(0, 5);
   }
   return "";
 }
@@ -49,16 +69,17 @@ async function fetchDay(baseUrl: URL | string, apiKey: string, lat: string, lon:
 
   const data = await upstream.json();
   const t = data?.timings || data?.data?.timings || data?.result?.timings || data?.data || data?.result || data;
+  const lookup = createTimingLookup(t);
 
   return {
     date,
     weekday: new Date(year, month - 1, day).toLocaleDateString("nb-NO", { weekday: "short" }),
     timings: {
-      Fajr: pickTiming(t, "Morgengry 16°", "Morgengry16°", "Morgengry", "Fajr", "fajr"),
-      Dhuhr: pickTiming(t, "Duhr", "Dhor", "Dhuhr", "Zuhr", "zuhr", "dhuhr"),
-      Asr: pickTiming(t, "2x-skygge", "Asr", "asr_2x", "asr2x", "asr", "1x-skygge"),
-      Maghrib: pickTiming(t, "Maghrib", "maghrib"),
-      Isha: pickTiming(t, "Isha", "isha"),
+      Fajr: pickTiming(lookup, "Morgengry 16°", "Morgengry16°", "Morgengry", "Fajr", "fajr"),
+      Dhuhr: pickTiming(lookup, "Duhr", "Dhor", "Dhuhr", "Zuhr", "zuhr", "dhuhr"),
+      Asr: pickTiming(lookup, "Asr", "2x-skygge", "asr_2x", "asr2x", "asr", "1x-skygge"),
+      Maghrib: pickTiming(lookup, "Maghrib", "maghrib"),
+      Isha: pickTiming(lookup, "Isha", "isha"),
     },
   };
 }
