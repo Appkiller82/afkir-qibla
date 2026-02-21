@@ -252,6 +252,7 @@ async function fetchMonthlyCalendar(lat, lng, month, year, countryCode, tz) {
   url.searchParams.set("method", "3");
   url.searchParams.set("month", String(month));
   url.searchParams.set("year", String(year));
+
   const res = await fetch(url.toString());
   if (!res.ok) throw new Error("Calendar API failed");
   const body = await res.json();
@@ -259,13 +260,15 @@ async function fetchMonthlyCalendar(lat, lng, month, year, countryCode, tz) {
     date: `${d?.date?.gregorian?.year}-${String(d?.date?.gregorian?.month?.number || month).padStart(2, "0")}-${String(d?.date?.gregorian?.day || "01").padStart(2, "0")}`,
     weekday: d?.date?.gregorian?.weekday?.en,
     timings: {
-      Fajr: String(d?.timings?.Fajr || "").slice(0,5),
-      Dhuhr: String(d?.timings?.Dhuhr || "").slice(0,5),
-      Asr: String(d?.timings?.Asr || "").slice(0,5),
-      Maghrib: String(d?.timings?.Maghrib || "").slice(0,5),
-      Isha: String(d?.timings?.Isha || "").slice(0,5),
+      Fajr: String(d?.timings?.Fajr || "").slice(0, 5),
+      Dhuhr: String(d?.timings?.Dhuhr || "").slice(0, 5),
+      Asr: String(d?.timings?.Asr || "").slice(0, 5),
+      Maghrib: String(d?.timings?.Maghrib || "").slice(0, 5),
+      Isha: String(d?.timings?.Isha || "").slice(0, 5),
     },
   }));
+
+  return rows;
 }
 
 function saveCache(key, value) {
