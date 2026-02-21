@@ -579,7 +579,7 @@ export default function App(){
     }, 60000);
     const idTick = setInterval(() => { setCountdown(nextPrayerInfo(times)); }, 1000);
     return () => { clearInterval(idDay); clearInterval(idTick) };
-  }, [activeCoords?.latitude, activeCoords?.longitude, times?.Fajr?.getTime?.(), countryCode]);
+  }, [activeCoords?.latitude, activeCoords?.longitude, times?.Fajr?.getTime?.(), effectiveCountryCode]);
 
   // reverse geocode on coords change
   useEffect(() => {
