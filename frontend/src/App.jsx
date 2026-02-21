@@ -168,6 +168,51 @@ function ensureDates(strTimings /* {Fajr:"05:15", ...} */, baseDate) {
   };
 }
 
+
+function hhmmToMinutes(hhmm) {
+  const m = String(hhmm || "").match(/^(\d{1,2}):(\d{2})$/);
+  if (!m) return null;
+  return Number(m[1]) * 60 + Number(m[2]);
+}
+
+function minutesToHHMM(total) {
+  if (!Number.isFinite(total)) return "";
+  const n = ((Math.round(total) % 1440) + 1440) % 1440;
+  const h = Math.floor(n / 60);
+  const m = n % 60;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+}
+
+function tuneNorwayTimings(raw, countryCode, tz) {
+  if (!raw || typeof raw !== "object") return raw;
+  const cc = String(countryCode || "").toUpperCase();
+  if (!(cc === "NO" || (!cc && String(tz || "") === "Europe/Oslo"))) return raw;
+
+  const out = { ...raw };
+  const dhuhr = hhmmToMinutes(out.Dhuhr);
+  const asr = hhmmToMinutes(out.Asr);
+  const maghrib = hhmmToMinutes(out.Maghrib);
+  const isha = hhmmToMinutes(out.Isha);
+
+  // IRN-like app-level tuning (historically used in this UI):
+  // - Dhuhr +5 min (Istiwa -> Dhuhr)
+  // - Prefer 2x-shadow behavior when Asr is too close to Dhuhr
+  // - If Maghrib collapses onto Isha, pull Maghrib back to expected winter gap
+  if (dhuhr != null) out.Dhuhr = minutesToHHMM(dhuhr + 5);
+
+  if (dhuhr != null && asr != null) {
+    const diff = ((asr - dhuhr) + 1440) % 1440;
+    if (diff > 0 && diff < 150) out.Asr = minutesToHHMM(asr + 39);
+  }
+
+  if (maghrib != null && isha != null) {
+    const gap = ((isha - maghrib) + 1440) % 1440;
+    if (gap < 45) out.Maghrib = minutesToHHMM(isha - 110);
+  }
+
+  return out;
+}
+
 function formatPrayerTime(value) {
   if (!(value instanceof Date) || Number.isNaN(value.getTime())) return "--:--";
   return NB_TIME.format(value);
@@ -624,7 +669,8 @@ export default function App(){
       const tz = timeZone;
 
       // Hent dagens tider via unified fetchTimings (Bonnetid→Aladhan NO tuned i Norge, Aladhan global ellers)
-      const todayStr = await fetchTimings(lat, lng, tz, effectiveCountryCode, "today");
+      const todayRaw = await fetchTimings(lat, lng, tz, effectiveCountryCode, "today");
+      const todayStr = tuneNorwayTimings(todayRaw, effectiveCountryCode, tz);
       const today = ensureDates(todayStr);
       setTimes(today);
       saveCache("aq_times_cache", todayStr);
@@ -635,7 +681,8 @@ export default function App(){
 
       // Hvis alle dagens bønner er passert -> hent Fajr for i morgen
       if (info.tomorrow) {
-        const tomorrowStr = await fetchTimings(lat, lng, tz, effectiveCountryCode, "tomorrow");
+        const tomorrowRaw = await fetchTimings(lat, lng, tz, effectiveCountryCode, "tomorrow");
+        const tomorrowStr = tuneNorwayTimings(tomorrowRaw, effectiveCountryCode, tz);
         const now = new Date();
         const tomorrowDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
         const tomorrowIso = `${tomorrowDate.getFullYear()}-${String(tomorrowDate.getMonth() + 1).padStart(2, "0")}-${String(tomorrowDate.getDate()).padStart(2, "0")}`;
@@ -706,7 +753,11 @@ export default function App(){
     )
       .then((rows) => {
         if (!active) return;
-        setCalendarRows(rows);
+        const tunedRows = (rows || []).map((row) => ({
+          ...row,
+          timings: tuneNorwayTimings(row?.timings || {}, effectiveCountryCode, timeZone),
+        }));
+        setCalendarRows(tunedRows);
       })
       .catch((err) => {
         if (!active) return;
