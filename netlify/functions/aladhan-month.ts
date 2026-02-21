@@ -1,17 +1,15 @@
 import type { Handler } from "@netlify/functions";
 
 function pickTuning(cc: string) {
-  if (cc === "NO") {
-    return {
-      method: process.env.ALADHAN_METHOD_NORWAY || "11",
-      school: process.env.ALADHAN_SCHOOL_NORWAY || "0",
-      latAdj: process.env.ALADHAN_LAT_ADJ_NORWAY || "3",
-    };
-  }
+  const isNo = cc === "NO";
   return {
-    method: process.env.ALADHAN_METHOD || "",
-    school: process.env.ALADHAN_SCHOOL || "",
-    latAdj: process.env.ALADHAN_LAT_ADJ || "",
+    method: isNo ? process.env.ALADHAN_METHOD_NORWAY || "99" : process.env.ALADHAN_METHOD || "",
+    school: isNo ? process.env.ALADHAN_SCHOOL_NORWAY || "1" : process.env.ALADHAN_SCHOOL || "",
+    latAdj: isNo ? process.env.ALADHAN_LAT_ADJ_NORWAY || "3" : process.env.ALADHAN_LAT_ADJ || "",
+    fajrAngle: isNo ? process.env.ALADHAN_FAJR_ANGLE_NORWAY || "16" : process.env.ALADHAN_FAJR_ANGLE || "",
+    ishaAngle: isNo ? process.env.ALADHAN_ISHA_ANGLE_NORWAY || "14" : process.env.ALADHAN_ISHA_ANGLE || "",
+    maghribMinutes: isNo ? process.env.ALADHAN_MAGHRIB_MINUTES_NORWAY || "0" : process.env.ALADHAN_MAGHRIB_MINUTES || "0",
+    tune: isNo ? process.env.ALADHAN_TUNE_NORWAY || "0,0,5,0,0,0,0,0,0" : process.env.ALADHAN_TUNE || "",
   };
 }
 
@@ -47,6 +45,10 @@ export const handler: Handler = async (event) => {
     if (tuning.method) url.searchParams.set("method", tuning.method);
     if (tuning.school) url.searchParams.set("school", tuning.school);
     if (tuning.latAdj) url.searchParams.set("latitudeAdjustmentMethod", tuning.latAdj);
+    if (tuning.fajrAngle && tuning.ishaAngle) {
+      url.searchParams.set("methodSettings", `${tuning.fajrAngle},${tuning.ishaAngle},${tuning.maghribMinutes}`);
+    }
+    if (tuning.tune) url.searchParams.set("tune", tuning.tune);
 
     const upstream = await fetch(url.toString(), { headers: { Accept: "application/json" } });
     const text = await upstream.text();
