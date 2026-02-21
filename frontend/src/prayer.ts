@@ -18,6 +18,7 @@ export type MonthRow = {
 
 const BONNETID_MONTH_TTL_MS = 12 * 60 * 60 * 1000; // 12h
 const BONNETID_LOCATION_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7d
+const monthInFlight = new Map<string, Promise<MonthRow[]>>();
 
 async function readJsonOrThrow(res: Response, source: string) {
   const ct = res.headers.get("content-type") || "";
@@ -227,20 +228,70 @@ export async function fetchMonthTimingsNO(
   month: number,
   lat: number,
   lon: number,
+  tz: string,
   signal?: AbortSignal,
 ): Promise<MonthRow[]> {
-  const locationId = await resolveBonnetidLocationId(lat, lon, signal);
-  const cacheKey = `bonnetid:${locationId}:${year}-${String(month).padStart(2, "0")}`;
+  const roundedKey = roundedGeoKey(lat, lon);
+  const cacheKey = `bonnetid:v2:${roundedKey}:${year}-${String(month).padStart(2, "0")}`;
   const cached = loadCache<MonthRow[]>(cacheKey, BONNETID_MONTH_TTL_MS);
   if (cached && cached.length) return cached;
 
-  const payload = await apiBonnetid(`/prayertimes/${locationId}/${year}/${month}/`, signal);
-  if (!Array.isArray(payload)) throw new Error("Ugyldig månedsdata fra Bonnetid");
+  const inFlight = monthInFlight.get(cacheKey);
+  if (inFlight) return inFlight;
 
-  const rows = mapBonnetidMonthRows(payload, year, month);
-  runDevSpotCheck(rows, year, month, lat, lon);
-  saveCache(cacheKey, rows);
-  return rows;
+  const request = (async () => {
+    try {
+      const rows = await fetchBonnetidMonthEndpoint(lat, lon, month, year, tz, signal);
+      if (!rows.length) throw new Error("Bonnetid month endpoint returned empty rows");
+      runDevSpotCheck(rows, year, month, lat, lon);
+      saveCache(cacheKey, rows);
+      return rows;
+    } catch {
+      // Fallback to legacy proxy path (kept for compatibility).
+      const locationId = await resolveBonnetidLocationId(lat, lon, signal);
+      const payload = await apiBonnetid(`/prayertimes/${locationId}/${year}/${month}/`, signal);
+      if (!Array.isArray(payload)) throw new Error("Ugyldig månedsdata fra Bonnetid");
+      const rows = mapBonnetidMonthRows(payload, year, month);
+      if (!rows.length) throw new Error("Bonnetid fallback returned empty rows");
+      runDevSpotCheck(rows, year, month, lat, lon);
+      saveCache(cacheKey, rows);
+      return rows;
+    } finally {
+      monthInFlight.delete(cacheKey);
+    }
+  })();
+
+  monthInFlight.set(cacheKey, request);
+  return request;
+}
+
+
+async function fetchBonnetidMonthEndpoint(
+  lat: number,
+  lon: number,
+  month: number,
+  year: number,
+  tz: string,
+  signal?: AbortSignal,
+): Promise<MonthRow[]> {
+  const url = new URL("/api/bonnetid-month", window.location.origin);
+  url.searchParams.set("lat", String(lat));
+  url.searchParams.set("lon", String(lon));
+  url.searchParams.set("tz", String(tz));
+  url.searchParams.set("month", String(month));
+  url.searchParams.set("year", String(year));
+
+  const res = await fetch(url.toString(), { signal });
+  const body = await readJsonOrThrow(res, "Bonnetid month");
+  const rows = Array.isArray(body?.rows) ? body.rows : [];
+
+  return rows
+    .map((row: any) => ({
+      date: String(row?.date || ""),
+      weekday: row?.weekday,
+      timings: ensure(row?.timings || {}),
+    }))
+    .filter((row: MonthRow) => /^\d{4}-\d{2}-\d{2}$/.test(row.date));
 }
 
 async function fetchAladhan(lat: number, lon: number, tz: string, when: "today" | "tomorrow", cc: string) {
@@ -261,11 +312,30 @@ export async function fetchTimings(
 
   if (isNorway(cc, tz)) {
     const isoDate = normalizeDateInput(when, tz);
+
+    // 1) Prefer dedicated Bonnetid day endpoint.
+    try {
+      const btUrl = new URL("/api/bonnetid-today", window.location.origin);
+      btUrl.searchParams.set("lat", String(lat));
+      btUrl.searchParams.set("lon", String(lon));
+      btUrl.searchParams.set("tz", String(tz));
+      btUrl.searchParams.set("when", isoDate);
+
+      const btRes = await fetch(btUrl.toString());
+      const btBody = await readJsonOrThrow(btRes, "Bonnetid today");
+      const timings = ensure(btBody?.timings || btBody?.data?.timings || {});
+      if (!looksSuspiciousNorway(timings)) return timings;
+    } catch {
+      // Continue to month fallback.
+    }
+
+    // 2) Fall back to Bonnetid month endpoint and pick requested date.
     const year = Number(isoDate.slice(0, 4));
     const month = Number(isoDate.slice(5, 7));
-    const rows = await fetchMonthTimingsNO(year, month, lat, lon);
+    const rows = await fetchMonthTimingsNO(year, month, lat, lon, tz);
     const dayRow = rows.find((r) => r.date === isoDate);
     if (dayRow && !looksSuspiciousNorway(dayRow.timings)) return dayRow.timings;
+
     throw new Error(`Bonnetid mangler gyldige tider for ${isoDate}`);
   }
 
@@ -283,16 +353,28 @@ export async function fetchMonthTimings(
   signal?: AbortSignal,
 ): Promise<MonthRow[]> {
   if (isNorway(countryCode, tz)) {
-    return fetchMonthTimingsNO(year, month, lat, lon, signal);
+    return fetchMonthTimingsNO(year, month, lat, lon, tz, signal);
   }
 
+  return fetchAladhanMonth(lat, lon, month, year, tz, String((countryCode || "").toUpperCase()), signal);
+}
+
+async function fetchAladhanMonth(
+  lat: number,
+  lon: number,
+  month: number,
+  year: number,
+  tz: string,
+  cc: string,
+  signal?: AbortSignal,
+): Promise<MonthRow[]> {
   const adUrl = new URL("/api/aladhan-month", window.location.origin);
   adUrl.searchParams.set("lat", String(lat));
   adUrl.searchParams.set("lon", String(lon));
   adUrl.searchParams.set("tz", String(tz));
   adUrl.searchParams.set("month", String(month));
   adUrl.searchParams.set("year", String(year));
-  adUrl.searchParams.set("cc", String((countryCode || "").toUpperCase()));
+  adUrl.searchParams.set("cc", cc);
 
   const adRes = await fetch(adUrl.toString(), { signal });
   if (!adRes.ok) throw new Error(await adRes.text());

@@ -51,6 +51,8 @@ export const handler: Handler = async (event) => {
       headers: {
         Accept: "application/json",
         "Api-Token": token,
+        "X-API-Key": token,
+        Authorization: `Bearer ${token}`,
       },
     });
 
