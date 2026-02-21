@@ -15,6 +15,30 @@ function resolveBonnetidUrl(rawBase?: string) {
   return url;
 }
 
+
+function normalizeDate(input: string, tz: string) {
+  const v = String(input || "today").trim().toLowerCase();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(v)) return v;
+  const addDays = v === "tomorrow" ? 1 : 0;
+
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: tz || "Europe/Oslo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+
+  const y = Number(parts.find((p) => p.type === "year")?.value);
+  const m = Number(parts.find((p) => p.type === "month")?.value);
+  const d = Number(parts.find((p) => p.type === "day")?.value);
+
+  const baseUtc = new Date(Date.UTC(y, m - 1, d));
+  baseUtc.setUTCDate(baseUtc.getUTCDate() + addDays);
+  const yy = baseUtc.getUTCFullYear();
+  const mm = String(baseUtc.getUTCMonth() + 1).padStart(2, "0");
+  const dd = String(baseUtc.getUTCDate()).padStart(2, "0");
+  return `${yy}-${mm}-${dd}`;
+}
 export const handler: Handler = async (event) => {
   try {
     const qs = event.queryStringParameters || {};
@@ -24,7 +48,7 @@ export const handler: Handler = async (event) => {
     const lat = (qs as any).lat;
     const lon = (qs as any).lon;
     const tz  = (qs as any).tz;
-    const date = (qs as any).when || (qs as any).date || "today";
+    const when = (qs as any).when || (qs as any).date || "today";
 
     if (!lat || !lon || !tz) {
       return { statusCode: 400, body: "Missing lat/lon/tz" };
@@ -42,7 +66,7 @@ export const handler: Handler = async (event) => {
     url.searchParams.set("lat", String(lat));
     url.searchParams.set("lon", String(lon));
     url.searchParams.set("tz", String(tz));
-    url.searchParams.set("date", String(date));
+    url.searchParams.set("date", normalizeDate(String(when), String(tz)));
 
     const upstream = await fetch(url.toString(), {
       headers: {
