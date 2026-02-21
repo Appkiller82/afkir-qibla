@@ -25,18 +25,17 @@ export const handler: Handler = async (event) => {
     url.searchParams.set("timezonestring", String(tz));
 
     // Optional calculation tuning via env vars.
-    // Norway profile aligned to prior working setup (NO_IRN_PROFILE):
-    // - Fajr 16°, Isha 15°, latitudeAdjustmentMethod=3, school=0
-    // - Offsets: Fajr -9, Dhuhr +6, Maghrib +5
+    // Keep Norway-specific overrides only when configured in env,
+    // but do not force hard-coded fallback values.
     const isNo = isNorwayContext(cc, String(tz));
-    const method = (isNo ? process.env.ALADHAN_METHOD_NORWAY || "99" : process.env.ALADHAN_METHOD) || "";
-    const school = (isNo ? process.env.ALADHAN_SCHOOL_NORWAY || "0" : process.env.ALADHAN_SCHOOL) || "";
-    const latAdj = (isNo ? process.env.ALADHAN_LAT_ADJ_NORWAY || "3" : process.env.ALADHAN_LAT_ADJ) || "";
+    const method = (isNo ? process.env.ALADHAN_METHOD_NORWAY || process.env.ALADHAN_METHOD : process.env.ALADHAN_METHOD) || "";
+    const school = (isNo ? process.env.ALADHAN_SCHOOL_NORWAY || process.env.ALADHAN_SCHOOL : process.env.ALADHAN_SCHOOL) || "";
+    const latAdj = (isNo ? process.env.ALADHAN_LAT_ADJ_NORWAY || process.env.ALADHAN_LAT_ADJ : process.env.ALADHAN_LAT_ADJ) || "";
 
-    const fajrAngle = (isNo ? process.env.ALADHAN_FAJR_ANGLE_NORWAY || "16" : process.env.ALADHAN_FAJR_ANGLE) || "";
-    const ishaAngle = (isNo ? process.env.ALADHAN_ISHA_ANGLE_NORWAY || "15" : process.env.ALADHAN_ISHA_ANGLE) || "";
-    const maghribMinutes = isNo ? process.env.ALADHAN_MAGHRIB_MINUTES_NORWAY || "0" : process.env.ALADHAN_MAGHRIB_MINUTES || "0";
-    const tune = isNo ? process.env.ALADHAN_TUNE_NORWAY || "0,-9,0,6,0,0,5,0,0" : process.env.ALADHAN_TUNE || "";
+    const fajrAngle = (isNo ? process.env.ALADHAN_FAJR_ANGLE_NORWAY || process.env.ALADHAN_FAJR_ANGLE : process.env.ALADHAN_FAJR_ANGLE) || "";
+    const ishaAngle = (isNo ? process.env.ALADHAN_ISHA_ANGLE_NORWAY || process.env.ALADHAN_ISHA_ANGLE : process.env.ALADHAN_ISHA_ANGLE) || "";
+    const maghribMinutes = isNo ? process.env.ALADHAN_MAGHRIB_MINUTES_NORWAY || process.env.ALADHAN_MAGHRIB_MINUTES || "0" : process.env.ALADHAN_MAGHRIB_MINUTES || "0";
+    const tune = isNo ? process.env.ALADHAN_TUNE_NORWAY || process.env.ALADHAN_TUNE || "" : process.env.ALADHAN_TUNE || "";
 
     if (method) url.searchParams.set("method", method);
     if (school) url.searchParams.set("school", school);
