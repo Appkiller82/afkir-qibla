@@ -244,15 +244,6 @@ async function fetchWeather(lat, lng) {
 async function fetchMonthlyCalendar(lat, lng, month, year, countryCode, tz) {
   const cc = (countryCode || "").toUpperCase();
 
-  if (cc === "NO") {
-    const req = `/api/bonnetid-month?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lng)}&tz=${encodeURIComponent(tz)}&month=${encodeURIComponent(month)}&year=${encodeURIComponent(year)}`;
-    const res = await fetch(req);
-    if (!res.ok) {
-      const detail = await res.text().catch(() => "");
-      throw new Error(detail || "Calendar API failed");
-    }
-    const body = await res.json();
-    return Array.isArray(body?.rows) ? body.rows : [];
   }
 
   const url = new URL("https://api.aladhan.com/v1/calendar");
@@ -265,7 +256,7 @@ async function fetchMonthlyCalendar(lat, lng, month, year, countryCode, tz) {
   const res = await fetch(url.toString());
   if (!res.ok) throw new Error("Calendar API failed");
   const body = await res.json();
-  const rows = (body?.data || []).map((d) => ({
+  return (body?.data || []).map((d) => ({
     date: `${d?.date?.gregorian?.year}-${String(d?.date?.gregorian?.month?.number || month).padStart(2, "0")}-${String(d?.date?.gregorian?.day || "01").padStart(2, "0")}`,
     weekday: d?.date?.gregorian?.weekday?.en,
     timings: {
@@ -594,7 +585,7 @@ export default function App(){
       if (r?.name) setCity(r.name);
       if (r?.countryCode) setCountryCode(r.countryCode);
     });
-  }, [activeCoords?.latitude, activeCoords?.longitude, effectiveCountryCode]);
+
 
   // schedule reminders (tab-only)
   useEffect(() => {
@@ -686,7 +677,7 @@ export default function App(){
     if (!activeCoords) return;
     setCalendarError("");
     const now = new Date();
-    fetchMonthlyCalendar(activeCoords.latitude, activeCoords.longitude, now.getMonth() + 1, now.getFullYear(), effectiveCountryCode, Intl.DateTimeFormat().resolvedOptions().timeZone)
+
       .then((rows) => setCalendarRows(rows))
       .catch((err) => {
         setCalendarRows([]);
@@ -701,7 +692,7 @@ export default function App(){
           setCalendarError("Klarte ikke hente månedskalender nå.");
         }
       });
-  }, [activeCoords?.latitude, activeCoords?.longitude, effectiveCountryCode]);
+
 
   // Keep push metadata up to date automatically (always-on across city changes)
   useEffect(() => {
@@ -733,7 +724,7 @@ export default function App(){
         ul.times { list-style:none; padding:0; margin:0 }
         .time-item { display:flex; justify-content:space-between; padding:8px 0; border-bottom:1px dashed var(--border); font-size:16px }
         .error { color:#fecaca; background:rgba(239,68,68,.12); border:1px solid rgba(239,68,68,.35); padding:10px; border-radius:12px; }
-        .hero-grid { display:grid; gap: 8px; grid-template-columns: repeat(3, minmax(0, 1fr)); margin-top: 10px; }
+
         .hero-stat { border: 1px solid var(--border); border-radius: 14px; padding: 12px; background: rgba(2, 6, 23, .25); }
         .kpi { font-size: 24px; font-weight: 700; }
         .section-grid { display:grid; gap:12px; margin-top:12px; grid-template-columns: 1.2fr .8fr; }
@@ -742,9 +733,7 @@ export default function App(){
 
       <div className="container">
         <header className="card hero" style={{marginBottom:12, textAlign:"left"}}>
-          <h1 style={{marginBottom:4}}>Afkir Qibla</h1>
-          <div className="row" style={{justifyContent:"space-between", marginBottom:6}}>
-            <div className="hint">{NB_DAY.format(new Date())}</div>
+
             <button className="btn" onClick={()=> setTheme(t => t === "dark" ? "light" : "dark") }>
               Tema: {theme === "dark" ? "Mørk" : "Lys"}
             </button>
@@ -804,45 +793,7 @@ export default function App(){
                 <>
                   <div style={{display:"flex", justifyContent:"space-between", marginTop:10, alignItems:"baseline"}}>
                     <div>
-                      <div className="kpi" style={{display:"flex", alignItems:"center", gap:8}}><span>{weatherIcon(weather.code)}</span><span>{safeNum(weather.currentTemp) != null ? `${NB_TEMP.format(weather.currentTemp)}°C` : "--"}</span></div>
-                      <div className="hint">{weatherCodeToText(weather.code)}</div>
-                    </div>
-                    <div className="hint">Føles som {safeNum(weather.feelsLike) != null ? `${NB_TEMP.format(weather.feelsLike)}°C` : "--"}</div>
-                  </div>
-                  <div className="row" style={{marginTop:10, justifyContent:"space-between"}}>
-                    <span className="hint">Min/maks: {safeNum(weather.min) != null ? NB_TEMP.format(weather.min) : "--"}° / {safeNum(weather.max) != null ? NB_TEMP.format(weather.max) : "--"}°</span>
-                    <span className="hint">Vind: {safeNum(weather.wind) != null ? NB_TEMP.format(weather.wind) : "--"} km/t</span>
-                  </div>
-                  <div className="row" style={{marginTop:6, justifyContent:"space-between"}}>
-                    <span className="hint">Soloppgang: {weather.sunrise instanceof Date && !Number.isNaN(weather.sunrise.getTime()) ? NB_TIME.format(weather.sunrise) : "--"}</span>
-                    <span className="hint">Solnedgang: {weather.sunset instanceof Date && !Number.isNaN(weather.sunset.getTime()) ? NB_TIME.format(weather.sunset) : "--"}</span>
-                  </div>
-                </>
-              )}
-            </section>
 
-            <section className="card">
-              <div style={{display:"flex", justifyContent:"space-between", alignItems:"center"}}>
-                <h3>Månedskalender</h3>
-                <div className="row">
-                  <button className="btn" onClick={() => setCalendarExpanded(v => !v)} disabled={!calendarRows.length}>{calendarExpanded ? "Lukk" : "Åpne hele måneden"}</button>
-                  <button className="btn" onClick={() => exportCalendarIcs(city, calendarRows)} disabled={!calendarRows.length}>Eksporter .ics</button>
-                </div>
-              </div>
-              {calendarError && <div className="error" style={{marginTop:8}}>{calendarError}</div>}
-              {!calendarRows.length && !calendarError && <div className="hint" style={{marginTop:8}}>Henter månedens bønnetider…</div>}
-              {!!calendarRows.length && (
-                <div style={{maxHeight: 240, overflow: "auto", marginTop: 10}}>
-                  <table style={{width:"100%", borderCollapse:"collapse", fontSize:13}}>
-                    <thead>
-                      <tr style={{textAlign:"left", borderBottom:"1px solid var(--border)"}}>
-                        <th>Dato</th><th>Fajr</th><th>Dhuhr</th><th>Asr</th><th>Maghrib</th><th>Isha</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {(calendarExpanded ? calendarRows : calendarRows.slice(new Date().getDate()-1, new Date().getDate()+6)).map((day) => (
-                        <tr key={day.date} style={{borderBottom:"1px dashed var(--border)"}}>
-                          <td>{new Date(day.date).toLocaleDateString("nb-NO")}</td><td>{day.timings.Fajr || "--"}</td><td>{day.timings.Dhuhr || "--"}</td><td>{day.timings.Asr || "--"}</td><td>{day.timings.Maghrib || "--"}</td><td>{day.timings.Isha || "--"}</td>
                         </tr>
                       ))}
                     </tbody>
