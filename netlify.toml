@@ -11,19 +11,6 @@
   package = "@netlify/plugin-functions-install-core"
 
 [[redirects]]
-  from = "/api/bonnetid-today"
-  to = "/.netlify/functions/bt-today"
-  status = 200
-  force = true
-
-# Catch mistaken route '/api/bonnetid-today2'
-[[redirects]]
-  from = "/api/bonnetid-today2"
-  to = "/.netlify/functions/bt-today"
-  status = 200
-  force = true
-
-[[redirects]]
   from = "/api/aladhan-today"
   to = "/.netlify/functions/aladhan-today"
   status = 200
@@ -32,23 +19,5 @@
 [[redirects]]
   from = "/api/aladhan-month"
   to = "/.netlify/functions/aladhan-month"
-  status = 200
-  force = true
-
-[[redirects]]
-  from = "/api/bonnetid-month"
-  to = "/.netlify/functions/bt-month"
-  status = 200
-  force = true
-
-[[redirects]]
-  from = "/api/bonnetid-health"
-  to = "/.netlify/functions/bonnetid-health"
-  status = 200
-  force = true
-
-[[redirects]]
-  from = "/api/bonnetid"
-  to = "/.netlify/functions/bonnetid"
   status = 200
   force = true

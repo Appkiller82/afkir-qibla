@@ -1,20 +1,5 @@
 import type { Handler } from "@netlify/functions";
 
-function pickTuning(cc: string, tz: string) {
-  const isNo = cc === "NO" || String(tz || "") === "Europe/Oslo";
-  return {
-    // Keep Norway-specific env overrides if configured, but avoid hard-coded defaults
-    // that can collapse Isha to Maghrib during high-latitude periods.
-    method: isNo ? process.env.ALADHAN_METHOD_NORWAY || process.env.ALADHAN_METHOD || "" : process.env.ALADHAN_METHOD || "",
-    school: isNo ? process.env.ALADHAN_SCHOOL_NORWAY || process.env.ALADHAN_SCHOOL || "" : process.env.ALADHAN_SCHOOL || "",
-    latAdj: isNo ? process.env.ALADHAN_LAT_ADJ_NORWAY || process.env.ALADHAN_LAT_ADJ || "" : process.env.ALADHAN_LAT_ADJ || "",
-    fajrAngle: isNo ? process.env.ALADHAN_FAJR_ANGLE_NORWAY || process.env.ALADHAN_FAJR_ANGLE || "" : process.env.ALADHAN_FAJR_ANGLE || "",
-    ishaAngle: isNo ? process.env.ALADHAN_ISHA_ANGLE_NORWAY || process.env.ALADHAN_ISHA_ANGLE || "" : process.env.ALADHAN_ISHA_ANGLE || "",
-    maghribMinutes: isNo ? process.env.ALADHAN_MAGHRIB_MINUTES_NORWAY || process.env.ALADHAN_MAGHRIB_MINUTES || "0" : process.env.ALADHAN_MAGHRIB_MINUTES || "0",
-    tune: isNo ? process.env.ALADHAN_TUNE_NORWAY || process.env.ALADHAN_TUNE || "" : process.env.ALADHAN_TUNE || "",
-  };
-}
-
 function toHHMM(v: any) {
   const s = String(v || "").trim();
   const m = s.match(/^(\d{1,2}:\d{2})/);
@@ -26,31 +11,21 @@ export const handler: Handler = async (event) => {
     const qs = event.queryStringParameters || {};
     const lat = String((qs as any).lat || "");
     const lon = String((qs as any).lon || "");
-    const tz = String((qs as any).tz || "Europe/Oslo");
+    const tz = String((qs as any).tz || "UTC");
     const month = Number((qs as any).month || 0);
     const year = Number((qs as any).year || 0);
-    const cc = String((qs as any).cc || "").toUpperCase();
 
     if (!lat || !lon || !month || !year) {
       return { statusCode: 400, body: "Missing lat/lon/month/year" };
     }
 
-    const base = "https://api.aladhan.com/v1/calendar";
-    const url = new URL(base);
+    const url = new URL(`https://api.aladhan.com/v1/calendar/${year}/${month}`);
     url.searchParams.set("latitude", lat);
     url.searchParams.set("longitude", lon);
-    url.searchParams.set("month", String(month));
-    url.searchParams.set("year", String(year));
     url.searchParams.set("timezonestring", tz);
 
-    const tuning = pickTuning(cc, tz);
-    if (tuning.method) url.searchParams.set("method", tuning.method);
-    if (tuning.school) url.searchParams.set("school", tuning.school);
-    if (tuning.latAdj) url.searchParams.set("latitudeAdjustmentMethod", tuning.latAdj);
-    if (tuning.fajrAngle && tuning.ishaAngle) {
-      url.searchParams.set("methodSettings", `${tuning.fajrAngle},${tuning.ishaAngle},${tuning.maghribMinutes}`);
-    }
-    if (tuning.tune) url.searchParams.set("tune", tuning.tune);
+    const method = String(process.env.ALADHAN_METHOD || "").trim();
+    if (method) url.searchParams.set("method", method);
 
     const upstream = await fetch(url.toString(), { headers: { Accept: "application/json" } });
     const text = await upstream.text();

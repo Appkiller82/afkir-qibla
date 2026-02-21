@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import PushControlsAuto from "./PushControlsAuto.jsx";
 import AutoLocationModal from "./AutoLocationModal.jsx";
 import { updateMetaIfSubscribed } from "./push";
-import { fetchMonthTimings, fetchTimings } from "./prayer";
+import { fetchMonthTimings } from "./prayer";
 
 /**
  * Afkir Qibla 7 – RESTORED UI (oppdatert for unified bønnetider)
@@ -131,10 +131,7 @@ function qiblaBearing(lat, lng) {
 }
 
 
-function inferCountryCode(lat, lng, fallback = "") {
-  if (typeof lat !== "number" || typeof lng !== "number") return (fallback || "").toUpperCase();
-  const inNorway = lat >= 57 && lat <= 72.5 && lng >= 4 && lng <= 32;
-  if (inNorway) return "NO";
+function inferCountryCode(_lat, _lng, fallback = "") {
   return (fallback || "").toUpperCase();
 }
 
@@ -356,7 +353,7 @@ function exportCalendarIcs(city, days) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = "afkir-bonnetider.ics";
+  a.download = "afkir-prayertider.ics";
   a.click();
   URL.revokeObjectURL(url);
 }
@@ -568,7 +565,7 @@ export default function App(){
   useEffect(() => { const id = setInterval(()=> setBgIdx(i => (i+1)%bgList.length), 25000); return () => clearInterval(id) }, [bgList.length]);
   const bg = bgList[bgIdx % bgList.length];
   const activeCoords = coords || lastCoords || DEFAULT_COORDS;
-  const effectiveCountryCode = inferCountryCode(activeCoords?.latitude, activeCoords?.longitude, countryCode || (timeZone === "Europe/Oslo" ? "NO" : ""));
+  const effectiveCountryCode = inferCountryCode(activeCoords?.latitude, activeCoords?.longitude, countryCode || "");
   const todayIsoForView = isoDateInTz(timeZone, 0);
 
   useEffect(() => {
@@ -623,7 +620,6 @@ export default function App(){
     if (!activeCoords) return;
     let active = true;
     if (!coords && !city) setCity("Oslo");
-    if (!coords && !countryCode) setCountryCode("NO");
     reverseGeocode(activeCoords.latitude, activeCoords.longitude).then((r) => {
       if (!active) return;
       if (r?.name) setCity(r.name);
@@ -679,6 +675,9 @@ export default function App(){
       }
 
       const todayStr = todayRow.timings;
+      if (todayStr?.Maghrib && todayStr?.Isha && todayStr.Maghrib === todayStr.Isha) {
+        console.warn("[Aladhan] Maghrib equals Isha for selected date", { date: todayIso, timings: todayStr });
+      }
       const today = ensureDates(todayStr, todayIso);
       if (seq !== refreshSeqRef.current) return;
       setTimes(today);
@@ -705,7 +704,8 @@ export default function App(){
           if (seq !== refreshSeqRef.current) return;
         }
         const tomorrowRow = tomorrowRows.find((row) => row.date === tomorrowIso);
-        const tomorrowStr = tomorrowRow?.timings || await fetchTimings(lat, lng, tz, effectiveCountryCode, "tomorrow");
+        if (!tomorrowRow?.timings) throw new Error(`Mangler tider i månedskalender for ${tomorrowIso}`);
+        const tomorrowStr = tomorrowRow.timings;
         const tomorrow = ensureDates(tomorrowStr, tomorrowIso);
         const fajr = tomorrow.Fajr;
         if (!fajr) throw new Error("Mangler Fajr for i morgen");

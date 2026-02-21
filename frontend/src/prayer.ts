@@ -18,7 +18,7 @@ function pad2(n: number) {
   return (n < 10 ? "0" : "") + n;
 }
 
-function toHHMM(v: any) {
+function toHHMM(v: unknown) {
   if (!v) return "";
   const s = String(v).trim();
   if (/^\d{1,2}:\d{2}$/.test(s)) {
@@ -57,41 +57,38 @@ async function readJsonOrThrow(res: Response, source: string) {
   }
 }
 
-async function fetchAladhan(lat: number, lon: number, tz: string, when: "today" | "tomorrow", cc: string) {
-  const u = `/api/aladhan-today?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}&tz=${encodeURIComponent(tz)}&when=${encodeURIComponent(when)}&cc=${encodeURIComponent(cc)}`;
-  const r = await fetch(u);
-  const j = await readJsonOrThrow(r, "Aladhan");
-  return ensure(j.timings);
+function isoDateInTz(tz: string, dayOffset = 0) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: tz || "UTC",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+  const y = Number(parts.find((p) => p.type === "year")?.value);
+  const m = Number(parts.find((p) => p.type === "month")?.value);
+  const d = Number(parts.find((p) => p.type === "day")?.value);
+  const utcDate = new Date(Date.UTC(y, m - 1, d));
+  utcDate.setUTCDate(utcDate.getUTCDate() + dayOffset);
+  const yyyy = utcDate.getUTCFullYear();
+  const mm = String(utcDate.getUTCMonth() + 1).padStart(2, "0");
+  const dd = String(utcDate.getUTCDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
 }
 
-export async function fetchTimings(
-  lat: number,
-  lon: number,
-  tz: string,
-  countryCode: string | undefined | null,
-  when: "today" | "tomorrow" = "today",
-): Promise<Timings> {
-  const cc = (countryCode || "").toUpperCase();
-  return fetchAladhan(lat, lon, tz, when, cc);
-}
-
-export async function fetchMonthTimings(
+export async function fetchAladhanMonth(
   lat: number,
   lon: number,
   month: number,
   year: number,
   tz: string,
-  countryCode: string | undefined | null,
   signal?: AbortSignal,
 ): Promise<MonthRow[]> {
-  const cc = String((countryCode || "").toUpperCase());
   const adUrl = new URL("/api/aladhan-month", window.location.origin);
   adUrl.searchParams.set("lat", String(lat));
   adUrl.searchParams.set("lon", String(lon));
   adUrl.searchParams.set("tz", String(tz));
   adUrl.searchParams.set("month", String(month));
   adUrl.searchParams.set("year", String(year));
-  adUrl.searchParams.set("cc", cc);
 
   const adRes = await fetch(adUrl.toString(), { signal });
   const adBody = await readJsonOrThrow(adRes, "Aladhan month");
@@ -102,4 +99,31 @@ export async function fetchMonthTimings(
     weekday: row?.weekday,
     timings: ensure(row?.timings || {}),
   }));
+}
+
+export async function fetchMonthTimings(
+  lat: number,
+  lon: number,
+  month: number,
+  year: number,
+  tz: string,
+  _countryCode: string | undefined | null,
+  signal?: AbortSignal,
+): Promise<MonthRow[]> {
+  return fetchAladhanMonth(lat, lon, month, year, tz, signal);
+}
+
+export async function fetchTimings(
+  lat: number,
+  lon: number,
+  tz: string,
+  _countryCode: string | undefined | null,
+  when: "today" | "tomorrow" = "today",
+): Promise<Timings> {
+  const targetIso = isoDateInTz(tz, when === "tomorrow" ? 1 : 0);
+  const [year, month] = targetIso.split("-").map(Number);
+  const rows = await fetchAladhanMonth(lat, lon, month, year, tz);
+  const row = rows.find((d) => d.date === targetIso);
+  if (!row?.timings) throw new Error(`Missing Aladhan month row for ${targetIso}`);
+  return row.timings;
 }

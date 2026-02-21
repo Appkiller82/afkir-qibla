@@ -1,21 +1,14 @@
 import type { Handler } from "@netlify/functions";
 
-function isNorwayContext(cc: string, tz: string) {
-  return cc === "NO" || String(tz || "") === "Europe/Oslo";
-}
-
 export const handler: Handler = async (event) => {
   try {
     const qs = event.queryStringParameters || {};
-    // Frontend uses "when"; keep "date" for backwards compatibility.
     const { lat, lon, tz } = qs as any;
-    const cc = String((qs as any).cc || "").toUpperCase();
     const when = (qs as any).when || (qs as any).date || "today";
     if (!lat || !lon || !tz) {
       return { statusCode: 400, body: "Missing lat/lon/tz" };
     }
 
-    // Aladhan supports /timings (today) and /timings/{date}. We normalize "tomorrow" to YYYY-MM-DD.
     const date = normalizeDate(when, String(tz));
 
     const base = "https://api.aladhan.com/v1";
@@ -24,30 +17,8 @@ export const handler: Handler = async (event) => {
     url.searchParams.set("longitude", String(lon));
     url.searchParams.set("timezonestring", String(tz));
 
-    // Optional calculation tuning via env vars.
-    // Keep Norway-specific overrides only when configured in env,
-    // but do not force hard-coded fallback values.
-    const isNo = isNorwayContext(cc, String(tz));
-    const method = (isNo ? process.env.ALADHAN_METHOD_NORWAY || process.env.ALADHAN_METHOD : process.env.ALADHAN_METHOD) || "";
-    const school = (isNo ? process.env.ALADHAN_SCHOOL_NORWAY || process.env.ALADHAN_SCHOOL : process.env.ALADHAN_SCHOOL) || "";
-    const latAdj = (isNo ? process.env.ALADHAN_LAT_ADJ_NORWAY || process.env.ALADHAN_LAT_ADJ : process.env.ALADHAN_LAT_ADJ) || "";
-
-    const fajrAngle = (isNo ? process.env.ALADHAN_FAJR_ANGLE_NORWAY || process.env.ALADHAN_FAJR_ANGLE : process.env.ALADHAN_FAJR_ANGLE) || "";
-    const ishaAngle = (isNo ? process.env.ALADHAN_ISHA_ANGLE_NORWAY || process.env.ALADHAN_ISHA_ANGLE : process.env.ALADHAN_ISHA_ANGLE) || "";
-    const maghribMinutes = isNo ? process.env.ALADHAN_MAGHRIB_MINUTES_NORWAY || process.env.ALADHAN_MAGHRIB_MINUTES || "0" : process.env.ALADHAN_MAGHRIB_MINUTES || "0";
-    const tune = isNo ? process.env.ALADHAN_TUNE_NORWAY || process.env.ALADHAN_TUNE || "" : process.env.ALADHAN_TUNE || "";
-
+    const method = String(process.env.ALADHAN_METHOD || "").trim();
     if (method) url.searchParams.set("method", method);
-    if (school) url.searchParams.set("school", school);
-    if (latAdj) url.searchParams.set("latitudeAdjustmentMethod", latAdj);
-
-    // Custom method with angle profile
-    if (fajrAngle && ishaAngle) {
-      url.searchParams.set("methodSettings", `${fajrAngle},${ishaAngle},${maghribMinutes}`);
-    }
-    if (tune) {
-      url.searchParams.set("tune", tune);
-    }
 
     const upstream = await fetch(url.toString(), { headers: { "Accept": "application/json" } });
     const text = await upstream.text();
@@ -55,7 +26,6 @@ export const handler: Handler = async (event) => {
       return { statusCode: upstream.status, body: text || "Upstream error" };
     }
 
-    // Normalize to { timings: {Fajr, Sunrise, Dhuhr, Asr, Maghrib, Isha, ...} }
     let timings: any = null;
     try {
       const j = JSON.parse(text);
@@ -78,13 +48,11 @@ function normalizeDate(input: string, tz: string): string {
   const v = String(input || "today").trim().toLowerCase();
   if (v === "today") return "today";
   if (v === "tomorrow") return addDaysInTimeZone(tz, 1);
-  // Accept YYYY-MM-DD as-is (what Aladhan docs commonly show).
   if (/^\d{4}-\d{2}-\d{2}$/.test(v)) return v;
   return v;
 }
 
 function addDaysInTimeZone(tz: string, days: number): string {
-  // Get today's date parts in the requested timezone, then add days in UTC.
   const now = new Date();
   const parts = new Intl.DateTimeFormat("en-CA", {
     timeZone: tz,
