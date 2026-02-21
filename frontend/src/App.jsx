@@ -703,12 +703,16 @@ export default function App(){
 
       // Hent dagens tider via unified fetchTimings (Bonnetid→Aladhan NO tuned i Norge, Aladhan global ellers)
       let todayRaw;
+      let todayFromFallback = false;
       try {
         todayRaw = await fetchTimings(lat, lng, tz, effectiveCountryCode, "today");
-      } catch {
+      } catch (err) {
+        console.error("[Prayer] Unified fetch failed, using Aladhan fallback for today", err);
+        setApiError("Bonnetid svarte ikke. Viser reservekilde (Aladhan).");
+        todayFromFallback = true;
         todayRaw = await fetchAladhanFallbackDay(lat, lng, tz, "today", effectiveCountryCode || "NO");
       }
-      const todayStr = tuneNorwayTimings(todayRaw, effectiveCountryCode, tz);
+      const todayStr = todayFromFallback ? tuneNorwayTimings(todayRaw, effectiveCountryCode, tz) : todayRaw;
       const today = ensureDates(todayStr);
       setTimes(today);
       saveCache("aq_times_cache", todayStr);
@@ -720,12 +724,16 @@ export default function App(){
       // Hvis alle dagens bønner er passert -> hent Fajr for i morgen
       if (info.tomorrow) {
         let tomorrowRaw;
+        let tomorrowFromFallback = false;
         try {
           tomorrowRaw = await fetchTimings(lat, lng, tz, effectiveCountryCode, "tomorrow");
-        } catch {
+        } catch (err) {
+          console.error("[Prayer] Unified fetch failed, using Aladhan fallback for tomorrow", err);
+          setApiError("Bonnetid svarte ikke. Viser reservekilde (Aladhan).");
+          tomorrowFromFallback = true;
           tomorrowRaw = await fetchAladhanFallbackDay(lat, lng, tz, "tomorrow", effectiveCountryCode || "NO");
         }
-        const tomorrowStr = tuneNorwayTimings(tomorrowRaw, effectiveCountryCode, tz);
+        const tomorrowStr = tomorrowFromFallback ? tuneNorwayTimings(tomorrowRaw, effectiveCountryCode, tz) : tomorrowRaw;
         const now = new Date();
         const tomorrowDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
         const tomorrowIso = `${tomorrowDate.getFullYear()}-${String(tomorrowDate.getMonth() + 1).padStart(2, "0")}-${String(tomorrowDate.getDate()).padStart(2, "0")}`;
@@ -796,11 +804,7 @@ export default function App(){
     )
       .then((rows) => {
         if (!active) return;
-        const tunedRows = (rows || []).map((row) => ({
-          ...row,
-          timings: tuneNorwayTimings(row?.timings || {}, effectiveCountryCode, timeZone),
-        }));
-        setCalendarRows(tunedRows);
+        setCalendarRows(rows || []);
       })
       .catch(async (err) => {
         if (!active) return;
