@@ -63,7 +63,7 @@ export const handler: Handler = async (event) => {
 
     const apiKey = process.env.BONNETID_API_KEY || "";
     if (!apiKey) {
-      return { statusCode: 500, body: "Missing BONNETID_API_KEY env" };
+      return { statusCode: 500, body: "Missing BONNETID_API_KEY env (set in Netlify Site Configuration -> Environment variables)" };
     }
 
     const baseUrl = process.env.BONNETID_API_URL || "https://api.bonnetid.no/v1/prayertimes";

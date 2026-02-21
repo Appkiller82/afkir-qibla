@@ -246,7 +246,10 @@ async function fetchMonthlyCalendar(lat, lng, month, year, countryCode, tz) {
 
   if (cc === "NO") {
     const res = await fetch(`/api/bonnetid-month?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lng)}&tz=${encodeURIComponent(tz)}&month=${encodeURIComponent(month)}&year=${encodeURIComponent(year)}`);
-    if (!res.ok) throw new Error("Calendar API failed");
+    if (!res.ok) {
+      const detail = await res.text().catch(() => "");
+      throw new Error(detail || "Calendar API failed");
+    }
     const body = await res.json();
     return body?.rows || [];
   }
@@ -665,9 +668,18 @@ export default function App(){
     const now = new Date();
     fetchMonthlyCalendar(activeCoords.latitude, activeCoords.longitude, now.getMonth() + 1, now.getFullYear(), effectiveCountryCode, Intl.DateTimeFormat().resolvedOptions().timeZone)
       .then((rows) => setCalendarRows(rows))
-      .catch(() => {
+      .catch((err) => {
         setCalendarRows([]);
-        setCalendarError(effectiveCountryCode === "NO" ? "Klarte ikke hente månedskalender fra Bonnetid akkurat nå." : "Klarte ikke hente månedskalender nå.");
+        const m = String(err?.message || "");
+        if (effectiveCountryCode === "NO") {
+          if (m.includes("BONNETID_API_KEY")) {
+            setCalendarError("Bonnetid API-nøkkel mangler i miljøvariabler.");
+          } else {
+            setCalendarError("Klarte ikke hente månedskalender fra Bonnetid akkurat nå.");
+          }
+        } else {
+          setCalendarError("Klarte ikke hente månedskalender nå.");
+        }
       });
   }, [activeCoords?.latitude, activeCoords?.longitude, effectiveCountryCode]);
 
