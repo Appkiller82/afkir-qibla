@@ -692,6 +692,7 @@ export default function App(){
 
       // Hent dagens tider via unified fetchTimings (Bonnetid→Aladhan NO tuned i Norge, Aladhan global ellers)
       let todayRaw;
+      let todayFromFallback = false;
       try {
         todayRaw = await fetchTimings(lat, lng, tz, effectiveCountryCode, "today");
       } catch (err) {
@@ -711,6 +712,7 @@ export default function App(){
       // Hvis alle dagens bønner er passert -> hent Fajr for i morgen
       if (info.tomorrow) {
         let tomorrowRaw;
+        let tomorrowFromFallback = false;
         try {
           tomorrowRaw = await fetchTimings(lat, lng, tz, effectiveCountryCode, "tomorrow");
         } catch (err) {
