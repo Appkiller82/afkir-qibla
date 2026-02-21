@@ -64,6 +64,7 @@ export const handler: Handler = async (event) => {
       weekday: d?.date?.gregorian?.weekday?.en,
       timings: {
         Fajr: toHHMM(d?.timings?.Fajr),
+        Sunrise: toHHMM(d?.timings?.Sunrise),
         Dhuhr: toHHMM(d?.timings?.Dhuhr || d?.timings?.Zuhr),
         Asr: toHHMM(d?.timings?.Asr),
         Maghrib: toHHMM(d?.timings?.Maghrib),

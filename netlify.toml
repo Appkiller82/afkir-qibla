@@ -46,3 +46,9 @@
   to = "/.netlify/functions/bonnetid-health"
   status = 200
   force = true
+
+[[redirects]]
+  from = "/api/bonnetid"
+  to = "/.netlify/functions/bonnetid"
+  status = 200
+  force = true
