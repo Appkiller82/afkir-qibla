@@ -16,6 +16,10 @@ function corsHeaders(origin?: string) {
   };
 }
 
+function isAllowedPath(path: string) {
+  return path.startsWith("/locations/") || path.startsWith("/prayertimes/");
+}
+
 export const handler: Handler = async (event) => {
   const origin = event.headers.origin || event.headers.Origin || "";
   if (event.httpMethod === "OPTIONS") {
@@ -43,12 +47,11 @@ export const handler: Handler = async (event) => {
 
     const baseOrigin = resolveBaseOrigin();
     const url = new URL(rawPath, baseOrigin);
-    // Safety: prevent forwarding to non-whitelisted host in case of malformed input.
-    if (url.origin !== baseOrigin) {
+    if (url.origin !== baseOrigin || !isAllowedPath(url.pathname)) {
       return {
         statusCode: 400,
         headers: { "Content-Type": "application/json", ...corsHeaders(origin) },
-        body: JSON.stringify({ error: "Invalid path host" }),
+        body: JSON.stringify({ error: "Path not allowed" }),
       };
     }
 
@@ -57,8 +60,6 @@ export const handler: Handler = async (event) => {
       headers: {
         Accept: "application/json",
         "Api-Token": token,
-        "X-API-Key": token,
-        Authorization: `Bearer ${token}`,
       },
     });
 
