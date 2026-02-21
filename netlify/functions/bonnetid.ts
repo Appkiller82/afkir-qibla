@@ -1,6 +1,11 @@
 import type { Handler } from "@netlify/functions";
 
-const BASE = "https://api.bonnetid.no";
+function resolveBaseOrigin() {
+  const candidate = String(process.env.BONNETID_API_URL || "https://api.bonnetid.no").trim();
+  const withScheme = /^https?:\/\//i.test(candidate) ? candidate : `https://${candidate}`;
+  const parsed = new URL(withScheme);
+  return parsed.origin;
+}
 
 function corsHeaders(origin?: string) {
   return {
@@ -36,9 +41,10 @@ export const handler: Handler = async (event) => {
       };
     }
 
-    const url = new URL(rawPath, BASE);
+    const baseOrigin = resolveBaseOrigin();
+    const url = new URL(rawPath, baseOrigin);
     // Safety: prevent forwarding to non-whitelisted host in case of malformed input.
-    if (url.origin !== BASE) {
+    if (url.origin !== baseOrigin) {
       return {
         statusCode: 400,
         headers: { "Content-Type": "application/json", ...corsHeaders(origin) },
