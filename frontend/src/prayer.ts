@@ -325,7 +325,12 @@ export async function fetchTimings(
       const btBody = await readJsonOrThrow(btRes, "Bonnetid today");
       const timings = ensure(btBody?.timings || btBody?.data?.timings || {});
       if (!looksSuspiciousNorway(timings)) return timings;
-    } catch {
+      console.error("[Prayer] /api/bonnetid-today returned suspicious timings", { isoDate, timings });
+    } catch (err) {
+      console.error("[Prayer] /api/bonnetid-today failed", {
+        isoDate,
+        error: err instanceof Error ? err.message : String(err),
+      });
       // Continue to month fallback.
     }
 
