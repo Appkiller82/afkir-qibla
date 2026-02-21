@@ -174,6 +174,41 @@ function formatPrayerTime(value) {
   return NB_TIME.format(value);
 }
 
+// ---------- Norway fallback tuning (Aladhan reserve) ----------
+const NO_IRN_PROFILE = {
+  offsets: { Fajr: -9, Dhuhr: +6, Asr: 0, Maghrib: +5, Isha: 0 },
+};
+
+function hhmmToMinutes(hhmm) {
+  const m = String(hhmm || "").match(/^(\d{1,2}):(\d{2})$/);
+  if (!m) return null;
+  return Number(m[1]) * 60 + Number(m[2]);
+}
+
+function minutesToHHMM(total) {
+  if (!Number.isFinite(total)) return "";
+  const n = ((Math.round(total) % 1440) + 1440) % 1440;
+  const h = Math.floor(n / 60);
+  const m = n % 60;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+}
+
+function tuneNorwayFallbackTimings(raw, countryCode, tz) {
+  if (!raw || typeof raw !== "object") return raw;
+  const cc = String(countryCode || "").toUpperCase();
+  const isNo = cc === "NO" || String(tz || "") === "Europe/Oslo";
+  if (!isNo) return raw;
+
+  const out = { ...raw };
+  const o = NO_IRN_PROFILE.offsets;
+  for (const key of ["Fajr", "Dhuhr", "Asr", "Maghrib", "Isha"]) {
+    const v = hhmmToMinutes(out[key]);
+    if (v == null) continue;
+    out[key] = minutesToHHMM(v + (o[key] || 0));
+  }
+  return out;
+}
+
 // ---------- Countdown ----------
 const ORDER = ["Fajr","Soloppgang","Dhuhr","Asr","Maghrib","Isha"];
 function diffToText(ms) {
@@ -663,7 +698,7 @@ export default function App(){
       } catch (err) {
         console.error("[Prayer] Unified fetch failed, using Aladhan fallback for today", err);
         setApiError("Bonnetid svarte ikke. Viser reservekilde (Aladhan).");
-        todayRaw = await fetchAladhanFallbackDay(lat, lng, tz, "today", effectiveCountryCode || "NO");
+        todayRaw = tuneNorwayFallbackTimings(await fetchAladhanFallbackDay(lat, lng, tz, "today", effectiveCountryCode || "NO"), effectiveCountryCode, tz);
       }
       const todayStr = todayRaw;
       const today = ensureDates(todayStr);
@@ -683,7 +718,7 @@ export default function App(){
         } catch (err) {
           console.error("[Prayer] Unified fetch failed, using Aladhan fallback for tomorrow", err);
           setApiError("Bonnetid svarte ikke. Viser reservekilde (Aladhan).");
-          tomorrowRaw = await fetchAladhanFallbackDay(lat, lng, tz, "tomorrow", effectiveCountryCode || "NO");
+          tomorrowRaw = tuneNorwayFallbackTimings(await fetchAladhanFallbackDay(lat, lng, tz, "tomorrow", effectiveCountryCode || "NO"), effectiveCountryCode, tz);
         }
         const tomorrowStr = tomorrowRaw;
         const now = new Date();
@@ -773,7 +808,7 @@ export default function App(){
             controller.signal,
           );
           if (!active) return;
-          setCalendarRows(rows || []);
+          setCalendarRows((rows || []).map((row) => ({ ...row, timings: tuneNorwayFallbackTimings(row?.timings || {}, effectiveCountryCode, timeZone) })));
           setCalendarError(effectiveCountryCode === "NO" ? "Viser tunet reservekalender (Aladhan)." : "");
           return;
         } catch {
