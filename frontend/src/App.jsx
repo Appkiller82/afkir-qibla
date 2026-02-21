@@ -306,6 +306,24 @@ function formatCalendarDate(value) {
   return `${d}.${m}.${y}`;
 }
 
+function isoDateInTz(tz, dayOffset = 0) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: tz || "Europe/Oslo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+  const y = Number(parts.find((p) => p.type === "year")?.value);
+  const m = Number(parts.find((p) => p.type === "month")?.value);
+  const d = Number(parts.find((p) => p.type === "day")?.value);
+  const utcDate = new Date(Date.UTC(y, m - 1, d));
+  utcDate.setUTCDate(utcDate.getUTCDate() + dayOffset);
+  const yyyy = utcDate.getUTCFullYear();
+  const mm = String(utcDate.getUTCMonth() + 1).padStart(2, "0");
+  const dd = String(utcDate.getUTCDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+
 function exportCalendarIcs(city, days) {
   if (!days?.length) return;
   const pad = (n) => String(n).padStart(2, "0");
@@ -577,7 +595,14 @@ export default function App(){
         if (activeCoords) await refreshTimes(activeCoords.latitude, activeCoords.longitude);
       }
     }, 60000);
-    const idTick = setInterval(() => { setCountdown(nextPrayerInfo(times)); }, 1000);
+    const idTick = setInterval(() => {
+      setCountdown((prev) => {
+        if (prev?.tomorrow && prev?.at instanceof Date) {
+          return { ...prev, diffText: diffToText(prev.at.getTime() - Date.now()) };
+        }
+        return nextPrayerInfo(times);
+      });
+    }, 1000);
     return () => { clearInterval(idDay); clearInterval(idTick) };
   }, [activeCoords?.latitude, activeCoords?.longitude, times?.Fajr?.getTime?.(), effectiveCountryCode]);
 
@@ -625,24 +650,33 @@ export default function App(){
       setApiError("");
       const tz = timeZone;
 
-      // Hent dagens tider via unified fetchTimings (Aladhan)
-      const todayRaw = await fetchTimings(lat, lng, tz, effectiveCountryCode, "today");
-      const todayStr = todayRaw;
-      const today = ensureDates(todayStr);
+      const todayIso = isoDateInTz(tz, 0);
+      const tomorrowIso = isoDateInTz(tz, 1);
+      const [todayYear, todayMonth] = todayIso.split("-").map(Number);
+      const [tomorrowYear, tomorrowMonth] = tomorrowIso.split("-").map(Number);
+
+      const monthRows = await fetchMonthlyCalendar(lat, lng, todayMonth, todayYear, tz, effectiveCountryCode);
+      const todayRow = monthRows.find((row) => row.date === todayIso);
+
+      if (!todayRow?.timings) {
+        throw new Error(`Mangler tider i månedskalender for ${todayIso}`);
+      }
+
+      const todayStr = todayRow.timings;
+      const today = ensureDates(todayStr, todayIso);
       setTimes(today);
       saveCache("aq_times_cache", todayStr);
 
-      // Beregn nedtelling som før
-      let info = nextPrayerInfo(today);
+      const info = nextPrayerInfo(today);
       setCountdown(info);
 
-      // Hvis alle dagens bønner er passert -> hent Fajr for i morgen
       if (info.tomorrow) {
-        const tomorrowRaw = await fetchTimings(lat, lng, tz, effectiveCountryCode, "tomorrow");
-        const tomorrowStr = tomorrowRaw;
-        const now = new Date();
-        const tomorrowDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
-        const tomorrowIso = `${tomorrowDate.getFullYear()}-${String(tomorrowDate.getMonth() + 1).padStart(2, "0")}-${String(tomorrowDate.getDate()).padStart(2, "0")}`;
+        let tomorrowRows = monthRows;
+        if (tomorrowMonth !== todayMonth || tomorrowYear !== todayYear) {
+          tomorrowRows = await fetchMonthlyCalendar(lat, lng, tomorrowMonth, tomorrowYear, tz, effectiveCountryCode);
+        }
+        const tomorrowRow = tomorrowRows.find((row) => row.date === tomorrowIso);
+        const tomorrowStr = tomorrowRow?.timings || await fetchTimings(lat, lng, tz, effectiveCountryCode, "tomorrow");
         const tomorrow = ensureDates(tomorrowStr, tomorrowIso);
         const fajr = tomorrow.Fajr;
         if (!fajr) throw new Error("Mangler Fajr for i morgen");
@@ -852,12 +886,12 @@ export default function App(){
                 <div style={{marginTop:8, maxHeight:220, overflow:"auto"}}>
                   <table style={{width:"100%", borderCollapse:"collapse", fontSize:14}}>
                     <thead>
-                      <tr><th style={{textAlign:"left"}}>Dato</th><th style={{textAlign:"left"}}>Fajr</th><th style={{textAlign:"left"}}>Soloppgang</th><th style={{textAlign:"left"}}>Dhuhr</th><th style={{textAlign:"left"}}>Asr</th><th style={{textAlign:"left"}}>Maghrib</th><th style={{textAlign:"left"}}>Isha</th></tr>
+                      <tr><th style={{textAlign:"left"}}>Dato</th><th style={{textAlign:"left"}}>Fajr</th><th style={{textAlign:"left"}}>Dhuhr</th><th style={{textAlign:"left"}}>Asr</th><th style={{textAlign:"left"}}>Maghrib</th><th style={{textAlign:"left"}}>Isha</th></tr>
                     </thead>
                     <tbody>
                       {calendarRows.map((row) => (
                         <tr key={row.date}>
-                          <td>{formatCalendarDate(row.date)}</td><td>{row.timings.Fajr || "--:--"}</td><td>{row.timings.Sunrise || "--:--"}</td><td>{row.timings.Dhuhr || "--:--"}</td><td>{row.timings.Asr || "--:--"}</td><td>{row.timings.Maghrib || "--:--"}</td><td>{row.timings.Isha || "--:--"}</td>
+                          <td>{formatCalendarDate(row.date)}</td><td>{row.timings.Fajr || "--:--"}</td><td>{row.timings.Dhuhr || "--:--"}</td><td>{row.timings.Asr || "--:--"}</td><td>{row.timings.Maghrib || "--:--"}</td><td>{row.timings.Isha || "--:--"}</td>
                         </tr>
                       ))}
                     </tbody>
