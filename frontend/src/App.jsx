@@ -277,6 +277,12 @@ function loadCache(key) {
   }
 }
 
+function timesCacheKey(lat, lng, isoDate) {
+  const latKey = Number(lat).toFixed(2);
+  const lngKey = Number(lng).toFixed(2);
+  return `aq_times_cache:${latKey}:${lngKey}:${isoDate}`;
+}
+
 function normalizeWeatherCache(w) {
   if (!w || typeof w !== "object") return null;
   const sunrise = w.sunrise ? new Date(w.sunrise) : null;
@@ -533,7 +539,7 @@ export default function App(){
   const { coords, loading, permission, requestOnce, startWatch } = useGeolocationWatch(5);
   const [city, setCity]   = useLocalStorage("aq_city", "");
   const [countryCode, setCountryCode] = useLocalStorage("aq_country", "");
-  const [times, setTimes] = useState(() => { const c = loadCache("aq_times_cache"); return c ? ensureDates(c) : null; });
+  const [times, setTimes] = useState(null);
   const [apiError, setApiError] = useState("");
   const [bgList, setBgList] = useState(CANDIDATE_BACKGROUNDS);
   const [bgIdx, setBgIdx] = useState(0);
@@ -656,6 +662,8 @@ export default function App(){
       const [tomorrowYear, tomorrowMonth] = tomorrowIso.split("-").map(Number);
 
       const monthRows = await fetchMonthlyCalendar(lat, lng, todayMonth, todayYear, tz, effectiveCountryCode);
+      setCalendarRows(monthRows || []);
+      setCalendarError("");
       const todayRow = monthRows.find((row) => row.date === todayIso);
 
       if (!todayRow?.timings) {
@@ -665,7 +673,7 @@ export default function App(){
       const todayStr = todayRow.timings;
       const today = ensureDates(todayStr, todayIso);
       setTimes(today);
-      saveCache("aq_times_cache", todayStr);
+      saveCache(timesCacheKey(lat, lng, todayIso), todayStr);
 
       const info = nextPrayerInfo(today);
       setCountdown(info);
@@ -689,10 +697,11 @@ export default function App(){
       }
     } catch (e) {
       console.error(e);
-      const cached = loadCache("aq_times_cache");
+      const todayIso = isoDateInTz(timeZone, 0);
+      const cached = loadCache(timesCacheKey(lat, lng, todayIso));
       if (cached) {
-        setApiError("");
-        setTimes(ensureDates(cached));
+        setApiError("Viser lagrede tider for denne posisjonen.");
+        setTimes(ensureDates(cached, todayIso));
       } else {
         setApiError("Klarte ikke hente bønnetider (API).");
         setTimes(null);
@@ -731,13 +740,14 @@ export default function App(){
     if (!activeCoords) return;
     let active = true;
     setCalendarError("");
-    const now = new Date();
     const controller = new AbortController();
+    const todayIso = isoDateInTz(timeZone, 0);
+    const [y, m] = todayIso.split("-").map(Number);
     fetchMonthlyCalendar(
       activeCoords.latitude,
       activeCoords.longitude,
-      now.getMonth() + 1,
-      now.getFullYear(),
+      m,
+      y,
       timeZone,
       effectiveCountryCode,
       controller.signal,
