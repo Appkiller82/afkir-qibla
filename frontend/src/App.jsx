@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import PushControlsAuto from "./PushControlsAuto.jsx";
 import AutoLocationModal from "./AutoLocationModal.jsx";
 import { updateMetaIfSubscribed } from "./push";
-import { debugCheckBonnetidOsloFebruary2026, fetchMonthTimings, fetchTimings } from "./prayer";
+import { fetchMonthTimings, fetchTimings } from "./prayer";
 
 /**
  * Afkir Qibla 7 – RESTORED UI (oppdatert for unified bønnetider)
@@ -10,7 +10,7 @@ import { debugCheckBonnetidOsloFebruary2026, fetchMonthTimings, fetchTimings } f
  *   bønnetider og nedtelling, Adhan av/på + test-knapp.
  * - Auto-modal for posisjon, auto watch ved tillatelse,
  *   auto-oppdatering av push-metadata (always-on push ved bytte by).
- * - Bønnetider hentes via fetchTimings (Bonnetid→Aladhan NO tuned i Norge, Aladhan global ellers).
+ * - Bønnetider hentes via fetchTimings (Aladhan).
  */
 
 // ---------- Intl ----------
@@ -625,7 +625,7 @@ export default function App(){
       setApiError("");
       const tz = timeZone;
 
-      // Hent dagens tider via unified fetchTimings (Bonnetid→Aladhan NO tuned i Norge, Aladhan global ellers)
+      // Hent dagens tider via unified fetchTimings (Aladhan)
       const todayRaw = await fetchTimings(lat, lng, tz, effectiveCountryCode, "today");
       const todayStr = todayRaw;
       const today = ensureDates(todayStr);
@@ -716,14 +716,10 @@ export default function App(){
         if (!active) return;
         const m = String(err?.message || "");
         setCalendarRows([]);
-        if (effectiveCountryCode === "NO") {
-          if (m.includes("ALADHAN_")) {
-            setCalendarError("Aladhan-konfigurasjon mangler i miljøvariabler.");
-          } else {
-            setCalendarError("Klarte ikke hente månedskalender akkurat nå.");
-          }
+        if (m.includes("ALADHAN_")) {
+          setCalendarError("Aladhan-konfigurasjon mangler i miljøvariabler.");
         } else {
-          setCalendarError("Klarte ikke hente månedskalender nå.");
+          setCalendarError("Klarte ikke hente månedskalender akkurat nå.");
         }
       });
     return () => {
@@ -731,15 +727,6 @@ export default function App(){
       controller.abort();
     };
   }, [activeCoords?.latitude, activeCoords?.longitude, effectiveCountryCode, timeZone]);
-
-  useEffect(() => {
-    if (!import.meta.env.DEV || effectiveCountryCode !== "NO") return;
-    debugCheckBonnetidOsloFebruary2026().then((actual) => {
-      console.info("[Bonnetid spot-check] 2026-02-21 OK", actual);
-    }).catch((err) => {
-      console.error("[Bonnetid spot-check] FAILED", err);
-    });
-  }, [effectiveCountryCode]);
 
   // Keep push metadata up to date automatically (always-on across city changes)
   useEffect(() => {
