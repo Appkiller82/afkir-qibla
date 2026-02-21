@@ -35,6 +35,10 @@ function createTimingLookup(t: any) {
   return map;
 }
 
+function toBonnetidDateFormat(year: number, month: number, day: number) {
+  return `${String(day).padStart(2, "0")}-${String(month).padStart(2, "0")}-${year}`;
+}
+
 function pickTiming(lookup: Map<string, string>, ...aliases: string[]) {
   for (const alias of aliases) {
     const hit = lookup.get(normalizeFieldKey(alias));
@@ -49,7 +53,7 @@ async function fetchDay(baseUrl: URL | string, apiKey: string, lat: string, lon:
   url.searchParams.set("lat", lat);
   url.searchParams.set("lon", lon);
   url.searchParams.set("tz", tz);
-  url.searchParams.set("date", date);
+  url.searchParams.set("date", toBonnetidDateFormat(year, month, day));
 
   const upstream = await fetch(url.toString(), {
     headers: {
@@ -76,9 +80,9 @@ async function fetchDay(baseUrl: URL | string, apiKey: string, lat: string, lon:
     weekday: new Date(year, month - 1, day).toLocaleDateString("nb-NO", { weekday: "short" }),
     timings: {
       Fajr: pickTiming(lookup, "Morgengry 16°", "Morgengry16°", "Morgengry", "Fajr", "fajr"),
-      Dhuhr: pickTiming(lookup, "Duhr", "Dhor", "Dhuhr", "Zuhr", "zuhr", "dhuhr"),
-      Asr: pickTiming(lookup, "Asr", "2x-skygge", "asr_2x", "asr2x", "asr", "1x-skygge"),
-      Maghrib: pickTiming(lookup, "Maghrib", "maghrib"),
+      Dhuhr: pickTiming(lookup, "Duhr", "Duhur", "Dhor", "Dhuhr", "Zuhr", "zuhr", "dhuhr"),
+      Asr: pickTiming(lookup, "Asr", "2x-skygge", "asr_2x", "asr2x", "asr"),
+      Maghrib: pickTiming(lookup, "Maghrib", "Magrib", "maghrib", "magrib"),
       Isha: pickTiming(lookup, "Isha", "isha"),
     },
   };

@@ -44,6 +44,12 @@ function pickTiming(lookup: Map<string, string>, ...aliases: string[]) {
   return "";
 }
 
+function toBonnetidDateFormat(isoDate: string) {
+  const [y, m, d] = String(isoDate || "").split("-");
+  if (!y || !m || !d) return isoDate;
+  return `${d}-${m}-${y}`;
+}
+
 function normalizeDate(input: string, tz: string) {
   const v = String(input || "today").trim().toLowerCase();
   if (/^\d{4}-\d{2}-\d{2}$/.test(v)) return v;
@@ -94,7 +100,7 @@ export const handler: Handler = async (event) => {
     url.searchParams.set("lat", String(lat));
     url.searchParams.set("lon", String(lon));
     url.searchParams.set("tz", String(tz));
-    url.searchParams.set("date", normalizeDate(String(when), String(tz)));
+    url.searchParams.set("date", toBonnetidDateFormat(normalizeDate(String(when), String(tz))));
 
     const upstream = await fetch(url.toString(), {
       headers: {
@@ -135,12 +141,12 @@ export const handler: Handler = async (event) => {
       Sunrise: pickTiming(lookup, "Soloppgang", "Sunrise", "sunrise"),
 
       // Dhuhr: prioriter Duhr (bonnetid) -> Dhuhr (hvis API bruker engelsk)
-      Dhuhr: pickTiming(lookup, "Duhr", "Dhor", "Dhuhr", "Zuhr", "zuhr", "dhuhr"),
+      Dhuhr: pickTiming(lookup, "Duhr", "Duhur", "Dhor", "Dhuhr", "Zuhr", "zuhr", "dhuhr"),
 
       // Asr: prioriter Asr eller 2x-skygge (bonnetid har begge)
-      Asr: pickTiming(lookup, "Asr", "2x-skygge", "asr_2x", "asr2x", "asr", "1x-skygge"),
+      Asr: pickTiming(lookup, "Asr", "2x-skygge", "asr_2x", "asr2x", "asr"),
 
-      Maghrib: pickTiming(lookup, "Maghrib", "maghrib"),
+      Maghrib: pickTiming(lookup, "Maghrib", "Magrib", "maghrib", "magrib"),
       Isha: pickTiming(lookup, "Isha", "isha"),
 
       // Ekstra (kan være nyttig, men frontend kan ignorere)
