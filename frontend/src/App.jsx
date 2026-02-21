@@ -302,6 +302,37 @@ async function fetchWeather(lat, lng, signal) {
 }
 
 
+
+async function fetchAladhanFallbackDay(lat, lng, tz, when, countryCode, signal) {
+  const url = new URL('/api/aladhan-today', window.location.origin);
+  url.searchParams.set('lat', String(lat));
+  url.searchParams.set('lon', String(lng));
+  url.searchParams.set('tz', String(tz));
+  url.searchParams.set('when', String(when));
+  url.searchParams.set('cc', String((countryCode || '').toUpperCase()));
+
+  const res = await fetch(url.toString(), { signal });
+  if (!res.ok) throw new Error(await res.text());
+  const body = await res.json();
+  if (!body?.timings || typeof body.timings !== 'object') throw new Error('Ugyldig Aladhan-respons');
+  return body.timings;
+}
+
+async function fetchAladhanFallbackMonth(lat, lng, month, year, tz, countryCode, signal) {
+  const url = new URL('/api/aladhan-month', window.location.origin);
+  url.searchParams.set('lat', String(lat));
+  url.searchParams.set('lon', String(lng));
+  url.searchParams.set('tz', String(tz));
+  url.searchParams.set('month', String(month));
+  url.searchParams.set('year', String(year));
+  url.searchParams.set('cc', String((countryCode || '').toUpperCase()));
+
+  const res = await fetch(url.toString(), { signal });
+  if (!res.ok) throw new Error(await res.text());
+  const body = await res.json();
+  return Array.isArray(body?.rows) ? body.rows : [];
+}
+
 async function fetchMonthlyCalendar(lat, lng, month, year, tz, countryCode, signal) {
   return fetchMonthTimings(lat, lng, month, year, tz, countryCode, signal);
 }
@@ -671,7 +702,12 @@ export default function App(){
       const tz = timeZone;
 
       // Hent dagens tider via unified fetchTimings (Bonnetid→Aladhan NO tuned i Norge, Aladhan global ellers)
-      const todayRaw = await fetchTimings(lat, lng, tz, effectiveCountryCode, "today");
+      let todayRaw;
+      try {
+        todayRaw = await fetchTimings(lat, lng, tz, effectiveCountryCode, "today");
+      } catch {
+        todayRaw = await fetchAladhanFallbackDay(lat, lng, tz, "today", effectiveCountryCode || "NO");
+      }
       const todayStr = tuneNorwayTimings(todayRaw, effectiveCountryCode, tz);
       const today = ensureDates(todayStr);
       setTimes(today);
@@ -683,7 +719,12 @@ export default function App(){
 
       // Hvis alle dagens bønner er passert -> hent Fajr for i morgen
       if (info.tomorrow) {
-        const tomorrowRaw = await fetchTimings(lat, lng, tz, effectiveCountryCode, "tomorrow");
+        let tomorrowRaw;
+        try {
+          tomorrowRaw = await fetchTimings(lat, lng, tz, effectiveCountryCode, "tomorrow");
+        } catch {
+          tomorrowRaw = await fetchAladhanFallbackDay(lat, lng, tz, "tomorrow", effectiveCountryCode || "NO");
+        }
         const tomorrowStr = tuneNorwayTimings(tomorrowRaw, effectiveCountryCode, tz);
         const now = new Date();
         const tomorrowDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
@@ -761,10 +802,33 @@ export default function App(){
         }));
         setCalendarRows(tunedRows);
       })
-      .catch((err) => {
+      .catch(async (err) => {
         if (!active) return;
-        setCalendarRows([]);
         const m = String(err?.message || "");
+
+        try {
+          const rows = await fetchAladhanFallbackMonth(
+            activeCoords.latitude,
+            activeCoords.longitude,
+            now.getMonth() + 1,
+            now.getFullYear(),
+            timeZone,
+            effectiveCountryCode || "NO",
+            controller.signal,
+          );
+          if (!active) return;
+          const tunedRows = (rows || []).map((row) => ({
+            ...row,
+            timings: tuneNorwayTimings(row?.timings || {}, effectiveCountryCode, timeZone),
+          }));
+          setCalendarRows(tunedRows);
+          setCalendarError(effectiveCountryCode === "NO" ? "Viser tunet reservekalender (Aladhan)." : "");
+          return;
+        } catch {
+          // continue to final error UI
+        }
+
+        setCalendarRows([]);
         if (effectiveCountryCode === "NO") {
           if (m.includes("BONNETID_API_TOKEN") || m.includes("BONNETID_API_KEY")) {
             setCalendarError("Bonnetid API-token mangler i miljøvariabler.");
