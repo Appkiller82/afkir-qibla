@@ -12,8 +12,9 @@ export async function fetchTimings(
   when: "today" | "tomorrow" = "today"
 ): Promise<Timings> {
   const cc = (countryCode || "").toUpperCase();
+  const inNorway = cc === "NO" || isLikelyNorway(lat, lon);
 
-  if (cc === "NO") {
+    if (inNorway) {
     // Try Bonnetid first
     try {
       const u = `/api/bonnetid-today?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}&tz=${encodeURIComponent(tz)}&date=${encodeURIComponent(when)}`;
@@ -37,6 +38,11 @@ export async function fetchTimings(
   if (!r3.ok) throw new Error(`Aladhan ${r3.status}`);
   const j3 = await r3.json();
   return ensure(j3.timings);
+}
+
+function isLikelyNorway(lat: number, lon: number): boolean {
+  // Rough bounding box for mainland + large nearby islands.
+  return lat >= 57.5 && lat <= 72.5 && lon >= 4.0 && lon <= 31.5;
 }
 
 function pad2(n: number) { return (n < 10 ? "0" : "") + n; }

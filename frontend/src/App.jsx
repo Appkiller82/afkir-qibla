@@ -482,6 +482,7 @@ export default function App(){
   const [weatherError, setWeatherError] = useState("");
   const [calendarRows, setCalendarRows] = useState([]);
   const [calendarError, setCalendarError] = useState("");
+  const [calendarOpen, setCalendarOpen] = useState(false);
   const [offline, setOffline] = useState(typeof navigator !== "undefined" ? !navigator.onLine : false);
   const audioRef = useRef(null);
   const timersRef = useRef([]);
@@ -645,9 +646,9 @@ export default function App(){
     : "rgba(4,6,12,.42), rgba(4,6,12,.42)";
 
   return (
-    <div style={{minHeight:"100dvh", color:"var(--fg)", backgroundColor:"#020617", backgroundSize:"cover", backgroundPosition:"center", backgroundImage:`linear-gradient(${darkOverlay}), url(${bg})`, transition:"background-image .8s ease"}}>
+    <div style={{minHeight:"100dvh", color:"var(--fg)", backgroundSize:"cover", backgroundPosition:"center", backgroundImage:`linear-gradient(${quranMode ? "rgba(3, 12, 16, .64), rgba(3, 12, 16, .64)" : "rgba(4,6,12,.44), rgba(4,6,12,.44)"}), url(${bg})`, transition:"background-image .8s ease"}}>
       <style>{`
-        :root { --fg:#f8fafc; --muted:#dbeafe; --card:rgba(11,20,40,.72); --border:#475569; --btn:#0b1220; --accent:#16a34a; --accent-secondary:#38bdf8; }
+                :root { --fg:#f3f4f6; --muted:#dbe4f1; --card:rgba(8,14,30,.78); --border:#3f4c63; --btn:#111a2d; --accent:#16a34a; --accent-secondary:#38bdf8; }
         :root[data-theme="light"] { --fg:#0f172a; --muted:#475569; --card:rgba(255,255,255,.93); --border:#d1d5db; --btn:#f8fafc; --accent:#16a34a; --accent-secondary:#0284c7; }
         .container { max-width: 1060px; margin: 0 auto; padding: calc(env(safe-area-inset-top) + 18px) 16px 24px; font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
         .card { border:1px solid var(--border); border-radius: 18px; padding: 16px; background: var(--card); backdrop-filter: blur(14px); box-shadow: 0 12px 28px rgba(2, 6, 23, 0.22); }
@@ -754,11 +755,14 @@ export default function App(){
             <section className="card">
               <div style={{display:"flex", justifyContent:"space-between", alignItems:"center"}}>
                 <h3>Månedskalender</h3>
-                <button className="btn" onClick={() => exportCalendarIcs(city, calendarRows)} disabled={!calendarRows.length}>Eksporter .ics</button>
+                                <div className="row" style={{justifyContent:"flex-end"}}>
+                  <button className="btn" onClick={() => setCalendarOpen(v => !v)}>{calendarOpen ? "Lukk kalender" : "Åpne kalender"}</button>
+                  <button className="btn" onClick={() => exportCalendarIcs(city, calendarRows)} disabled={!calendarRows.length}>Eksporter .ics</button>
+                </div>
               </div>
               {calendarError && <div className="error" style={{marginTop:8}}>{calendarError}</div>}
               {!calendarRows.length && !calendarError && <div className="hint" style={{marginTop:8}}>Henter månedens bønnetider…</div>}
-              {!!calendarRows.length && (
+                            {!!calendarRows.length && calendarOpen && (
                 <div style={{maxHeight: 240, overflow: "auto", marginTop: 10}}>
                   <table style={{width:"100%", borderCollapse:"collapse", fontSize:13}}>
                     <thead>
@@ -776,6 +780,7 @@ export default function App(){
                   </table>
                 </div>
               )}
+              {!!calendarRows.length && !calendarOpen && <div className="hint" style={{marginTop:8}}>Kalender skjult. Trykk «Åpne kalender».</div>}
             </section>
 
             <section className="card">
