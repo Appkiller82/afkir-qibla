@@ -16,6 +16,40 @@ function resolveBonnetidUrl(rawBase?: string) {
 }
 
 
+function normalizeFieldKey(key: string) {
+  return String(key || "")
+    .normalize("NFKD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
+}
+
+function createTimingLookup(t: any) {
+  const map = new Map<string, string>();
+  if (!t || typeof t !== "object") return map;
+  for (const [rawKey, rawValue] of Object.entries(t)) {
+    if (rawValue === undefined || rawValue === null) continue;
+    const value = String(rawValue).trim();
+    if (!value) continue;
+    map.set(normalizeFieldKey(String(rawKey)), value);
+  }
+  return map;
+}
+
+function pickTiming(lookup: Map<string, string>, ...aliases: string[]) {
+  for (const alias of aliases) {
+    const hit = lookup.get(normalizeFieldKey(alias));
+    if (hit) return hit;
+  }
+  return "";
+}
+
+function toBonnetidDateFormat(isoDate: string) {
+  const [y, m, d] = String(isoDate || "").split("-");
+  if (!y || !m || !d) return isoDate;
+  return `${d}-${m}-${y}`;
+}
+
 function normalizeDate(input: string, tz: string) {
   const v = String(input || "today").trim().toLowerCase();
   if (/^\d{4}-\d{2}-\d{2}$/.test(v)) return v;
@@ -66,7 +100,7 @@ export const handler: Handler = async (event) => {
     url.searchParams.set("lat", String(lat));
     url.searchParams.set("lon", String(lon));
     url.searchParams.set("tz", String(tz));
-    url.searchParams.set("date", normalizeDate(String(when), String(tz)));
+    url.searchParams.set("date", toBonnetidDateFormat(normalizeDate(String(when), String(tz))));
 
     const upstream = await fetch(url.toString(), {
       headers: {
@@ -96,36 +130,30 @@ export const handler: Handler = async (event) => {
       j?.result ||
       j;
 
-    const pick = (...keys: string[]) => {
-      for (const k of keys) {
-        const v = t?.[k];
-        if (v !== undefined && v !== null && String(v).trim() !== "") return String(v);
-      }
-      return "";
-    };
+    const lookup = createTimingLookup(t);
 
     // Viktig: RIKTIG mapping fra Bonnetid-tabellen:
     // - Dhuhr skal være "Duhr", ikke "Istiwa"
     // - Asr skal være "Asr" eller "2x-skygge" (fallback til 1x)
     // - Maghrib skal være "Maghrib", ikke "Isha"
     const timings = {
-      Fajr: pick("Morgengry 16°", "Morgengry16°", "Morgengry", "Fajr", "fajr"),
-      Sunrise: pick("Soloppgang", "Sunrise", "sunrise"),
+      Fajr: pickTiming(lookup, "Morgengry 16°", "Morgengry16°", "Morgengry", "Fajr", "fajr"),
+      Sunrise: pickTiming(lookup, "Soloppgang", "Sunrise", "sunrise"),
 
       // Dhuhr: prioriter Duhr (bonnetid) -> Dhuhr (hvis API bruker engelsk)
-      Dhuhr: pick("Duhr", "Dhor", "Dhuhr", "Zuhr", "zuhr", "dhuhr"),
+      Dhuhr: pickTiming(lookup, "Duhr", "Duhur", "Dhor", "Dhuhr", "Zuhr", "zuhr", "dhuhr"),
 
       // Asr: prioriter Asr eller 2x-skygge (bonnetid har begge)
-      Asr: pick("2x-skygge", "Asr", "asr_2x", "asr2x", "asr", "1x-skygge"),
+      Asr: pickTiming(lookup, "Asr", "2x-skygge", "asr_2x", "asr2x", "asr"),
 
-      Maghrib: pick("Maghrib", "maghrib"),
-      Isha: pick("Isha", "isha"),
+      Maghrib: pickTiming(lookup, "Maghrib", "Magrib", "maghrib", "magrib"),
+      Isha: pickTiming(lookup, "Isha", "isha"),
 
       // Ekstra (kan være nyttig, men frontend kan ignorere)
-      Istiwa: pick("Istiwa", "istiwa"),
-      Asr1x: pick("1x-skygge", "asr_1x", "asr1x"),
-      Asr2x: pick("2x-skygge", "asr_2x", "asr2x"),
-      Midnight: pick("Midnatt", "Midnight", "midnight"),
+      Istiwa: pickTiming(lookup, "Istiwa", "istiwa"),
+      Asr1x: pickTiming(lookup, "1x-skygge", "asr_1x", "asr1x"),
+      Asr2x: pickTiming(lookup, "2x-skygge", "asr_2x", "asr2x"),
+      Midnight: pickTiming(lookup, "Midnatt", "Midnight", "midnight"),
     };
 
     // En liten sanity-check: hvis Maghrib mangler men Isha finnes,
