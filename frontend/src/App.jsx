@@ -696,8 +696,8 @@ export default function App(){
       try {
         todayRaw = await fetchTimings(lat, lng, tz, effectiveCountryCode, "today");
       } catch (err) {
-        console.error("[Prayer] Unified fetch failed, using Aladhan fallback for today", err);
-        setApiError("Bonnetid svarte ikke. Viser reservekilde (Aladhan).");
+        console.error("[Prayer] fetchTimings failed for today", err);
+        setApiError("Klarte ikke hente bønnetider fra primærkilde. Viser reservekilde (Aladhan).");
         todayRaw = tuneNorwayFallbackTimings(await fetchAladhanFallbackDay(lat, lng, tz, "today", effectiveCountryCode || "NO"), effectiveCountryCode, tz);
       }
       const todayStr = todayRaw;
@@ -716,8 +716,8 @@ export default function App(){
         try {
           tomorrowRaw = await fetchTimings(lat, lng, tz, effectiveCountryCode, "tomorrow");
         } catch (err) {
-          console.error("[Prayer] Unified fetch failed, using Aladhan fallback for tomorrow", err);
-          setApiError("Bonnetid svarte ikke. Viser reservekilde (Aladhan).");
+          console.error("[Prayer] fetchTimings failed for tomorrow", err);
+          setApiError("Klarte ikke hente bønnetider fra primærkilde. Viser reservekilde (Aladhan).");
           tomorrowRaw = tuneNorwayFallbackTimings(await fetchAladhanFallbackDay(lat, lng, tz, "tomorrow", effectiveCountryCode || "NO"), effectiveCountryCode, tz);
         }
         const tomorrowStr = tomorrowRaw;
@@ -817,10 +817,10 @@ export default function App(){
 
         setCalendarRows([]);
         if (effectiveCountryCode === "NO") {
-          if (m.includes("BONNETID_API_TOKEN") || m.includes("BONNETID_API_KEY")) {
-            setCalendarError("Bonnetid API-token mangler i miljøvariabler.");
+          if (m.includes("ALADHAN_")) {
+            setCalendarError("Aladhan-konfigurasjon mangler i miljøvariabler.");
           } else {
-            setCalendarError("Klarte ikke hente månedskalender fra Bonnetid akkurat nå.");
+            setCalendarError("Klarte ikke hente månedskalender akkurat nå.");
           }
         } else {
           setCalendarError("Klarte ikke hente månedskalender nå.");
