@@ -569,6 +569,7 @@ export default function App(){
   const bg = bgList[bgIdx % bgList.length];
   const activeCoords = coords || lastCoords || DEFAULT_COORDS;
   const effectiveCountryCode = inferCountryCode(activeCoords?.latitude, activeCoords?.longitude, countryCode || (timeZone === "Europe/Oslo" ? "NO" : ""));
+  const todayIsoForView = isoDateInTz(timeZone, 0);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme === "dark" ? "dark" : "light";
@@ -906,11 +907,14 @@ export default function App(){
                       <tr><th style={{textAlign:"left"}}>Dato</th><th style={{textAlign:"left"}}>Fajr</th><th style={{textAlign:"left"}}>Dhuhr</th><th style={{textAlign:"left"}}>Asr</th><th style={{textAlign:"left"}}>Maghrib</th><th style={{textAlign:"left"}}>Isha</th></tr>
                     </thead>
                     <tbody>
-                      {calendarRows.map((row) => (
-                        <tr key={row.date}>
-                          <td>{formatCalendarDate(row.date)}</td><td>{row.timings.Fajr || "--:--"}</td><td>{row.timings.Dhuhr || "--:--"}</td><td>{row.timings.Asr || "--:--"}</td><td>{row.timings.Maghrib || "--:--"}</td><td>{row.timings.Isha || "--:--"}</td>
-                        </tr>
-                      ))}
+                      {calendarRows.map((row) => {
+                        const isTodayRow = row.date === todayIsoForView;
+                        return (
+                          <tr key={row.date} style={isTodayRow ? { background: "rgba(56,189,248,.14)", fontWeight: 700 } : undefined}>
+                            <td>{formatCalendarDate(row.date)}{isTodayRow ? " (i dag)" : ""}</td><td>{row.timings.Fajr || "--:--"}</td><td>{row.timings.Dhuhr || "--:--"}</td><td>{row.timings.Asr || "--:--"}</td><td>{row.timings.Maghrib || "--:--"}</td><td>{row.timings.Isha || "--:--"}</td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -950,7 +954,7 @@ export default function App(){
 
                 <div style={{marginTop:10, fontSize:15}}>
                   {countdown?.name
-                    ? <>Neste bønn: <b>{countdown.name}</b> kl <b>{countdown.atText || formatPrayerTime(countdown.at)}</b> (<span className="hint">{countdown.diffText}</span>)</>
+                    ? <>{countdown.tomorrow ? "Neste bønn i morgen: " : "Neste bønn: "}<b>{countdown.name}</b> kl <b>{countdown.atText || formatPrayerTime(countdown.at)}</b> (<span className="hint">{countdown.diffText}</span>)</>
                     : <span className="hint">Alle dagens bønner er passert – oppdateres ved midnatt.</span>
                   }
                 </div>
