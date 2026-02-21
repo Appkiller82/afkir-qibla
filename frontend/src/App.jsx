@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import PushControlsAuto from "./PushControlsAuto.jsx";
 import AutoLocationModal from "./AutoLocationModal.jsx";
 import { updateMetaIfSubscribed } from "./push";
-import { fetchTimings } from "./prayer";
+import { fetchMonthTimings, fetchTimings, getPrayerDiagnostics } from "./prayer";
 
 /**
  * Afkir Qibla 7 – RESTORED UI (oppdatert for unified bønnetider)
@@ -139,23 +139,32 @@ function inferCountryCode(lat, lng, fallback = "") {
 }
 
 // ---------- Helpers (ny) ----------
-// Konverter "HH:mm" til Date (for i dag)
-function hhmmToToday(hhmm) {
+// Konverter "HH:mm" til lokal Date (uten UTC-drift)
+function hhmmToLocalDate(hhmm, baseDate) {
   if (!hhmm) return null;
   const m = String(hhmm).match(/^(\d{1,2}):(\d{2})/);
   if (!m) return null;
-  const now = new Date();
-  const d = new Date(now.getFullYear(), now.getMonth(), now.getDate(), parseInt(m[1],10), parseInt(m[2],10), 0, 0);
+  let y; let mo; let dNum;
+  if (baseDate && /^\d{4}-\d{2}-\d{2}$/.test(baseDate)) {
+    const [yy, mm, dd] = baseDate.split("-").map(Number);
+    y = yy; mo = mm; dNum = dd;
+  } else {
+    const now = new Date();
+    y = now.getFullYear();
+    mo = now.getMonth() + 1;
+    dNum = now.getDate();
+  }
+  const d = new Date(y, mo - 1, dNum, parseInt(m[1], 10), parseInt(m[2], 10), 0, 0);
   return d;
 }
-function ensureDates(strTimings /* {Fajr:"05:15", ...} */) {
+function ensureDates(strTimings /* {Fajr:"05:15", ...} */, baseDate) {
   return {
-    Fajr: hhmmToToday(strTimings.Fajr),
-    Soloppgang: hhmmToToday(strTimings.Sunrise), // i UI heter den Soloppgang
-    Dhuhr: hhmmToToday(strTimings.Dhuhr),
-    Asr: hhmmToToday(strTimings.Asr),
-    Maghrib: hhmmToToday(strTimings.Maghrib),
-    Isha: hhmmToToday(strTimings.Isha),
+    Fajr: hhmmToLocalDate(strTimings.Fajr, baseDate),
+    Soloppgang: hhmmToLocalDate(strTimings.Sunrise, baseDate), // i UI heter den Soloppgang
+    Dhuhr: hhmmToLocalDate(strTimings.Dhuhr, baseDate),
+    Asr: hhmmToLocalDate(strTimings.Asr, baseDate),
+    Maghrib: hhmmToLocalDate(strTimings.Maghrib, baseDate),
+    Isha: hhmmToLocalDate(strTimings.Isha, baseDate),
   };
 }
 
@@ -247,55 +256,7 @@ async function fetchWeather(lat, lng, signal) {
 
 
 async function fetchMonthlyCalendar(lat, lng, month, year, tz, countryCode, signal) {
-  if ((countryCode || "").toUpperCase() === "NO") {
-    const btUrl = new URL("/api/bonnetid-month", window.location.origin);
-    btUrl.searchParams.set("lat", String(lat));
-    btUrl.searchParams.set("lon", String(lng));
-    btUrl.searchParams.set("tz", String(tz));
-    btUrl.searchParams.set("month", String(month));
-    btUrl.searchParams.set("year", String(year));
-
-    try {
-      const btRes = await fetch(btUrl.toString(), { signal });
-      if (!btRes.ok) throw new Error(await btRes.text());
-      const btBody = await btRes.json();
-      if (Array.isArray(btBody?.rows) && btBody.rows.length > 0) return btBody.rows;
-      throw new Error("empty Bonnetid month rows");
-    } catch {
-      const adUrl = new URL("/api/aladhan-month", window.location.origin);
-      adUrl.searchParams.set("lat", String(lat));
-      adUrl.searchParams.set("lon", String(lng));
-      adUrl.searchParams.set("tz", String(tz));
-      adUrl.searchParams.set("month", String(month));
-      adUrl.searchParams.set("year", String(year));
-      adUrl.searchParams.set("cc", "NO");
-      const adRes = await fetch(adUrl.toString(), { signal });
-      if (!adRes.ok) throw new Error(await adRes.text());
-      const adBody = await adRes.json();
-      return adBody?.rows || [];
-    }
-  }
-
-  const url = new URL("https://api.aladhan.com/v1/calendar");
-  url.searchParams.set("latitude", String(lat));
-  url.searchParams.set("longitude", String(lng));
-  url.searchParams.set("method", "3");
-  url.searchParams.set("month", String(month));
-  url.searchParams.set("year", String(year));
-  const res = await fetch(url.toString(), { signal });
-  if (!res.ok) throw new Error("Calendar API failed");
-  const body = await res.json();
-  return (body?.data || []).map((d) => ({
-    date: `${d?.date?.gregorian?.year}-${String(d?.date?.gregorian?.month?.number || month).padStart(2, "0")}-${String(d?.date?.gregorian?.day || "01").padStart(2, "0")}`,
-    weekday: d?.date?.gregorian?.weekday?.en,
-    timings: {
-      Fajr: String(d?.timings?.Fajr || "").slice(0,5),
-      Dhuhr: String(d?.timings?.Dhuhr || "").slice(0,5),
-      Asr: String(d?.timings?.Asr || "").slice(0,5),
-      Maghrib: String(d?.timings?.Maghrib || "").slice(0,5),
-      Isha: String(d?.timings?.Isha || "").slice(0,5),
-    },
-  }));
+  return fetchMonthTimings(lat, lng, month, year, tz, countryCode, signal);
 }
 
 
@@ -568,6 +529,7 @@ export default function App(){
   const [calendarRows, setCalendarRows] = useState([]);
   const [calendarExpanded, setCalendarExpanded] = useState(false);
   const [calendarError, setCalendarError] = useState("");
+  const [diag, setDiag] = useState(() => getPrayerDiagnostics());
   const [offline, setOffline] = useState(typeof navigator !== "undefined" ? !navigator.onLine : false);
   const timeZone = useMemo(() => Intl.DateTimeFormat().resolvedOptions().timeZone, []);
   const audioRef = useRef(null);
@@ -671,12 +633,17 @@ export default function App(){
       // Beregn nedtelling som før
       let info = nextPrayerInfo(today);
       setCountdown(info);
+      setDiag(getPrayerDiagnostics());
 
       // Hvis alle dagens bønner er passert -> hent Fajr for i morgen
       if (info.tomorrow) {
         const tomorrowStr = await fetchTimings(lat, lng, tz, effectiveCountryCode, "tomorrow");
-        const tomorrow = ensureDates(tomorrowStr);
+        const now = new Date();
+        const tomorrowDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+        const tomorrowIso = `${tomorrowDate.getFullYear()}-${String(tomorrowDate.getMonth() + 1).padStart(2, "0")}-${String(tomorrowDate.getDate()).padStart(2, "0")}`;
+        const tomorrow = ensureDates(tomorrowStr, tomorrowIso);
         const fajr = tomorrow.Fajr;
+        if (!fajr) throw new Error("Mangler Fajr for i morgen");
         setCountdown({
           name: "Fajr",
           at: fajr,
@@ -686,6 +653,7 @@ export default function App(){
       }
     } catch (e) {
       console.error(e);
+      setDiag(getPrayerDiagnostics());
       const cached = loadCache("aq_times_cache");
       if (cached) {
         setApiError("");
@@ -742,14 +710,16 @@ export default function App(){
       .then((rows) => {
         if (!active) return;
         setCalendarRows(rows);
+        setDiag(getPrayerDiagnostics());
       })
       .catch((err) => {
         if (!active) return;
         setCalendarRows([]);
+        setDiag(getPrayerDiagnostics());
         const m = String(err?.message || "");
         if (effectiveCountryCode === "NO") {
-          if (m.includes("BONNETID_API_KEY")) {
-            setCalendarError("Bonnetid API-nøkkel mangler i miljøvariabler.");
+          if (m.includes("BONNETID_API_TOKEN") || m.includes("BONNETID_API_KEY")) {
+            setCalendarError("Bonnetid API-token mangler i miljøvariabler.");
           } else {
             setCalendarError("Klarte ikke hente månedskalender fra Bonnetid akkurat nå.");
           }
@@ -883,16 +853,21 @@ export default function App(){
                 <button className="btn" onClick={() => setCalendarExpanded((v) => !v)}>{calendarExpanded ? "Skjul" : "Vis"}</button>
               </div>
               {calendarError && <div className="error" style={{marginTop:8}}>{calendarError}</div>}
+              {import.meta.env.DEV && (
+                <div className="hint" style={{marginTop:8}}>
+                  Proxy: {diag.proxyStatus} · location_id: {diag.chosenLocationId ?? "-"} · siste: {diag.lastFetchStatus}
+                </div>
+              )}
               {calendarExpanded && (
                 <div style={{marginTop:8, maxHeight:220, overflow:"auto"}}>
                   <table style={{width:"100%", borderCollapse:"collapse", fontSize:14}}>
                     <thead>
-                      <tr><th style={{textAlign:"left"}}>Dato</th><th style={{textAlign:"left"}}>Fajr</th><th style={{textAlign:"left"}}>Dhuhr</th><th style={{textAlign:"left"}}>Asr</th><th style={{textAlign:"left"}}>Maghrib</th><th style={{textAlign:"left"}}>Isha</th></tr>
+                      <tr><th style={{textAlign:"left"}}>Dato</th><th style={{textAlign:"left"}}>Fajr</th><th style={{textAlign:"left"}}>Soloppgang</th><th style={{textAlign:"left"}}>Dhuhr</th><th style={{textAlign:"left"}}>Asr</th><th style={{textAlign:"left"}}>Maghrib</th><th style={{textAlign:"left"}}>Isha</th></tr>
                     </thead>
                     <tbody>
                       {calendarRows.map((row) => (
                         <tr key={row.date}>
-                          <td>{formatCalendarDate(row.date)}</td><td>{row.timings.Fajr || "--:--"}</td><td>{row.timings.Dhuhr || "--:--"}</td><td>{row.timings.Asr || "--:--"}</td><td>{row.timings.Maghrib || "--:--"}</td><td>{row.timings.Isha || "--:--"}</td>
+                          <td>{formatCalendarDate(row.date)}</td><td>{row.timings.Fajr || "--:--"}</td><td>{row.timings.Sunrise || "--:--"}</td><td>{row.timings.Dhuhr || "--:--"}</td><td>{row.timings.Asr || "--:--"}</td><td>{row.timings.Maghrib || "--:--"}</td><td>{row.timings.Isha || "--:--"}</td>
                         </tr>
                       ))}
                     </tbody>

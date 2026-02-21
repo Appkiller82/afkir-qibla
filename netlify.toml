@@ -1,10 +1,9 @@
 [build]
-  base = "frontend"
   command = "npm run build"
-  publish = "dist"
+  publish = "frontend/dist"
 
 [functions]
-  directory = "../netlify/functions"
+  directory = "netlify/functions"
   node_bundler = "esbuild"
 
 [[plugins]]
@@ -44,5 +43,11 @@
 [[redirects]]
   from = "/api/bonnetid-health"
   to = "/.netlify/functions/bonnetid-health"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/api/bonnetid"
+  to = "/.netlify/functions/bonnetid"
   status = 200
   force = true

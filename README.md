@@ -1,19 +1,19 @@
 # Qibla Prayer Integration (Bonnetid + Aladhan)
 
 ## Hva gjør pakken?
-- **Norge:** Prøver først **Bonnetid**. Hvis det feiler → **Aladhan med Norway‑tuning**.
+- **Norge:** Bruker **Bonnetid** (via serverless proxy).
 - **Utenfor Norge:** **Aladhan global** (standard method).
 - Returnerer normaliserte tider: `Fajr, Sunrise, Dhuhr, Asr, Maghrib, Isha` (HH:mm).
 
 ## Filtre
-- `netlify/functions/bt-today.ts` – Bonnetid
+- `netlify/functions/bonnetid.mjs` – sikker proxy til `api.bonnetid.no` (sender `Api-Token` fra env)
 - `netlify/functions/aladhan-today.ts` – Aladhan (tuner automatisk for `cc=NO`)
-- `frontend/src/prayer.ts` – Frontend hjelper
+- `frontend/src/prayer.ts` – Frontend hjelper (månedshenting + caching + Norway-routing)
 - `netlify.toml` – Redirects til funksjonene
 
 ## Miljøvariabler (Netlify)
-- `BONNETID_API_URL` (f.eks. `https://api.bonnetid.no` eller full sti; appen normaliserer til `/v1/prayertimes` hvis sti mangler)
-- `BONNETID_API_KEY` (**din nøkkel**)
+- `BONNETID_API_TOKEN` (**anbefalt**, token for `Api-Token` header)
+- `BONNETID_API_KEY` (støttes som fallback for bakoverkompatibilitet)
 - `ALADHAN_API_URL` (f.eks. `https://api.aladhan.com`)
 - `ALADHAN_METHOD`
 - `ALADHAN_METHOD_NORWAY`
@@ -30,4 +30,7 @@ const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
 const timings = await fetchTimings(lat, lon, tz, countryCode, "today");
 ```
 
-> **countryCode**: send `"NO"` i Norge for Bonnetid→tuned fallback. Ellers landets ISO2, eller tom streng.
+> **countryCode**: send `"NO"` i Norge for Bonnetid. Ellers landets ISO2, eller tom streng.
+
+
+> Netlify config: `[functions] directory = "netlify/functions"` i `netlify.toml`.
