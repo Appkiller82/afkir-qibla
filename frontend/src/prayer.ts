@@ -1,5 +1,5 @@
 
-// Frontend helper: unified timings fetch with Norway->Bonnetid then Aladhan (tuned), World->Aladhan
+// Frontend helper: unified timings fetch with Norway->Bonnetid (strict), World->Aladhan
 export type Timings = {
   Fajr: string; Sunrise: string; Dhuhr: string; Asr: string; Maghrib: string; Isha: string;
 };
@@ -14,21 +14,11 @@ export async function fetchTimings(
   const cc = (countryCode || "").toUpperCase();
 
   if (cc === "NO") {
-    // Try Bonnetid first
-    try {
-      const u = `/api/bonnetid-today?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}&tz=${encodeURIComponent(tz)}&when=${encodeURIComponent(when)}`;
-      const r = await fetch(u);
-      if (!r.ok) throw new Error(`Bonnetid ${r.status}`);
-      const j = await r.json();
-      return ensure(j.timings);
-    } catch (err) {
-      // Fallback: Aladhan tuned for Norway
-      const u2 = `/api/aladhan-today?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}&tz=${encodeURIComponent(tz)}&when=${encodeURIComponent(when)}&cc=NO`;
-      const r2 = await fetch(u2);
-      if (!r2.ok) throw new Error(`Aladhan fallback ${r2.status}`);
-      const j2 = await r2.json();
-      return ensure(j2.timings);
-    }
+    const u = `/api/bonnetid-today?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}&tz=${encodeURIComponent(tz)}&when=${encodeURIComponent(when)}`;
+    const r = await fetch(u);
+    if (!r.ok) throw new Error(`Bonnetid ${r.status}`);
+    const j = await r.json();
+    return ensure(j.timings);
   }
 
   // Rest of world: Aladhan global

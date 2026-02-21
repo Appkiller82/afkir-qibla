@@ -243,29 +243,12 @@ async function fetchWeather(lat, lng) {
 
 async function fetchMonthlyCalendar(lat, lng, month, year, countryCode, tz) {
   const cc = (countryCode || "").toUpperCase();
-  const daysInMonth = new Date(year, month, 0).getDate();
 
   if (cc === "NO") {
-    const rows = [];
-    for (let day = 1; day <= daysInMonth; day += 1) {
-      const isoDate = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-      const res = await fetch(`/api/bonnetid-today?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lng)}&tz=${encodeURIComponent(tz)}&when=${encodeURIComponent(isoDate)}`);
-      if (!res.ok) throw new Error("Calendar API failed");
-      const body = await res.json();
-      const t = body?.timings || {};
-      rows.push({
-        date: isoDate,
-        weekday: new Date(year, month - 1, day).toLocaleDateString("nb-NO", { weekday: "short" }),
-        timings: {
-          Fajr: String(t.Fajr || "").slice(0, 5),
-          Dhuhr: String(t.Dhuhr || "").slice(0, 5),
-          Asr: String(t.Asr || "").slice(0, 5),
-          Maghrib: String(t.Maghrib || "").slice(0, 5),
-          Isha: String(t.Isha || "").slice(0, 5),
-        },
-      });
-    }
-    return rows;
+    const res = await fetch(`/api/bonnetid-month?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lng)}&tz=${encodeURIComponent(tz)}&month=${encodeURIComponent(month)}&year=${encodeURIComponent(year)}`);
+    if (!res.ok) throw new Error("Calendar API failed");
+    const body = await res.json();
+    return body?.rows || [];
   }
 
   const url = new URL("https://api.aladhan.com/v1/calendar");
@@ -684,7 +667,7 @@ export default function App(){
       .then((rows) => setCalendarRows(rows))
       .catch(() => {
         setCalendarRows([]);
-        setCalendarError("Klarte ikke hente månedskalender nå.");
+        setCalendarError(effectiveCountryCode === "NO" ? "Klarte ikke hente månedskalender fra Bonnetid akkurat nå." : "Klarte ikke hente månedskalender nå.");
       });
   }, [activeCoords?.latitude, activeCoords?.longitude, effectiveCountryCode]);
 
@@ -707,7 +690,7 @@ export default function App(){
         :root[data-theme="dark"] { --fg:#e5e7eb; --muted:#cbd5e1; --card:rgba(15,23,42,.78); --border:#334155; --btn:#0b1220; --accent:#16a34a; --accent-secondary:#38bdf8; }
         .container { max-width: 1060px; margin: 0 auto; padding: calc(env(safe-area-inset-top) + 12px) 12px calc(env(safe-area-inset-bottom) + 20px); font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
         .card { border:1px solid var(--border); border-radius: 18px; padding: 16px; background: var(--card); backdrop-filter: blur(14px); box-shadow: 0 12px 28px rgba(2, 6, 23, 0.22); }
-        .hero { background: linear-gradient(135deg, rgba(22,163,74,.22), rgba(56,189,248,.2)); }
+        .hero { background: linear-gradient(135deg, rgba(22,163,74,.18), rgba(56,189,248,.16)); padding-bottom: 12px; }
         .btn { padding:10px 14px; border-radius:12px; border:1px solid var(--border); background: var(--btn); color: var(--fg); cursor:pointer; font-weight: 600; }
         .btn:hover { opacity:.95 }
         .btn-green { background: var(--accent); border-color: var(--accent); color: white; }
@@ -718,22 +701,22 @@ export default function App(){
         ul.times { list-style:none; padding:0; margin:0 }
         .time-item { display:flex; justify-content:space-between; padding:8px 0; border-bottom:1px dashed var(--border); font-size:16px }
         .error { color:#fecaca; background:rgba(239,68,68,.12); border:1px solid rgba(239,68,68,.35); padding:10px; border-radius:12px; }
-        .hero-grid { display:grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); margin-top: 12px; }
+        .hero-grid { display:grid; gap: 8px; grid-template-columns: repeat(3, minmax(0, 1fr)); margin-top: 10px; }
         .hero-stat { border: 1px solid var(--border); border-radius: 14px; padding: 12px; background: rgba(2, 6, 23, .25); }
         .kpi { font-size: 24px; font-weight: 700; }
         .section-grid { display:grid; gap:12px; margin-top:12px; grid-template-columns: 1.2fr .8fr; }
-        @media (max-width: 920px){ .section-grid { grid-template-columns: 1fr; } }
+        @media (max-width: 920px){ .section-grid { grid-template-columns: 1fr; } .hero-grid { grid-template-columns: 1fr; } .hero-stat .kpi{ font-size:20px; } }
       `}</style>
 
       <div className="container">
         <header className="card hero" style={{marginBottom:12, textAlign:"left"}}>
-          <h1>Afkir Qibla</h1>
-          <div style={{margin:"6px 0 2px"}}>
+          <h1 style={{marginBottom:4}}>Afkir Qibla</h1>
+          <div className="row" style={{justifyContent:"space-between", marginBottom:6}}>
+            <div className="hint">{NB_DAY.format(new Date())}</div>
             <button className="btn" onClick={()=> setTheme(t => t === "dark" ? "light" : "dark") }>
               Tema: {theme === "dark" ? "Mørk" : "Lys"}
             </button>
           </div>
-          <div className="hint">{NB_DAY.format(new Date())}</div>
 
           <div className="hero-grid">
             <div className="hero-stat"><div className="hint">Sted</div><div className="kpi">{city || "Ukjent"}</div></div>
