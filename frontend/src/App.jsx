@@ -130,6 +130,14 @@ function qiblaBearing(lat, lng) {
   return (brng * 180 / Math.PI + 360) % 360;
 }
 
+
+function inferCountryCode(lat, lng, fallback = "") {
+  if (typeof lat !== "number" || typeof lng !== "number") return (fallback || "").toUpperCase();
+  const inNorway = lat >= 57 && lat <= 72.5 && lng >= 4 && lng <= 32;
+  if (inNorway) return "NO";
+  return (fallback || "").toUpperCase();
+}
+
 // ---------- Helpers (ny) ----------
 // Konverter "HH:mm" til Date (for i dag)
 function hhmmToToday(hhmm) {
@@ -201,6 +209,15 @@ function weatherCodeToText(code) {
   return WEATHER_CODES[code] || "Oppdatert vær";
 }
 
+function weatherIcon(code) {
+  if (code === 0 || code === 1) return "☀️";
+  if ([71, 73, 75].includes(code)) return "❄️";
+  if ([2, 3, 45, 48].includes(code)) return "☁️";
+  if ([51, 53, 55, 61, 63, 65, 80, 81, 82].includes(code)) return "🌧️";
+  if (code === 95) return "⛈️";
+  return "🌤️";
+}
+
 async function fetchWeather(lat, lng) {
   const url = new URL("https://api.open-meteo.com/v1/forecast");
   url.searchParams.set("latitude", String(lat));
@@ -224,7 +241,33 @@ async function fetchWeather(lat, lng) {
 }
 
 
-async function fetchMonthlyCalendar(lat, lng, month, year) {
+async function fetchMonthlyCalendar(lat, lng, month, year, countryCode, tz) {
+  const cc = (countryCode || "").toUpperCase();
+  const daysInMonth = new Date(year, month, 0).getDate();
+
+  if (cc === "NO") {
+    const rows = [];
+    for (let day = 1; day <= daysInMonth; day += 1) {
+      const isoDate = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+      const res = await fetch(`/api/bonnetid-today?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lng)}&tz=${encodeURIComponent(tz)}&when=${encodeURIComponent(isoDate)}`);
+      if (!res.ok) throw new Error("Calendar API failed");
+      const body = await res.json();
+      const t = body?.timings || {};
+      rows.push({
+        date: isoDate,
+        weekday: new Date(year, month - 1, day).toLocaleDateString("nb-NO", { weekday: "short" }),
+        timings: {
+          Fajr: String(t.Fajr || "").slice(0, 5),
+          Dhuhr: String(t.Dhuhr || "").slice(0, 5),
+          Asr: String(t.Asr || "").slice(0, 5),
+          Maghrib: String(t.Maghrib || "").slice(0, 5),
+          Isha: String(t.Isha || "").slice(0, 5),
+        },
+      });
+    }
+    return rows;
+  }
+
   const url = new URL("https://api.aladhan.com/v1/calendar");
   url.searchParams.set("latitude", String(lat));
   url.searchParams.set("longitude", String(lng));
@@ -235,7 +278,7 @@ async function fetchMonthlyCalendar(lat, lng, month, year) {
   if (!res.ok) throw new Error("Calendar API failed");
   const body = await res.json();
   return (body?.data || []).map((d) => ({
-    date: d?.date?.gregorian?.date,
+    date: `${d?.date?.gregorian?.year}-${String(d?.date?.gregorian?.month?.number || month).padStart(2, "0")}-${String(d?.date?.gregorian?.day || "01").padStart(2, "0")}`,
     weekday: d?.date?.gregorian?.weekday?.en,
     timings: {
       Fajr: String(d?.timings?.Fajr || "").slice(0,5),
@@ -266,12 +309,12 @@ function exportCalendarIcs(city, days) {
   if (!days?.length) return;
   const pad = (n) => String(n).padStart(2, "0");
   const dt = (dateStr, time) => {
-    const [d,m,y] = dateStr.split("-").map(Number);
+    const [y,m,d] = dateStr.split("-").map(Number);
     const [hh,mm] = time.split(":").map(Number);
     return `${y}${pad(m)}${pad(d)}T${pad(hh)}${pad(mm)}00`;
   };
   const lines = ["BEGIN:VCALENDAR","VERSION:2.0","PRODID:-//Afkir Qibla//NO"];
-  days.slice(0, 10).forEach((day) => {
+  days.forEach((day) => {
     ["Fajr","Dhuhr","Asr","Maghrib","Isha"].forEach((name) => {
       const time = day.timings[name];
       if (!time) return;
@@ -480,11 +523,12 @@ export default function App(){
   const [showMap, setShowMap] = useState(false);
   const [showModal, setShowModal] = useState(false);
   const [quranMode, setQuranMode] = useLocalStorage("aq_quran_mode", false);
-  const [theme, setTheme] = useLocalStorage("aq_theme", "light");
+  const [theme, setTheme] = useLocalStorage("aq_theme", "dark");
   const [lastCoords, setLastCoords] = useLocalStorage("aq_last_coords", null);
   const [weather, setWeather] = useState(() => loadCache("aq_weather_cache"));
   const [weatherError, setWeatherError] = useState("");
   const [calendarRows, setCalendarRows] = useState([]);
+  const [calendarExpanded, setCalendarExpanded] = useState(false);
   const [calendarError, setCalendarError] = useState("");
   const [offline, setOffline] = useState(typeof navigator !== "undefined" ? !navigator.onLine : false);
   const audioRef = useRef(null);
@@ -496,6 +540,7 @@ export default function App(){
   useEffect(() => { const id = setInterval(()=> setBgIdx(i => (i+1)%bgList.length), 25000); return () => clearInterval(id) }, [bgList.length]);
   const bg = bgList[bgIdx % bgList.length];
   const activeCoords = coords || lastCoords || DEFAULT_COORDS;
+  const effectiveCountryCode = inferCountryCode(activeCoords?.latitude, activeCoords?.longitude, countryCode);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme === "dark" ? "dark" : "light";
@@ -543,7 +588,7 @@ export default function App(){
       if (r?.name) setCity(r.name);
       if (r?.countryCode) setCountryCode(r.countryCode);
     });
-  }, [activeCoords?.latitude, activeCoords?.longitude]);
+  }, [activeCoords?.latitude, activeCoords?.longitude, effectiveCountryCode]);
 
   // schedule reminders (tab-only)
   useEffect(() => {
@@ -574,7 +619,7 @@ export default function App(){
       const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
       // Hent dagens tider via unified fetchTimings (Bonnetid→Aladhan NO tuned i Norge, Aladhan global ellers)
-      const todayStr = await fetchTimings(lat, lng, tz, countryCode, "today");
+      const todayStr = await fetchTimings(lat, lng, tz, effectiveCountryCode, "today");
       const today = ensureDates(todayStr);
       setTimes(today);
       saveCache("aq_times_cache", todayStr);
@@ -585,7 +630,7 @@ export default function App(){
 
       // Hvis alle dagens bønner er passert -> hent Fajr for i morgen
       if (info.tomorrow) {
-        const tomorrowStr = await fetchTimings(lat, lng, tz, countryCode, "tomorrow");
+        const tomorrowStr = await fetchTimings(lat, lng, tz, effectiveCountryCode, "tomorrow");
         const tomorrow = ensureDates(tomorrowStr);
         const fajr = tomorrow.Fajr;
         setCountdown({
@@ -610,7 +655,7 @@ export default function App(){
 
   // initial fetch and start watch
   const onUseLocation = () => { requestOnce(); startWatch(); };
-  useEffect(() => { if (!activeCoords) return; refreshTimes(activeCoords.latitude, activeCoords.longitude) }, [activeCoords?.latitude, activeCoords?.longitude, countryCode]);
+  useEffect(() => { if (!activeCoords) return; refreshTimes(activeCoords.latitude, activeCoords.longitude) }, [activeCoords?.latitude, activeCoords?.longitude, effectiveCountryCode]);
 
   useEffect(() => {
     if (!activeCoords) return;
@@ -635,13 +680,13 @@ export default function App(){
     if (!activeCoords) return;
     setCalendarError("");
     const now = new Date();
-    fetchMonthlyCalendar(activeCoords.latitude, activeCoords.longitude, now.getMonth() + 1, now.getFullYear())
+    fetchMonthlyCalendar(activeCoords.latitude, activeCoords.longitude, now.getMonth() + 1, now.getFullYear(), effectiveCountryCode, Intl.DateTimeFormat().resolvedOptions().timeZone)
       .then((rows) => setCalendarRows(rows))
       .catch(() => {
         setCalendarRows([]);
         setCalendarError("Klarte ikke hente månedskalender nå.");
       });
-  }, [activeCoords?.latitude, activeCoords?.longitude]);
+  }, [activeCoords?.latitude, activeCoords?.longitude, effectiveCountryCode]);
 
   // Keep push metadata up to date automatically (always-on across city changes)
   useEffect(() => {
@@ -650,17 +695,17 @@ export default function App(){
       lat: coords.latitude,
       lng: coords.longitude,
       city,
-      countryCode,
+      countryCode: effectiveCountryCode,
       tz: Intl.DateTimeFormat().resolvedOptions().timeZone,
     }).catch(()=>{});
-  }, [coords?.latitude, coords?.longitude, city, countryCode]);
+  }, [coords?.latitude, coords?.longitude, city, effectiveCountryCode]);
 
   return (
     <div style={{minHeight:"100dvh", color:"var(--fg)", backgroundSize:"cover", backgroundPosition:"center", backgroundImage:`linear-gradient(${quranMode ? "rgba(3, 12, 16, .78), rgba(3, 12, 16, .78)" : "rgba(4,6,12,.65), rgba(4,6,12,.65)"}), url(${bg})`, transition:"background-image .8s ease"}}>
       <style>{`
         :root { --fg:#0f172a; --muted:#475569; --card:rgba(255,255,255,.93); --border:#d1d5db; --btn:#f8fafc; --accent:#16a34a; --accent-secondary:#0284c7; }
         :root[data-theme="dark"] { --fg:#e5e7eb; --muted:#cbd5e1; --card:rgba(15,23,42,.78); --border:#334155; --btn:#0b1220; --accent:#16a34a; --accent-secondary:#38bdf8; }
-        .container { max-width: 1060px; margin: 0 auto; padding: calc(env(safe-area-inset-top) + 18px) 16px 24px; font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+        .container { max-width: 1060px; margin: 0 auto; padding: calc(env(safe-area-inset-top) + 12px) 12px calc(env(safe-area-inset-bottom) + 20px); font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
         .card { border:1px solid var(--border); border-radius: 18px; padding: 16px; background: var(--card); backdrop-filter: blur(14px); box-shadow: 0 12px 28px rgba(2, 6, 23, 0.22); }
         .hero { background: linear-gradient(135deg, rgba(22,163,74,.22), rgba(56,189,248,.2)); }
         .btn { padding:10px 14px; border-radius:12px; border:1px solid var(--border); background: var(--btn); color: var(--fg); cursor:pointer; font-weight: 600; }
@@ -673,7 +718,7 @@ export default function App(){
         ul.times { list-style:none; padding:0; margin:0 }
         .time-item { display:flex; justify-content:space-between; padding:8px 0; border-bottom:1px dashed var(--border); font-size:16px }
         .error { color:#fecaca; background:rgba(239,68,68,.12); border:1px solid rgba(239,68,68,.35); padding:10px; border-radius:12px; }
-        .hero-grid { display:grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); margin-top: 16px; }
+        .hero-grid { display:grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); margin-top: 12px; }
         .hero-stat { border: 1px solid var(--border); border-radius: 14px; padding: 12px; background: rgba(2, 6, 23, .25); }
         .kpi { font-size: 24px; font-weight: 700; }
         .section-grid { display:grid; gap:12px; margin-top:12px; grid-template-columns: 1.2fr .8fr; }
@@ -681,9 +726,8 @@ export default function App(){
       `}</style>
 
       <div className="container">
-        <header className="card hero" style={{marginBottom:12, textAlign:"center"}}>
+        <header className="card hero" style={{marginBottom:12, textAlign:"left"}}>
           <h1>Afkir Qibla</h1>
-          <div className="hint">Din profesjonelle Qibla-assistent med bønnetider, vær og smart varsling.</div>
           <div style={{margin:"6px 0 2px"}}>
             <button className="btn" onClick={()=> setTheme(t => t === "dark" ? "light" : "dark") }>
               Tema: {theme === "dark" ? "Mørk" : "Lys"}
@@ -745,7 +789,7 @@ export default function App(){
                 <>
                   <div style={{display:"flex", justifyContent:"space-between", marginTop:10, alignItems:"baseline"}}>
                     <div>
-                      <div className="kpi">{NB_TEMP.format(weather.currentTemp)}°C</div>
+                      <div className="kpi" style={{display:"flex", alignItems:"center", gap:8}}><span>{weatherIcon(weather.code)}</span><span>{NB_TEMP.format(weather.currentTemp)}°C</span></div>
                       <div className="hint">{weatherCodeToText(weather.code)}</div>
                     </div>
                     <div className="hint">Føles som {NB_TEMP.format(weather.feelsLike)}°C</div>
@@ -765,7 +809,10 @@ export default function App(){
             <section className="card">
               <div style={{display:"flex", justifyContent:"space-between", alignItems:"center"}}>
                 <h3>Månedskalender</h3>
-                <button className="btn" onClick={() => exportCalendarIcs(city, calendarRows)} disabled={!calendarRows.length}>Eksporter .ics</button>
+                <div className="row">
+                  <button className="btn" onClick={() => setCalendarExpanded(v => !v)} disabled={!calendarRows.length}>{calendarExpanded ? "Lukk" : "Åpne hele måneden"}</button>
+                  <button className="btn" onClick={() => exportCalendarIcs(city, calendarRows)} disabled={!calendarRows.length}>Eksporter .ics</button>
+                </div>
               </div>
               {calendarError && <div className="error" style={{marginTop:8}}>{calendarError}</div>}
               {!calendarRows.length && !calendarError && <div className="hint" style={{marginTop:8}}>Henter månedens bønnetider…</div>}
@@ -778,9 +825,9 @@ export default function App(){
                       </tr>
                     </thead>
                     <tbody>
-                      {calendarRows.slice(new Date().getDate()-1, new Date().getDate()+6).map((day) => (
+                      {(calendarExpanded ? calendarRows : calendarRows.slice(new Date().getDate()-1, new Date().getDate()+6)).map((day) => (
                         <tr key={day.date} style={{borderBottom:"1px dashed var(--border)"}}>
-                          <td>{day.date}</td><td>{day.timings.Fajr}</td><td>{day.timings.Dhuhr}</td><td>{day.timings.Asr}</td><td>{day.timings.Maghrib}</td><td>{day.timings.Isha}</td>
+                          <td>{new Date(day.date).toLocaleDateString("nb-NO")}</td><td>{day.timings.Fajr}</td><td>{day.timings.Dhuhr}</td><td>{day.timings.Asr}</td><td>{day.timings.Maghrib}</td><td>{day.timings.Isha}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -848,7 +895,7 @@ export default function App(){
             <PushControlsAuto
               coords={coords}
               city={city}
-              countryCode={countryCode}
+              countryCode={effectiveCountryCode}
               tz={Intl.DateTimeFormat().resolvedOptions().timeZone}
             />
           </section>
