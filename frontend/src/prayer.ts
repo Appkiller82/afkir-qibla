@@ -311,29 +311,8 @@ export async function fetchTimings(
   const cc = (countryCode || "").toUpperCase();
 
   if (isNorway(cc, tz)) {
-    const isoDate = normalizeDateInput(when, tz);
-    const btUrl = new URL("/api/bonnetid-today", window.location.origin);
-    btUrl.searchParams.set("lat", String(lat));
-    btUrl.searchParams.set("lon", String(lon));
-    btUrl.searchParams.set("tz", String(tz));
-    btUrl.searchParams.set("when", isoDate);
-
-    try {
-      const btRes = await fetch(btUrl.toString());
-      const btBody = await readJsonOrThrow(btRes, "Bonnetid today");
-      const timings = ensure(btBody?.timings || btBody?.data?.timings || {});
-      if (!looksSuspiciousNorway(timings)) return timings;
-    } catch {
-      // Fall back to month data path below.
-    }
-
-    const year = Number(isoDate.slice(0, 4));
-    const month = Number(isoDate.slice(5, 7));
-    const rows = await fetchMonthTimingsNO(year, month, lat, lon, tz);
-    const dayRow = rows.find((r) => r.date === isoDate);
-    if (dayRow && !looksSuspiciousNorway(dayRow.timings)) return dayRow.timings;
-
-    throw new Error(`Bonnetid mangler gyldige tider for ${isoDate}`);
+    // Norway now uses tuned Aladhan profile as primary source (no Bonnetid API key required).
+    return fetchAladhan(lat, lon, tz, when, "NO");
   }
 
   // Rest of world: Aladhan unchanged
@@ -350,11 +329,8 @@ export async function fetchMonthTimings(
   signal?: AbortSignal,
 ): Promise<MonthRow[]> {
   if (isNorway(countryCode, tz)) {
-    try {
-      return await fetchMonthTimingsNO(year, month, lat, lon, tz, signal);
-    } catch {
-      return fetchAladhanMonth(lat, lon, month, year, tz, String((countryCode || "").toUpperCase() || "NO"), signal);
-    }
+    // Norway month calendar: tuned Aladhan profile (cc=NO).
+    return fetchAladhanMonth(lat, lon, month, year, tz, "NO", signal);
   }
 
   return fetchAladhanMonth(lat, lon, month, year, tz, String((countryCode || "").toUpperCase()), signal);
