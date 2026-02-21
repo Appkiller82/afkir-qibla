@@ -291,6 +291,22 @@ function loadCache(key) {
   }
 }
 
+function normalizeWeatherCache(w) {
+  if (!w || typeof w !== "object") return null;
+  const sunrise = w.sunrise ? new Date(w.sunrise) : null;
+  const sunset = w.sunset ? new Date(w.sunset) : null;
+  return {
+    ...w,
+    sunrise: sunrise && !Number.isNaN(sunrise.getTime()) ? sunrise : null,
+    sunset: sunset && !Number.isNaN(sunset.getTime()) ? sunset : null,
+  };
+}
+
+function safeNum(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
 function exportCalendarIcs(city, days) {
   if (!days?.length) return;
   const pad = (n) => String(n).padStart(2, "0");
@@ -511,7 +527,7 @@ export default function App(){
   const [quranMode, setQuranMode] = useLocalStorage("aq_quran_mode", false);
   const [theme, setTheme] = useLocalStorage("aq_theme", "dark");
   const [lastCoords, setLastCoords] = useLocalStorage("aq_last_coords", null);
-  const [weather, setWeather] = useState(() => loadCache("aq_weather_cache"));
+  const [weather, setWeather] = useState(() => normalizeWeatherCache(loadCache("aq_weather_cache")));
   const [weatherError, setWeatherError] = useState("");
   const [calendarRows, setCalendarRows] = useState([]);
   const [calendarExpanded, setCalendarExpanded] = useState(false);
@@ -656,7 +672,7 @@ export default function App(){
       .catch(() => {
         if (!active) return;
         const cached = loadCache("aq_weather_cache");
-        setWeather(cached || null);
+        setWeather(normalizeWeatherCache(cached));
         setWeatherError(cached ? "Viser sist lagrede værdata." : "Kunne ikke hente værdata akkurat nå.");
       });
     return () => { active = false; };
@@ -784,18 +800,18 @@ export default function App(){
                 <>
                   <div style={{display:"flex", justifyContent:"space-between", marginTop:10, alignItems:"baseline"}}>
                     <div>
-                      <div className="kpi" style={{display:"flex", alignItems:"center", gap:8}}><span>{weatherIcon(weather.code)}</span><span>{NB_TEMP.format(weather.currentTemp)}°C</span></div>
+                      <div className="kpi" style={{display:"flex", alignItems:"center", gap:8}}><span>{weatherIcon(weather.code)}</span><span>{safeNum(weather.currentTemp) != null ? `${NB_TEMP.format(weather.currentTemp)}°C` : "--"}</span></div>
                       <div className="hint">{weatherCodeToText(weather.code)}</div>
                     </div>
-                    <div className="hint">Føles som {NB_TEMP.format(weather.feelsLike)}°C</div>
+                    <div className="hint">Føles som {safeNum(weather.feelsLike) != null ? `${NB_TEMP.format(weather.feelsLike)}°C` : "--"}</div>
                   </div>
                   <div className="row" style={{marginTop:10, justifyContent:"space-between"}}>
-                    <span className="hint">Min/maks: {NB_TEMP.format(weather.min)}° / {NB_TEMP.format(weather.max)}°</span>
-                    <span className="hint">Vind: {NB_TEMP.format(weather.wind)} km/t</span>
+                    <span className="hint">Min/maks: {safeNum(weather.min) != null ? NB_TEMP.format(weather.min) : "--"}° / {safeNum(weather.max) != null ? NB_TEMP.format(weather.max) : "--"}°</span>
+                    <span className="hint">Vind: {safeNum(weather.wind) != null ? NB_TEMP.format(weather.wind) : "--"} km/t</span>
                   </div>
                   <div className="row" style={{marginTop:6, justifyContent:"space-between"}}>
-                    <span className="hint">Soloppgang: {weather.sunrise ? NB_TIME.format(weather.sunrise) : "--"}</span>
-                    <span className="hint">Solnedgang: {weather.sunset ? NB_TIME.format(weather.sunset) : "--"}</span>
+                    <span className="hint">Soloppgang: {weather.sunrise instanceof Date && !Number.isNaN(weather.sunrise.getTime()) ? NB_TIME.format(weather.sunrise) : "--"}</span>
+                    <span className="hint">Solnedgang: {weather.sunset instanceof Date && !Number.isNaN(weather.sunset.getTime()) ? NB_TIME.format(weather.sunset) : "--"}</span>
                   </div>
                 </>
               )}
@@ -822,7 +838,7 @@ export default function App(){
                     <tbody>
                       {(calendarExpanded ? calendarRows : calendarRows.slice(new Date().getDate()-1, new Date().getDate()+6)).map((day) => (
                         <tr key={day.date} style={{borderBottom:"1px dashed var(--border)"}}>
-                          <td>{new Date(day.date).toLocaleDateString("nb-NO")}</td><td>{day.timings.Fajr}</td><td>{day.timings.Dhuhr}</td><td>{day.timings.Asr}</td><td>{day.timings.Maghrib}</td><td>{day.timings.Isha}</td>
+                          <td>{new Date(day.date).toLocaleDateString("nb-NO")}</td><td>{day.timings.Fajr || "--"}</td><td>{day.timings.Dhuhr || "--"}</td><td>{day.timings.Asr || "--"}</td><td>{day.timings.Maghrib || "--"}</td><td>{day.timings.Isha || "--"}</td>
                         </tr>
                       ))}
                     </tbody>
