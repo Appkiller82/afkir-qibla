@@ -3,13 +3,15 @@ import type { Handler } from "@netlify/functions";
 function pickTuning(cc: string, tz: string) {
   const isNo = cc === "NO" || String(tz || "") === "Europe/Oslo";
   return {
-    method: isNo ? process.env.ALADHAN_METHOD_NORWAY || "99" : process.env.ALADHAN_METHOD || "",
-    school: isNo ? process.env.ALADHAN_SCHOOL_NORWAY || "0" : process.env.ALADHAN_SCHOOL || "",
-    latAdj: isNo ? process.env.ALADHAN_LAT_ADJ_NORWAY || "3" : process.env.ALADHAN_LAT_ADJ || "",
-    fajrAngle: isNo ? process.env.ALADHAN_FAJR_ANGLE_NORWAY || "16" : process.env.ALADHAN_FAJR_ANGLE || "",
-    ishaAngle: isNo ? process.env.ALADHAN_ISHA_ANGLE_NORWAY || "15" : process.env.ALADHAN_ISHA_ANGLE || "",
-    maghribMinutes: isNo ? process.env.ALADHAN_MAGHRIB_MINUTES_NORWAY || "0" : process.env.ALADHAN_MAGHRIB_MINUTES || "0",
-    tune: isNo ? process.env.ALADHAN_TUNE_NORWAY || "0,-9,0,6,0,0,5,0,0" : process.env.ALADHAN_TUNE || "",
+    // Keep Norway-specific env overrides if configured, but avoid hard-coded defaults
+    // that can collapse Isha to Maghrib during high-latitude periods.
+    method: isNo ? process.env.ALADHAN_METHOD_NORWAY || process.env.ALADHAN_METHOD || "" : process.env.ALADHAN_METHOD || "",
+    school: isNo ? process.env.ALADHAN_SCHOOL_NORWAY || process.env.ALADHAN_SCHOOL || "" : process.env.ALADHAN_SCHOOL || "",
+    latAdj: isNo ? process.env.ALADHAN_LAT_ADJ_NORWAY || process.env.ALADHAN_LAT_ADJ || "" : process.env.ALADHAN_LAT_ADJ || "",
+    fajrAngle: isNo ? process.env.ALADHAN_FAJR_ANGLE_NORWAY || process.env.ALADHAN_FAJR_ANGLE || "" : process.env.ALADHAN_FAJR_ANGLE || "",
+    ishaAngle: isNo ? process.env.ALADHAN_ISHA_ANGLE_NORWAY || process.env.ALADHAN_ISHA_ANGLE || "" : process.env.ALADHAN_ISHA_ANGLE || "",
+    maghribMinutes: isNo ? process.env.ALADHAN_MAGHRIB_MINUTES_NORWAY || process.env.ALADHAN_MAGHRIB_MINUTES || "0" : process.env.ALADHAN_MAGHRIB_MINUTES || "0",
+    tune: isNo ? process.env.ALADHAN_TUNE_NORWAY || process.env.ALADHAN_TUNE || "" : process.env.ALADHAN_TUNE || "",
   };
 }
 
@@ -77,7 +79,7 @@ export const handler: Handler = async (event) => {
     return {
       statusCode: 200,
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ rows, source: (cc === "NO" || tz === "Europe/Oslo") ? "aladhan-no-tuned" : "aladhan" }),
+      body: JSON.stringify({ rows, source: "aladhan" }),
     };
   } catch (e: any) {
     return { statusCode: 500, body: e?.message || "Server error" };
