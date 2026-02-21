@@ -109,14 +109,14 @@ export const handler: Handler = async (event) => {
     // - Asr skal være "Asr" eller "2x-skygge" (fallback til 1x)
     // - Maghrib skal være "Maghrib", ikke "Isha"
     const timings = {
-      Fajr: pick("Fajr", "fajr"),
+      Fajr: pick("Morgengry 16°", "Morgengry16°", "Morgengry", "Fajr", "fajr"),
       Sunrise: pick("Soloppgang", "Sunrise", "sunrise"),
 
       // Dhuhr: prioriter Duhr (bonnetid) -> Dhuhr (hvis API bruker engelsk)
-      Dhuhr: pick("Duhr", "Dhuhr", "dhuhr"),
+      Dhuhr: pick("Duhr", "Dhor", "Dhuhr", "Zuhr", "zuhr", "dhuhr"),
 
       // Asr: prioriter Asr eller 2x-skygge (bonnetid har begge)
-      Asr: pick("Asr", "2x-skygge", "asr", "1x-skygge"),
+      Asr: pick("2x-skygge", "Asr", "asr_2x", "asr2x", "asr", "1x-skygge"),
 
       Maghrib: pick("Maghrib", "maghrib"),
       Isha: pick("Isha", "isha"),
