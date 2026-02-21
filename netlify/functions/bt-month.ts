@@ -1,10 +1,5 @@
 import type { Handler } from "@netlify/functions";
 
-function toIsoDate(value: string | undefined, fallbackMonth: number, fallbackYear: number, day: number) {
-  if (value && /^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
-  return `${fallbackYear}-${String(fallbackMonth).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-}
-
 function pickTiming(t: any, ...keys: string[]) {
   for (const k of keys) {
     const v = t?.[k];
@@ -13,12 +8,52 @@ function pickTiming(t: any, ...keys: string[]) {
   return "";
 }
 
+async function fetchDay(baseUrl: string, apiKey: string, lat: string, lon: string, tz: string, year: number, month: number, day: number) {
+  const date = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+  const url = new URL(baseUrl);
+  url.searchParams.set("lat", lat);
+  url.searchParams.set("lon", lon);
+  url.searchParams.set("tz", tz);
+  url.searchParams.set("date", date);
+
+  const upstream = await fetch(url.toString(), {
+    headers: {
+      "X-API-Key": apiKey,
+      Accept: "application/json",
+    },
+  });
+
+  if (!upstream.ok) {
+    return {
+      date,
+      weekday: new Date(year, month - 1, day).toLocaleDateString("nb-NO", { weekday: "short" }),
+      timings: { Fajr: "", Dhuhr: "", Asr: "", Maghrib: "", Isha: "" },
+      error: `upstream ${upstream.status}`,
+    };
+  }
+
+  const data = await upstream.json();
+  const t = data?.timings || data?.data?.timings || data?.result?.timings || data?.data || data?.result || data;
+
+  return {
+    date,
+    weekday: new Date(year, month - 1, day).toLocaleDateString("nb-NO", { weekday: "short" }),
+    timings: {
+      Fajr: pickTiming(t, "Fajr", "fajr"),
+      Dhuhr: pickTiming(t, "Duhr", "Dhuhr", "dhuhr"),
+      Asr: pickTiming(t, "Asr", "2x-skygge", "asr", "1x-skygge"),
+      Maghrib: pickTiming(t, "Maghrib", "maghrib"),
+      Isha: pickTiming(t, "Isha", "isha"),
+    },
+  };
+}
+
 export const handler: Handler = async (event) => {
   try {
     const qs = event.queryStringParameters || {};
-    const lat = (qs as any).lat;
-    const lon = (qs as any).lon;
-    const tz = (qs as any).tz;
+    const lat = String((qs as any).lat || "");
+    const lon = String((qs as any).lon || "");
+    const tz = String((qs as any).tz || "");
     const month = Number((qs as any).month);
     const year = Number((qs as any).year);
 
@@ -33,43 +68,22 @@ export const handler: Handler = async (event) => {
 
     const baseUrl = process.env.BONNETID_API_URL || "https://api.bonnetid.no/v1/prayertimes";
     const daysInMonth = new Date(year, month, 0).getDate();
-    const rows = [] as any[];
+    const concurrency = 5;
+    const queue = Array.from({ length: daysInMonth }, (_, i) => i + 1);
+    const rows: any[] = [];
 
-    for (let day = 1; day <= daysInMonth; day += 1) {
-      const date = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-      const url = new URL(baseUrl);
-      url.searchParams.set("lat", String(lat));
-      url.searchParams.set("lon", String(lon));
-      url.searchParams.set("tz", String(tz));
-      url.searchParams.set("date", date);
-
-      const upstream = await fetch(url.toString(), {
-        headers: {
-          "X-API-Key": apiKey,
-          Accept: "application/json",
-        },
-      });
-
-      if (!upstream.ok) {
-        const body = await upstream.text();
-        return { statusCode: upstream.status, body: body || `Bonnetid failed for ${date}` };
+    async function worker() {
+      while (queue.length) {
+        const day = queue.shift();
+        if (!day) return;
+        const row = await fetchDay(baseUrl, apiKey, lat, lon, tz, year, month, day);
+        rows.push(row);
       }
-
-      const data = await upstream.json();
-      const t = data?.timings || data?.data?.timings || data?.result?.timings || data?.data || data?.result || data;
-
-      rows.push({
-        date: toIsoDate(date, month, year, day),
-        weekday: new Date(year, month - 1, day).toLocaleDateString("nb-NO", { weekday: "short" }),
-        timings: {
-          Fajr: pickTiming(t, "Fajr", "fajr"),
-          Dhuhr: pickTiming(t, "Duhr", "Dhuhr", "dhuhr"),
-          Asr: pickTiming(t, "Asr", "2x-skygge", "asr", "1x-skygge"),
-          Maghrib: pickTiming(t, "Maghrib", "maghrib"),
-          Isha: pickTiming(t, "Isha", "isha"),
-        },
-      });
     }
+
+    await Promise.all(Array.from({ length: concurrency }, worker));
+
+    rows.sort((a, b) => String(a.date).localeCompare(String(b.date)));
 
     return {
       statusCode: 200,
