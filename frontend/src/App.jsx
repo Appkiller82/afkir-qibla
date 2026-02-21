@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import PushControlsAuto from "./PushControlsAuto.jsx";
 import AutoLocationModal from "./AutoLocationModal.jsx";
 import { updateMetaIfSubscribed } from "./push";
-import { fetchMonthTimings, fetchTimings } from "./prayer";
+import { debugCheckBonnetidOsloFebruary2026, fetchMonthTimings, fetchTimings } from "./prayer";
 
 /**
  * Afkir Qibla 7 – RESTORED UI (oppdatert for unified bønnetider)
@@ -731,6 +731,15 @@ export default function App(){
       controller.abort();
     };
   }, [activeCoords?.latitude, activeCoords?.longitude, effectiveCountryCode, timeZone]);
+
+  useEffect(() => {
+    if (!import.meta.env.DEV || effectiveCountryCode !== "NO") return;
+    debugCheckBonnetidOsloFebruary2026().then((actual) => {
+      console.info("[Bonnetid spot-check] 2026-02-21 OK", actual);
+    }).catch((err) => {
+      console.error("[Bonnetid spot-check] FAILED", err);
+    });
+  }, [effectiveCountryCode]);
 
   // Keep push metadata up to date automatically (always-on across city changes)
   useEffect(() => {

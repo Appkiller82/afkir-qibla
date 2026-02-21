@@ -40,3 +40,8 @@ const timings = await fetchTimings(lat, lon, tz, countryCode, "today");
 ```
 
 > **countryCode**: send `"NO"` i Norge for Bonnetid-ruting. Ellers landets ISO2, eller tom streng.
+
+
+## Lokal utvikling
+- Sett `BONNETID_API_TOKEN` i Netlify miljø (deploy contexts) og i lokal `.env`/`netlify dev` miljø.
+- Klienten bruker kun `GET /api/bonnetid?path=...` (proxy); token sendes aldri i browser-kode.
