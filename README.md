@@ -6,7 +6,7 @@
 - Returnerer normaliserte tider: `Fajr, Sunrise, Dhuhr, Asr, Maghrib, Isha` (HH:mm).
 
 ## Filtre
-- `netlify/functions/bonnetid.ts` – sikker proxy til `api.bonnetid.no` (sender `Api-Token` fra env)
+- `netlify/functions/bonnetid.mjs` – sikker proxy til `api.bonnetid.no` (sender `Api-Token` fra env)
 - `netlify/functions/aladhan-today.ts` – Aladhan (tuner automatisk for `cc=NO`)
 - `frontend/src/prayer.ts` – Frontend hjelper (månedshenting + caching + Norway-routing)
 - `netlify.toml` – Redirects til funksjonene
@@ -31,3 +31,6 @@ const timings = await fetchTimings(lat, lon, tz, countryCode, "today");
 ```
 
 > **countryCode**: send `"NO"` i Norge for Bonnetid. Ellers landets ISO2, eller tom streng.
+
+
+> Netlify config: `[functions] directory = "netlify/functions"` i `netlify.toml`.

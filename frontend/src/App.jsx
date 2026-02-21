@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import PushControlsAuto from "./PushControlsAuto.jsx";
 import AutoLocationModal from "./AutoLocationModal.jsx";
 import { updateMetaIfSubscribed } from "./push";
-import { fetchMonthTimings, fetchTimings } from "./prayer";
+import { fetchMonthTimings, fetchTimings, getPrayerDiagnostics } from "./prayer";
 
 /**
  * Afkir Qibla 7 – RESTORED UI (oppdatert for unified bønnetider)
@@ -529,6 +529,7 @@ export default function App(){
   const [calendarRows, setCalendarRows] = useState([]);
   const [calendarExpanded, setCalendarExpanded] = useState(false);
   const [calendarError, setCalendarError] = useState("");
+  const [diag, setDiag] = useState(() => getPrayerDiagnostics());
   const [offline, setOffline] = useState(typeof navigator !== "undefined" ? !navigator.onLine : false);
   const timeZone = useMemo(() => Intl.DateTimeFormat().resolvedOptions().timeZone, []);
   const audioRef = useRef(null);
@@ -632,6 +633,7 @@ export default function App(){
       // Beregn nedtelling som før
       let info = nextPrayerInfo(today);
       setCountdown(info);
+      setDiag(getPrayerDiagnostics());
 
       // Hvis alle dagens bønner er passert -> hent Fajr for i morgen
       if (info.tomorrow) {
@@ -651,6 +653,7 @@ export default function App(){
       }
     } catch (e) {
       console.error(e);
+      setDiag(getPrayerDiagnostics());
       const cached = loadCache("aq_times_cache");
       if (cached) {
         setApiError("");
@@ -707,10 +710,12 @@ export default function App(){
       .then((rows) => {
         if (!active) return;
         setCalendarRows(rows);
+        setDiag(getPrayerDiagnostics());
       })
       .catch((err) => {
         if (!active) return;
         setCalendarRows([]);
+        setDiag(getPrayerDiagnostics());
         const m = String(err?.message || "");
         if (effectiveCountryCode === "NO") {
           if (m.includes("BONNETID_API_TOKEN") || m.includes("BONNETID_API_KEY")) {
@@ -848,6 +853,11 @@ export default function App(){
                 <button className="btn" onClick={() => setCalendarExpanded((v) => !v)}>{calendarExpanded ? "Skjul" : "Vis"}</button>
               </div>
               {calendarError && <div className="error" style={{marginTop:8}}>{calendarError}</div>}
+              {import.meta.env.DEV && (
+                <div className="hint" style={{marginTop:8}}>
+                  Proxy: {diag.proxyStatus} · location_id: {diag.chosenLocationId ?? "-"} · siste: {diag.lastFetchStatus}
+                </div>
+              )}
               {calendarExpanded && (
                 <div style={{marginTop:8, maxHeight:220, overflow:"auto"}}>
                   <table style={{width:"100%", borderCollapse:"collapse", fontSize:14}}>
