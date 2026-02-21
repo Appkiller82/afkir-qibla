@@ -159,6 +159,11 @@ function ensureDates(strTimings /* {Fajr:"05:15", ...} */) {
   };
 }
 
+function formatPrayerTime(value) {
+  if (!(value instanceof Date) || Number.isNaN(value.getTime())) return "--:--";
+  return NB_TIME.format(value);
+}
+
 // ---------- Countdown ----------
 const ORDER = ["Fajr","Soloppgang","Dhuhr","Asr","Maghrib","Isha"];
 function diffToText(ms) {
@@ -218,7 +223,7 @@ function weatherIcon(code) {
   return "🌤️";
 }
 
-async function fetchWeather(lat, lng) {
+async function fetchWeather(lat, lng, signal) {
   const url = new URL("https://api.open-meteo.com/v1/forecast");
   url.searchParams.set("latitude", String(lat));
   url.searchParams.set("longitude", String(lng));
@@ -241,7 +246,35 @@ async function fetchWeather(lat, lng) {
 }
 
 
-async function fetchMonthlyCalendar(lat, lng, month, year, signal) {
+async function fetchMonthlyCalendar(lat, lng, month, year, tz, countryCode, signal) {
+  if ((countryCode || "").toUpperCase() === "NO") {
+    const btUrl = new URL("/api/bonnetid-month", window.location.origin);
+    btUrl.searchParams.set("lat", String(lat));
+    btUrl.searchParams.set("lon", String(lng));
+    btUrl.searchParams.set("tz", String(tz));
+    btUrl.searchParams.set("month", String(month));
+    btUrl.searchParams.set("year", String(year));
+
+    try {
+      const btRes = await fetch(btUrl.toString(), { signal });
+      if (!btRes.ok) throw new Error(await btRes.text());
+      const btBody = await btRes.json();
+      if (Array.isArray(btBody?.rows) && btBody.rows.length > 0) return btBody.rows;
+      throw new Error("empty Bonnetid month rows");
+    } catch {
+      const adUrl = new URL("/api/aladhan-month", window.location.origin);
+      adUrl.searchParams.set("lat", String(lat));
+      adUrl.searchParams.set("lon", String(lng));
+      adUrl.searchParams.set("tz", String(tz));
+      adUrl.searchParams.set("month", String(month));
+      adUrl.searchParams.set("year", String(year));
+      adUrl.searchParams.set("cc", "NO");
+      const adRes = await fetch(adUrl.toString(), { signal });
+      if (!adRes.ok) throw new Error(await adRes.text());
+      const adBody = await adRes.json();
+      return adBody?.rows || [];
+    }
+  }
 
   const url = new URL("https://api.aladhan.com/v1/calendar");
   url.searchParams.set("latitude", String(lat));
@@ -301,6 +334,13 @@ function formatMetric(value, unit = "") {
   const n = safeNum(value);
   if (n == null) return "--";
   return `${NB_TEMP.format(n)}${unit}`;
+}
+
+function formatCalendarDate(value) {
+  if (!value) return "--.--.----";
+  const [y, m, d] = String(value).split("-");
+  if (!y || !m || !d) return String(value);
+  return `${d}.${m}.${y}`;
 }
 
 function exportCalendarIcs(city, days) {
@@ -665,7 +705,8 @@ export default function App(){
     if (!activeCoords) return;
     let active = true;
     setWeatherError("");
-    fetchWeather(activeCoords.latitude, activeCoords.longitude)
+    const controller = new AbortController();
+    fetchWeather(activeCoords.latitude, activeCoords.longitude, controller.signal)
       .then((w) => {
         if (!active) return;
         setWeather(w);
@@ -677,7 +718,10 @@ export default function App(){
         setWeather(normalizeWeatherCache(cached));
         setWeatherError(cached ? "" : "Kunne ikke hente værdata akkurat nå.");
       });
-    return () => { active = false; };
+    return () => {
+      active = false;
+      controller.abort();
+    };
   }, [activeCoords?.latitude, activeCoords?.longitude]);
 
   useEffect(() => {
@@ -686,7 +730,15 @@ export default function App(){
     setCalendarError("");
     const now = new Date();
     const controller = new AbortController();
-    fetchMonthlyCalendar(activeCoords.latitude, activeCoords.longitude, now.getMonth() + 1, now.getFullYear(), controller.signal)
+    fetchMonthlyCalendar(
+      activeCoords.latitude,
+      activeCoords.longitude,
+      now.getMonth() + 1,
+      now.getFullYear(),
+      timeZone,
+      effectiveCountryCode,
+      controller.signal,
+    )
       .then((rows) => {
         if (!active) return;
         setCalendarRows(rows);
@@ -709,7 +761,7 @@ export default function App(){
       active = false;
       controller.abort();
     };
-  }, [activeCoords?.latitude, activeCoords?.longitude, effectiveCountryCode]);
+  }, [activeCoords?.latitude, activeCoords?.longitude, effectiveCountryCode, timeZone]);
 
   // Keep push metadata up to date automatically (always-on across city changes)
   useEffect(() => {
@@ -745,7 +797,7 @@ export default function App(){
         .hero-stat { border: 1px solid var(--border); border-radius: 14px; padding: 12px; background: rgba(2, 6, 23, .25); }
         .kpi { font-size: 24px; font-weight: 700; }
         .section-grid { display:grid; gap:12px; margin-top:12px; grid-template-columns: 1.2fr .8fr; }
-        @media (max-width: 920px){ .section-grid { grid-template-columns: 1fr; } .hero-grid { grid-template-columns: 1fr; } .hero-stat .kpi{ font-size:20px; } }
+        @media (max-width: 920px){ .section-grid { grid-template-columns: 1fr; } .hero-stat .kpi{ font-size:20px; } }
       `}</style>
 
       <div className="container">
@@ -760,10 +812,16 @@ export default function App(){
             </button>
           </div>
 
-          <div className="hero-grid" style={{display:"grid", gridTemplateColumns:"repeat(3, minmax(0,1fr))", gap:10}}>
+          <div className="hero-grid" style={{display:"grid", gridTemplateColumns:"1fr", gap:10}}>
             <div className="hero-stat"><div className="hint">Sted</div><div className="kpi">{city || "Ukjent"}</div></div>
             <div className="hero-stat"><div className="hint">Qibla</div><div className="kpi">{qiblaDeg != null ? `${Math.round(qiblaDeg)}°` : "--"}</div></div>
             <div className="hero-stat"><div className="hint">Neste bønn</div><div className="kpi">{countdown?.name || "--"}</div></div>
+            <div className="hero-stat">
+              <div className="hint">Nedtelling</div>
+              <div className="kpi" style={{fontSize:20}}>
+                {countdown?.diffText || "--:--"}
+              </div>
+            </div>
           </div>
         </header>
 
@@ -834,7 +892,7 @@ export default function App(){
                     <tbody>
                       {calendarRows.map((row) => (
                         <tr key={row.date}>
-                          <td>{row.date}</td><td>{row.timings.Fajr}</td><td>{row.timings.Dhuhr}</td><td>{row.timings.Asr}</td><td>{row.timings.Maghrib}</td><td>{row.timings.Isha}</td>
+                          <td>{formatCalendarDate(row.date)}</td><td>{row.timings.Fajr || "--:--"}</td><td>{row.timings.Dhuhr || "--:--"}</td><td>{row.timings.Asr || "--:--"}</td><td>{row.timings.Maghrib || "--:--"}</td><td>{row.timings.Isha || "--:--"}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -866,17 +924,17 @@ export default function App(){
             {times ? (
               <>
                 <ul className="times">
-                  <li className="time-item"><span>Fajr</span><span>{NB_TIME.format(times.Fajr)}</span></li>
-                  <li className="time-item"><span>Soloppgang</span><span>{NB_TIME.format(times.Soloppgang)}</span></li>
-                  <li className="time-item"><span>Dhuhr</span><span>{NB_TIME.format(times.Dhuhr)}</span></li>
-                  <li className="time-item"><span>Asr</span><span>{NB_TIME.format(times.Asr)}</span></li>
-                  <li className="time-item"><span>Maghrib</span><span>{NB_TIME.format(times.Maghrib)}</span></li>
-                  <li className="time-item"><span>Isha</span><span>{NB_TIME.format(times.Isha)}</span></li>
+                  <li className="time-item"><span>Fajr</span><span>{formatPrayerTime(times.Fajr)}</span></li>
+                  <li className="time-item"><span>Soloppgang</span><span>{formatPrayerTime(times.Soloppgang)}</span></li>
+                  <li className="time-item"><span>Dhuhr</span><span>{formatPrayerTime(times.Dhuhr)}</span></li>
+                  <li className="time-item"><span>Asr</span><span>{formatPrayerTime(times.Asr)}</span></li>
+                  <li className="time-item"><span>Maghrib</span><span>{formatPrayerTime(times.Maghrib)}</span></li>
+                  <li className="time-item"><span>Isha</span><span>{formatPrayerTime(times.Isha)}</span></li>
                 </ul>
 
                 <div style={{marginTop:10, fontSize:15}}>
                   {countdown?.name
-                    ? <>Neste bønn: <b>{countdown.name}</b> kl <b>{NB_TIME.format(countdown.at)}</b> (<span className="hint">{countdown.diffText}</span>)</>
+                    ? <>Neste bønn: <b>{countdown.name}</b> kl <b>{formatPrayerTime(countdown.at)}</b> (<span className="hint">{countdown.diffText}</span>)</>
                     : <span className="hint">Alle dagens bønner er passert – oppdateres ved midnatt.</span>
                   }
                 </div>
