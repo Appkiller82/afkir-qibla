@@ -248,16 +248,32 @@ async function fetchWeather(lat, lng, signal) {
 
 async function fetchMonthlyCalendar(lat, lng, month, year, tz, countryCode, signal) {
   if ((countryCode || "").toUpperCase() === "NO") {
-    const url = new URL("/api/bonnetid-month", window.location.origin);
-    url.searchParams.set("lat", String(lat));
-    url.searchParams.set("lon", String(lng));
-    url.searchParams.set("tz", String(tz));
-    url.searchParams.set("month", String(month));
-    url.searchParams.set("year", String(year));
-    const res = await fetch(url.toString(), { signal });
-    if (!res.ok) throw new Error(await res.text());
-    const body = await res.json();
-    return body?.rows || [];
+    const btUrl = new URL("/api/bonnetid-month", window.location.origin);
+    btUrl.searchParams.set("lat", String(lat));
+    btUrl.searchParams.set("lon", String(lng));
+    btUrl.searchParams.set("tz", String(tz));
+    btUrl.searchParams.set("month", String(month));
+    btUrl.searchParams.set("year", String(year));
+
+    try {
+      const btRes = await fetch(btUrl.toString(), { signal });
+      if (!btRes.ok) throw new Error(await btRes.text());
+      const btBody = await btRes.json();
+      if (Array.isArray(btBody?.rows) && btBody.rows.length > 0) return btBody.rows;
+      throw new Error("empty Bonnetid month rows");
+    } catch {
+      const adUrl = new URL("/api/aladhan-month", window.location.origin);
+      adUrl.searchParams.set("lat", String(lat));
+      adUrl.searchParams.set("lon", String(lng));
+      adUrl.searchParams.set("tz", String(tz));
+      adUrl.searchParams.set("month", String(month));
+      adUrl.searchParams.set("year", String(year));
+      adUrl.searchParams.set("cc", "NO");
+      const adRes = await fetch(adUrl.toString(), { signal });
+      if (!adRes.ok) throw new Error(await adRes.text());
+      const adBody = await adRes.json();
+      return adBody?.rows || [];
+    }
   }
 
   const url = new URL("https://api.aladhan.com/v1/calendar");

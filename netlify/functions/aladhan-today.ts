@@ -22,9 +22,9 @@ export const handler: Handler = async (event) => {
 
     // Optional calculation tuning via env vars.
     // Norway can be overridden separately (…_NORWAY) by passing cc=NO from the frontend.
-    const method = (cc === "NO" ? process.env.ALADHAN_METHOD_NORWAY : process.env.ALADHAN_METHOD) || "";
-    const school = (cc === "NO" ? process.env.ALADHAN_SCHOOL_NORWAY : "") || "";
-    const latAdj = (cc === "NO" ? process.env.ALADHAN_LAT_ADJ_NORWAY : "") || "";
+    const method = (cc === "NO" ? process.env.ALADHAN_METHOD_NORWAY || "11" : process.env.ALADHAN_METHOD) || "";
+    const school = (cc === "NO" ? process.env.ALADHAN_SCHOOL_NORWAY || "0" : process.env.ALADHAN_SCHOOL) || "";
+    const latAdj = (cc === "NO" ? process.env.ALADHAN_LAT_ADJ_NORWAY || "3" : process.env.ALADHAN_LAT_ADJ) || "";
     const fajrAngle = process.env.ALADHAN_FAJR_ANGLE || "";
     const ishaAngle = process.env.ALADHAN_ISHA_ANGLE || "";
 

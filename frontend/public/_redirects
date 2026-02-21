@@ -1,1 +1,4 @@
 /api/bonnetid-today /.netlify/functions/bt-today 200!
+/api/bonnetid-month /.netlify/functions/bt-month 200!
+/api/aladhan-today /.netlify/functions/aladhan-today 200!
+/api/aladhan-month /.netlify/functions/aladhan-month 200!
