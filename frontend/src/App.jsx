@@ -559,6 +559,7 @@ export default function App(){
   const timeZone = useMemo(() => Intl.DateTimeFormat().resolvedOptions().timeZone, []);
   const audioRef = useRef(null);
   const timersRef = useRef([]);
+  const refreshSeqRef = useRef(0);
 
   // Validate backgrounds once
   useEffect(() => { validateBackgrounds(CANDIDATE_BACKGROUNDS).then(setBgList) }, []);
@@ -652,6 +653,7 @@ export default function App(){
   const qiblaDeg = useMemo(() => activeCoords ? qiblaBearing(activeCoords.latitude, activeCoords.longitude) : null, [activeCoords?.latitude, activeCoords?.longitude]);
 
   async function refreshTimes(lat, lng) {
+    const seq = ++refreshSeqRef.current;
     try {
       setApiError("");
       const tz = timeZone;
@@ -662,6 +664,7 @@ export default function App(){
       const [tomorrowYear, tomorrowMonth] = tomorrowIso.split("-").map(Number);
 
       const monthRows = await fetchMonthlyCalendar(lat, lng, todayMonth, todayYear, tz, effectiveCountryCode);
+      if (seq !== refreshSeqRef.current) return;
       setCalendarRows(monthRows || []);
       setCalendarError("");
       const todayRow = monthRows.find((row) => row.date === todayIso);
@@ -672,6 +675,7 @@ export default function App(){
 
       const todayStr = todayRow.timings;
       const today = ensureDates(todayStr, todayIso);
+      if (seq !== refreshSeqRef.current) return;
       setTimes(today);
       saveCache(timesCacheKey(lat, lng, todayIso), todayStr);
 
@@ -682,12 +686,14 @@ export default function App(){
         let tomorrowRows = monthRows;
         if (tomorrowMonth !== todayMonth || tomorrowYear !== todayYear) {
           tomorrowRows = await fetchMonthlyCalendar(lat, lng, tomorrowMonth, tomorrowYear, tz, effectiveCountryCode);
+          if (seq !== refreshSeqRef.current) return;
         }
         const tomorrowRow = tomorrowRows.find((row) => row.date === tomorrowIso);
         const tomorrowStr = tomorrowRow?.timings || await fetchTimings(lat, lng, tz, effectiveCountryCode, "tomorrow");
         const tomorrow = ensureDates(tomorrowStr, tomorrowIso);
         const fajr = tomorrow.Fajr;
         if (!fajr) throw new Error("Mangler Fajr for i morgen");
+        if (seq !== refreshSeqRef.current) return;
         setCountdown({
           name: "Fajr",
           at: fajr,
@@ -696,7 +702,14 @@ export default function App(){
         });
       }
     } catch (e) {
+      if (seq !== refreshSeqRef.current) return;
       console.error(e);
+      const msg = String(e?.message || "");
+      if (msg.includes("ALADHAN_")) {
+        setCalendarError("Aladhan-konfigurasjon mangler i miljøvariabler.");
+      } else {
+        setCalendarError("Klarte ikke hente månedskalender akkurat nå.");
+      }
       const todayIso = isoDateInTz(timeZone, 0);
       const cached = loadCache(timesCacheKey(lat, lng, todayIso));
       if (cached) {
@@ -738,38 +751,7 @@ export default function App(){
 
   useEffect(() => {
     if (!activeCoords) return;
-    let active = true;
     setCalendarError("");
-    const controller = new AbortController();
-    const todayIso = isoDateInTz(timeZone, 0);
-    const [y, m] = todayIso.split("-").map(Number);
-    fetchMonthlyCalendar(
-      activeCoords.latitude,
-      activeCoords.longitude,
-      m,
-      y,
-      timeZone,
-      effectiveCountryCode,
-      controller.signal,
-    )
-      .then((rows) => {
-        if (!active) return;
-        setCalendarRows(rows || []);
-      })
-      .catch((err) => {
-        if (!active) return;
-        const m = String(err?.message || "");
-        setCalendarRows([]);
-        if (m.includes("ALADHAN_")) {
-          setCalendarError("Aladhan-konfigurasjon mangler i miljøvariabler.");
-        } else {
-          setCalendarError("Klarte ikke hente månedskalender akkurat nå.");
-        }
-      });
-    return () => {
-      active = false;
-      controller.abort();
-    };
   }, [activeCoords?.latitude, activeCoords?.longitude, effectiveCountryCode, timeZone]);
 
   // Keep push metadata up to date automatically (always-on across city changes)
