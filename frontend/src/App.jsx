@@ -288,12 +288,13 @@ async function fetchMonthlyCalendar(lat, lng, month, year, tz, countryCode, sign
   return (body?.data || []).map((d) => ({
     date: `${d?.date?.gregorian?.year}-${String(d?.date?.gregorian?.month?.number || month).padStart(2, "0")}-${String(d?.date?.gregorian?.day || "01").padStart(2, "0")}`,
     weekday: d?.date?.gregorian?.weekday?.en,
-    timings: {
-      Fajr: String(d?.timings?.Fajr || "").slice(0,5),
-      Dhuhr: String(d?.timings?.Dhuhr || "").slice(0,5),
-      Asr: String(d?.timings?.Asr || "").slice(0,5),
-      Maghrib: String(d?.timings?.Maghrib || "").slice(0,5),
-      Isha: String(d?.timings?.Isha || "").slice(0,5),
+      timings: {
+        Fajr: String(d?.timings?.Fajr || "").slice(0,5),
+        Sunrise: String(d?.timings?.Sunrise || "").slice(0,5),
+        Dhuhr: String(d?.timings?.Dhuhr || "").slice(0,5),
+        Asr: String(d?.timings?.Asr || "").slice(0,5),
+        Maghrib: String(d?.timings?.Maghrib || "").slice(0,5),
+        Isha: String(d?.timings?.Isha || "").slice(0,5),
     },
   }));
 }
@@ -887,12 +888,12 @@ export default function App(){
                 <div style={{marginTop:8, maxHeight:220, overflow:"auto"}}>
                   <table style={{width:"100%", borderCollapse:"collapse", fontSize:14}}>
                     <thead>
-                      <tr><th style={{textAlign:"left"}}>Dato</th><th style={{textAlign:"left"}}>Fajr</th><th style={{textAlign:"left"}}>Dhuhr</th><th style={{textAlign:"left"}}>Asr</th><th style={{textAlign:"left"}}>Maghrib</th><th style={{textAlign:"left"}}>Isha</th></tr>
+                      <tr><th style={{textAlign:"left"}}>Dato</th><th style={{textAlign:"left"}}>Fajr</th><th style={{textAlign:"left"}}>Soloppgang</th><th style={{textAlign:"left"}}>Dhuhr</th><th style={{textAlign:"left"}}>Asr</th><th style={{textAlign:"left"}}>Maghrib</th><th style={{textAlign:"left"}}>Isha</th></tr>
                     </thead>
                     <tbody>
                       {calendarRows.map((row) => (
                         <tr key={row.date}>
-                          <td>{formatCalendarDate(row.date)}</td><td>{row.timings.Fajr || "--:--"}</td><td>{row.timings.Dhuhr || "--:--"}</td><td>{row.timings.Asr || "--:--"}</td><td>{row.timings.Maghrib || "--:--"}</td><td>{row.timings.Isha || "--:--"}</td>
+                          <td>{formatCalendarDate(row.date)}</td><td>{row.timings.Fajr || "--:--"}</td><td>{row.timings.Sunrise || "--:--"}</td><td>{row.timings.Dhuhr || "--:--"}</td><td>{row.timings.Asr || "--:--"}</td><td>{row.timings.Maghrib || "--:--"}</td><td>{row.timings.Isha || "--:--"}</td>
                         </tr>
                       ))}
                     </tbody>
