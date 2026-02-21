@@ -18,6 +18,15 @@ const NB_TIME = new Intl.DateTimeFormat("nb-NO", { hour: "2-digit", minute: "2-d
 const NB_DAY  = new Intl.DateTimeFormat("nb-NO", { weekday: "long", day: "2-digit", month: "long" });
 const NB_TEMP = new Intl.NumberFormat("nb-NO", { maximumFractionDigits: 0 });
 
+// ---------- Norway tuning (historisk fungerende profil) ----------
+const NO_IRN_PROFILE = {
+  fajrAngle: 16.0,
+  ishaAngle: 15.0,
+  latitudeAdj: 3,
+  school: 0,
+  offsets: { Fajr: -9, Dhuhr: +6, Asr: 0, Maghrib: +5, Isha: 0 },
+};
+
 function useLocalStorage(key, init) {
   const [v, setV] = useState(() => {
     try { const j = localStorage.getItem(key); return j ? JSON.parse(j) : init } catch { return init }
@@ -189,26 +198,19 @@ function tuneNorwayTimings(raw, countryCode, tz) {
   if (!(cc === "NO" || (!cc && String(tz || "") === "Europe/Oslo"))) return raw;
 
   const out = { ...raw };
-  const dhuhr = hhmmToMinutes(out.Dhuhr);
-  const asr = hhmmToMinutes(out.Asr);
-  const maghrib = hhmmToMinutes(out.Maghrib);
-  const isha = hhmmToMinutes(out.Isha);
+  const o = NO_IRN_PROFILE.offsets;
 
-  // IRN-like app-level tuning (historically used in this UI):
-  // - Dhuhr +5 min (Istiwa -> Dhuhr)
-  // - Prefer 2x-shadow behavior when Asr is too close to Dhuhr
-  // - If Maghrib collapses onto Isha, pull Maghrib back to expected winter gap
-  if (dhuhr != null) out.Dhuhr = minutesToHHMM(dhuhr + 5);
+  const apply = (key, minutes) => {
+    const value = hhmmToMinutes(out[key]);
+    if (value == null || !Number.isFinite(minutes)) return;
+    out[key] = minutesToHHMM(value + minutes);
+  };
 
-  if (dhuhr != null && asr != null) {
-    const diff = ((asr - dhuhr) + 1440) % 1440;
-    if (diff > 0 && diff < 150) out.Asr = minutesToHHMM(asr + 39);
-  }
-
-  if (maghrib != null && isha != null) {
-    const gap = ((isha - maghrib) + 1440) % 1440;
-    if (gap < 45) out.Maghrib = minutesToHHMM(isha - 110);
-  }
+  apply("Fajr", o.Fajr || 0);
+  apply("Dhuhr", o.Dhuhr || 0);
+  apply("Asr", o.Asr || 0);
+  apply("Maghrib", o.Maghrib || 0);
+  apply("Isha", o.Isha || 0);
 
   return out;
 }
