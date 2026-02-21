@@ -1,5 +1,9 @@
 import type { Handler } from "@netlify/functions";
 
+function isNorwayContext(cc: string, tz: string) {
+  return cc === "NO" || String(tz || "") === "Europe/Oslo";
+}
+
 export const handler: Handler = async (event) => {
   try {
     const qs = event.queryStringParameters || {};
@@ -21,20 +25,18 @@ export const handler: Handler = async (event) => {
     url.searchParams.set("timezonestring", String(tz));
 
     // Optional calculation tuning via env vars.
-    // Norway default profile targets IRN-style output:
-    // - Fajr angle 16°
-    // - Isha angle 14°
-    // - Asr 2x shadow (Hanafi)
-    // - Dhuhr +5 min tune offset
-    const isNo = cc === "NO";
+    // Norway profile aligned to prior working setup (NO_IRN_PROFILE):
+    // - Fajr 16°, Isha 15°, latitudeAdjustmentMethod=3, school=0
+    // - Offsets: Fajr -9, Dhuhr +6, Maghrib +5
+    const isNo = isNorwayContext(cc, String(tz));
     const method = (isNo ? process.env.ALADHAN_METHOD_NORWAY || "99" : process.env.ALADHAN_METHOD) || "";
-    const school = (isNo ? process.env.ALADHAN_SCHOOL_NORWAY || "1" : process.env.ALADHAN_SCHOOL) || "";
+    const school = (isNo ? process.env.ALADHAN_SCHOOL_NORWAY || "0" : process.env.ALADHAN_SCHOOL) || "";
     const latAdj = (isNo ? process.env.ALADHAN_LAT_ADJ_NORWAY || "3" : process.env.ALADHAN_LAT_ADJ) || "";
 
     const fajrAngle = (isNo ? process.env.ALADHAN_FAJR_ANGLE_NORWAY || "16" : process.env.ALADHAN_FAJR_ANGLE) || "";
-    const ishaAngle = (isNo ? process.env.ALADHAN_ISHA_ANGLE_NORWAY || "14" : process.env.ALADHAN_ISHA_ANGLE) || "";
+    const ishaAngle = (isNo ? process.env.ALADHAN_ISHA_ANGLE_NORWAY || "15" : process.env.ALADHAN_ISHA_ANGLE) || "";
     const maghribMinutes = isNo ? process.env.ALADHAN_MAGHRIB_MINUTES_NORWAY || "0" : process.env.ALADHAN_MAGHRIB_MINUTES || "0";
-    const tune = isNo ? process.env.ALADHAN_TUNE_NORWAY || "0,0,5,0,0,0,0,0,0" : process.env.ALADHAN_TUNE || "";
+    const tune = isNo ? process.env.ALADHAN_TUNE_NORWAY || "0,-9,0,6,0,0,5,0,0" : process.env.ALADHAN_TUNE || "";
 
     if (method) url.searchParams.set("method", method);
     if (school) url.searchParams.set("school", school);
