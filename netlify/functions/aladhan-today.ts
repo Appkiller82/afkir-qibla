@@ -21,21 +21,31 @@ export const handler: Handler = async (event) => {
     url.searchParams.set("timezonestring", String(tz));
 
     // Optional calculation tuning via env vars.
-    // Norway can be overridden separately (…_NORWAY) by passing cc=NO from the frontend.
-    const method = (cc === "NO" ? process.env.ALADHAN_METHOD_NORWAY || "11" : process.env.ALADHAN_METHOD) || "";
-    const school = (cc === "NO" ? process.env.ALADHAN_SCHOOL_NORWAY || "0" : process.env.ALADHAN_SCHOOL) || "";
-    const latAdj = (cc === "NO" ? process.env.ALADHAN_LAT_ADJ_NORWAY || "3" : process.env.ALADHAN_LAT_ADJ) || "";
-    const fajrAngle = process.env.ALADHAN_FAJR_ANGLE || "";
-    const ishaAngle = process.env.ALADHAN_ISHA_ANGLE || "";
+    // Norway default profile targets IRN-style output:
+    // - Fajr angle 16°
+    // - Isha angle 14°
+    // - Asr 2x shadow (Hanafi)
+    // - Dhuhr +5 min tune offset
+    const isNo = cc === "NO";
+    const method = (isNo ? process.env.ALADHAN_METHOD_NORWAY || "99" : process.env.ALADHAN_METHOD) || "";
+    const school = (isNo ? process.env.ALADHAN_SCHOOL_NORWAY || "1" : process.env.ALADHAN_SCHOOL) || "";
+    const latAdj = (isNo ? process.env.ALADHAN_LAT_ADJ_NORWAY || "3" : process.env.ALADHAN_LAT_ADJ) || "";
+
+    const fajrAngle = (isNo ? process.env.ALADHAN_FAJR_ANGLE_NORWAY || "16" : process.env.ALADHAN_FAJR_ANGLE) || "";
+    const ishaAngle = (isNo ? process.env.ALADHAN_ISHA_ANGLE_NORWAY || "14" : process.env.ALADHAN_ISHA_ANGLE) || "";
+    const maghribMinutes = isNo ? process.env.ALADHAN_MAGHRIB_MINUTES_NORWAY || "0" : process.env.ALADHAN_MAGHRIB_MINUTES || "0";
+    const tune = isNo ? process.env.ALADHAN_TUNE_NORWAY || "0,0,5,0,0,0,0,0,0" : process.env.ALADHAN_TUNE || "";
 
     if (method) url.searchParams.set("method", method);
     if (school) url.searchParams.set("school", school);
     if (latAdj) url.searchParams.set("latitudeAdjustmentMethod", latAdj);
 
-    // Some methods allow overriding angles via methodSettings.
-    // Keep it conservative: only add if both angles are provided.
+    // Custom method with angle profile
     if (fajrAngle && ishaAngle) {
-      url.searchParams.set("methodSettings", `${fajrAngle},${ishaAngle},0`);
+      url.searchParams.set("methodSettings", `${fajrAngle},${ishaAngle},${maghribMinutes}`);
+    }
+    if (tune) {
+      url.searchParams.set("tune", tune);
     }
 
     const upstream = await fetch(url.toString(), { headers: { "Accept": "application/json" } });
