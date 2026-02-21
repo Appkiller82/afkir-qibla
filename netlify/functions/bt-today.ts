@@ -15,6 +15,30 @@ function resolveBonnetidUrl(rawBase?: string) {
   return url;
 }
 
+
+function normalizeDate(input: string, tz: string) {
+  const v = String(input || "today").trim().toLowerCase();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(v)) return v;
+  const addDays = v === "tomorrow" ? 1 : 0;
+
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: tz || "Europe/Oslo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+
+  const y = Number(parts.find((p) => p.type === "year")?.value);
+  const m = Number(parts.find((p) => p.type === "month")?.value);
+  const d = Number(parts.find((p) => p.type === "day")?.value);
+
+  const baseUtc = new Date(Date.UTC(y, m - 1, d));
+  baseUtc.setUTCDate(baseUtc.getUTCDate() + addDays);
+  const yy = baseUtc.getUTCFullYear();
+  const mm = String(baseUtc.getUTCMonth() + 1).padStart(2, "0");
+  const dd = String(baseUtc.getUTCDate()).padStart(2, "0");
+  return `${yy}-${mm}-${dd}`;
+}
 export const handler: Handler = async (event) => {
   try {
     const qs = event.queryStringParameters || {};
@@ -24,7 +48,7 @@ export const handler: Handler = async (event) => {
     const lat = (qs as any).lat;
     const lon = (qs as any).lon;
     const tz  = (qs as any).tz;
-    const date = (qs as any).when || (qs as any).date || "today";
+    const when = (qs as any).when || (qs as any).date || "today";
 
     if (!lat || !lon || !tz) {
       return { statusCode: 400, body: "Missing lat/lon/tz" };
@@ -42,7 +66,7 @@ export const handler: Handler = async (event) => {
     url.searchParams.set("lat", String(lat));
     url.searchParams.set("lon", String(lon));
     url.searchParams.set("tz", String(tz));
-    url.searchParams.set("date", String(date));
+    url.searchParams.set("date", normalizeDate(String(when), String(tz)));
 
     const upstream = await fetch(url.toString(), {
       headers: {
@@ -85,14 +109,14 @@ export const handler: Handler = async (event) => {
     // - Asr skal være "Asr" eller "2x-skygge" (fallback til 1x)
     // - Maghrib skal være "Maghrib", ikke "Isha"
     const timings = {
-      Fajr: pick("Fajr", "fajr"),
+      Fajr: pick("Morgengry 16°", "Morgengry16°", "Morgengry", "Fajr", "fajr"),
       Sunrise: pick("Soloppgang", "Sunrise", "sunrise"),
 
       // Dhuhr: prioriter Duhr (bonnetid) -> Dhuhr (hvis API bruker engelsk)
-      Dhuhr: pick("Duhr", "Dhuhr", "dhuhr"),
+      Dhuhr: pick("Duhr", "Dhor", "Dhuhr", "Zuhr", "zuhr", "dhuhr"),
 
       // Asr: prioriter Asr eller 2x-skygge (bonnetid har begge)
-      Asr: pick("Asr", "2x-skygge", "asr", "1x-skygge"),
+      Asr: pick("2x-skygge", "Asr", "asr_2x", "asr2x", "asr", "1x-skygge"),
 
       Maghrib: pick("Maghrib", "maghrib"),
       Isha: pick("Isha", "isha"),

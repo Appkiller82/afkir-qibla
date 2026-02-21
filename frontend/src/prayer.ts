@@ -22,14 +22,22 @@ export async function fetchTimings(
   const cc = (countryCode || "").toUpperCase();
 
   if (cc === "NO") {
-    const u = `/api/bonnetid-today?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}&tz=${encodeURIComponent(tz)}&when=${encodeURIComponent(when)}`;
-    const r = await fetch(u);
-    const j = await readJsonOrThrow(r, "Bonnetid");
-    return ensure(j.timings);
+    try {
+      const u = `/api/bonnetid-today?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}&tz=${encodeURIComponent(tz)}&when=${encodeURIComponent(when)}`;
+      const r = await fetch(u);
+      const j = await readJsonOrThrow(r, "Bonnetid");
+      return ensure(j.timings);
+    } catch {
+      // Fallback for Norway if Bonnetid path is unavailable in deploy/runtime.
+      const u2 = `/api/aladhan-today?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}&tz=${encodeURIComponent(tz)}&when=${encodeURIComponent(when)}&cc=NO`;
+      const r2 = await fetch(u2);
+      const j2 = await readJsonOrThrow(r2, "Aladhan");
+      return ensure(j2.timings);
+    }
   }
 
   // Rest of world: Aladhan global
-  const u3 = `/api/aladhan-today?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}&tz=${encodeURIComponent(tz)}&when=${encodeURIComponent(when)}`;
+  const u3 = `/api/aladhan-today?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}&tz=${encodeURIComponent(tz)}&when=${encodeURIComponent(when)}&cc=${encodeURIComponent(cc)}`;
   const r3 = await fetch(u3);
   const j3 = await readJsonOrThrow(r3, "Aladhan");
   return ensure(j3.timings);
