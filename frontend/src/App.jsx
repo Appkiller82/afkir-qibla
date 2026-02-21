@@ -705,7 +705,9 @@ export default function App(){
       let todayRaw;
       try {
         todayRaw = await fetchTimings(lat, lng, tz, effectiveCountryCode, "today");
-      } catch {
+      } catch (err) {
+        console.error("[Prayer] Unified fetch failed, using Aladhan fallback for today", err);
+        setApiError("Bonnetid svarte ikke. Viser reservekilde (Aladhan). ");
         todayRaw = await fetchAladhanFallbackDay(lat, lng, tz, "today", effectiveCountryCode || "NO");
       }
       const todayStr = tuneNorwayTimings(todayRaw, effectiveCountryCode, tz);
@@ -722,7 +724,9 @@ export default function App(){
         let tomorrowRaw;
         try {
           tomorrowRaw = await fetchTimings(lat, lng, tz, effectiveCountryCode, "tomorrow");
-        } catch {
+        } catch (err) {
+          console.error("[Prayer] Unified fetch failed, using Aladhan fallback for tomorrow", err);
+          setApiError("Bonnetid svarte ikke. Viser reservekilde (Aladhan). ");
           tomorrowRaw = await fetchAladhanFallbackDay(lat, lng, tz, "tomorrow", effectiveCountryCode || "NO");
         }
         const tomorrowStr = tuneNorwayTimings(tomorrowRaw, effectiveCountryCode, tz);
