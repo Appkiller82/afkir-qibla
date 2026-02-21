@@ -1,15 +1,15 @@
 import type { Handler } from "@netlify/functions";
 
-function pickTuning(cc: string) {
-  const isNo = cc === "NO";
+function pickTuning(cc: string, tz: string) {
+  const isNo = cc === "NO" || String(tz || "") === "Europe/Oslo";
   return {
     method: isNo ? process.env.ALADHAN_METHOD_NORWAY || "99" : process.env.ALADHAN_METHOD || "",
-    school: isNo ? process.env.ALADHAN_SCHOOL_NORWAY || "1" : process.env.ALADHAN_SCHOOL || "",
+    school: isNo ? process.env.ALADHAN_SCHOOL_NORWAY || "0" : process.env.ALADHAN_SCHOOL || "",
     latAdj: isNo ? process.env.ALADHAN_LAT_ADJ_NORWAY || "3" : process.env.ALADHAN_LAT_ADJ || "",
     fajrAngle: isNo ? process.env.ALADHAN_FAJR_ANGLE_NORWAY || "16" : process.env.ALADHAN_FAJR_ANGLE || "",
-    ishaAngle: isNo ? process.env.ALADHAN_ISHA_ANGLE_NORWAY || "14" : process.env.ALADHAN_ISHA_ANGLE || "",
+    ishaAngle: isNo ? process.env.ALADHAN_ISHA_ANGLE_NORWAY || "15" : process.env.ALADHAN_ISHA_ANGLE || "",
     maghribMinutes: isNo ? process.env.ALADHAN_MAGHRIB_MINUTES_NORWAY || "0" : process.env.ALADHAN_MAGHRIB_MINUTES || "0",
-    tune: isNo ? process.env.ALADHAN_TUNE_NORWAY || "0,0,5,0,0,0,0,0,0" : process.env.ALADHAN_TUNE || "",
+    tune: isNo ? process.env.ALADHAN_TUNE_NORWAY || "0,-9,0,6,0,0,5,0,0" : process.env.ALADHAN_TUNE || "",
   };
 }
 
@@ -41,7 +41,7 @@ export const handler: Handler = async (event) => {
     url.searchParams.set("year", String(year));
     url.searchParams.set("timezonestring", tz);
 
-    const tuning = pickTuning(cc);
+    const tuning = pickTuning(cc, tz);
     if (tuning.method) url.searchParams.set("method", tuning.method);
     if (tuning.school) url.searchParams.set("school", tuning.school);
     if (tuning.latAdj) url.searchParams.set("latitudeAdjustmentMethod", tuning.latAdj);
@@ -77,7 +77,7 @@ export const handler: Handler = async (event) => {
     return {
       statusCode: 200,
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ rows, source: cc === "NO" ? "aladhan-no-tuned" : "aladhan" }),
+      body: JSON.stringify({ rows, source: (cc === "NO" || tz === "Europe/Oslo") ? "aladhan-no-tuned" : "aladhan" }),
     };
   } catch (e: any) {
     return { statusCode: 500, body: e?.message || "Server error" };
