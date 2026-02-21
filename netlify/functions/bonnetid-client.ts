@@ -71,6 +71,7 @@ export function authHeaders() {
     Accept: "application/json",
     "Api-Token": token,
     "X-API-Key": token,
+    Authorization: `Bearer ${token}`,
   };
 }
 
