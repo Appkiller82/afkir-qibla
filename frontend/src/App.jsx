@@ -554,6 +554,9 @@ export default function App(){
   const [calendarExpanded, setCalendarExpanded] = useState(false);
   const [calendarError, setCalendarError] = useState("");
   const [offline, setOffline] = useState(typeof navigator !== "undefined" ? !navigator.onLine : false);
+  const [showAdminPanel, setShowAdminPanel] = useState(false);
+  const [adminOffsets, setAdminOffsets] = useState(() => getAdminOffsets());
+  const [adminStatus, setAdminStatus] = useState("");
   const timeZone = useMemo(() => Intl.DateTimeFormat().resolvedOptions().timeZone, []);
   const audioRef = useRef(null);
   const timersRef = useRef([]);
@@ -656,6 +659,34 @@ export default function App(){
   }, [remindersOn, times?.Fajr?.getTime?.()]);
 
   const qiblaDeg = useMemo(() => activeCoords ? qiblaBearing(activeCoords.latitude, activeCoords.longitude) : null, [activeCoords?.latitude, activeCoords?.longitude]);
+
+  function promptAdminAccess() {
+    const password = window.prompt("Admin-passord:") || "";
+    if (password !== "0199") {
+      setAdminStatus("Feil passord.");
+      return;
+    }
+    setAdminOffsets(getAdminOffsets());
+    setAdminStatus("");
+    setShowAdminPanel((v) => !v);
+  }
+
+  function updateAdminOffset(name, value) {
+    setAdminOffsets((prev) => ({ ...prev, [name]: Number(value) || 0 }));
+  }
+
+  async function handleSaveAdminOffsets() {
+    saveAdminOffsets(adminOffsets);
+    setAdminStatus("Lagret lokalt.");
+    if (activeCoords) await refreshTimes(activeCoords.latitude, activeCoords.longitude);
+  }
+
+  async function handleResetAdminOffsets() {
+    saveAdminOffsets(DEFAULT_ADMIN_OFFSETS);
+    setAdminOffsets({ ...DEFAULT_ADMIN_OFFSETS });
+    setAdminStatus("Nullstilt.");
+    if (activeCoords) await refreshTimes(activeCoords.latitude, activeCoords.longitude);
+  }
 
   async function refreshTimes(lat, lng) {
     const seq = ++refreshSeqRef.current;
