@@ -14,12 +14,6 @@ export const handler: Handler = async (event) => {
     const tz = String((qs as any).tz || "UTC");
     const month = Number((qs as any).month || 0);
     const year = Number((qs as any).year || 0);
-    const method = String((qs as any).method || process.env.ALADHAN_METHOD || "").trim();
-    const school = String((qs as any).school || "").trim();
-    const latitudeAdjustmentMethod = String((qs as any).latitudeAdjustmentMethod || "").trim();
-    const fajr = String((qs as any).fajr || "").trim();
-    const isha = String((qs as any).isha || "").trim();
-    const tune = String((qs as any).tune || "").trim();
 
     if (!lat || !lon || !month || !year) {
       return { statusCode: 400, body: "Missing lat/lon/month/year" };
@@ -30,12 +24,8 @@ export const handler: Handler = async (event) => {
     url.searchParams.set("longitude", lon);
     url.searchParams.set("timezonestring", tz);
 
+    const method = String(process.env.ALADHAN_METHOD || "").trim();
     if (method) url.searchParams.set("method", method);
-    if (school) url.searchParams.set("school", school);
-    if (latitudeAdjustmentMethod) url.searchParams.set("latitudeAdjustmentMethod", latitudeAdjustmentMethod);
-    if (fajr) url.searchParams.set("fajr", fajr);
-    if (isha) url.searchParams.set("isha", isha);
-    if (tune) url.searchParams.set("tune", tune);
 
     const upstream = await fetch(url.toString(), { headers: { Accept: "application/json" } });
     const text = await upstream.text();
