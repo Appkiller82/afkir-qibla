@@ -2,36 +2,6 @@ import React from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App.jsx';
 
-async function hardResetAppState() {
-  const keysToClear = [
-    'aq_theme',
-    'aq_times_cache',
-    'aq_weather_cache',
-    'aq_city',
-    'aq_country',
-    'aq_last_coords',
-    'adminOffsets',
-  ];
-
-  try {
-    keysToClear.forEach((k) => localStorage.removeItem(k));
-  } catch {}
-
-  if ('serviceWorker' in navigator) {
-    try {
-      const regs = await navigator.serviceWorker.getRegistrations();
-      await Promise.all(regs.map((r) => r.unregister()));
-    } catch {}
-  }
-
-  if ('caches' in window) {
-    try {
-      const names = await caches.keys();
-      await Promise.all(names.map((n) => caches.delete(n)));
-    } catch {}
-  }
-}
-
 class RootErrorBoundary extends React.Component {
   constructor(props) {
     super(props);
@@ -42,17 +12,17 @@ class RootErrorBoundary extends React.Component {
     return { hasError: true };
   }
 
-  componentDidCatch(error, info) {
-    if (import.meta.env.DEV) {
-      console.error('[App] Unhandled render error stack:', error, info);
-    } else {
-      console.error('[App] Unhandled render error:', error?.message || error);
-    }
+  componentDidCatch(error) {
+    console.error('[App] Unhandled render error:', error);
   }
 
-  handleReset = async () => {
-    await hardResetAppState();
-    window.location.href = window.location.href;
+  handleReset = () => {
+    try {
+      localStorage.removeItem('aq_theme');
+      localStorage.removeItem('aq_times_cache');
+      localStorage.removeItem('aq_weather_cache');
+    } catch {}
+    window.location.reload();
   };
 
   render() {
@@ -75,18 +45,6 @@ class RootErrorBoundary extends React.Component {
   }
 }
 
-// Clean up known-bad/corrupt localStorage entries before app boot.
-try {
-  const raw = localStorage.getItem('adminOffsets');
-  if (raw != null) {
-    try {
-      JSON.parse(raw);
-    } catch {
-      localStorage.removeItem('adminOffsets');
-    }
-  }
-} catch {}
-
 const root = createRoot(document.getElementById('root'));
 root.render(
   <RootErrorBoundary>
@@ -94,9 +52,9 @@ root.render(
   </RootErrorBoundary>
 );
 
-// Service worker handling:
-// - Dev/localhost: do not register SW
-// - Prod: migrate by clearing stale registrations once and then register
+// Service worker håndtering:
+// - Dev/localhost: ikke registrer SW
+// - Produksjon: engangs migrering for å unngå stale cache/hvitskjerm
 if ('serviceWorker' in navigator) {
   const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
   const isDev = Boolean(import.meta.env?.DEV);
@@ -120,18 +78,12 @@ if ('serviceWorker' in navigator) {
       console.info('[SW] Dev/localhost detected; skipping service-worker registration.');
     });
   } else if (window.isSecureContext) {
-    const migrateKey = 'aq_sw_migrated_v2';
+    const migrateKey = 'aq_sw_migrated_v1';
     const migrated = localStorage.getItem(migrateKey) === '1';
 
     const start = async () => {
       if (!migrated) {
         await unregisterAll();
-        if ('caches' in window) {
-          try {
-            const keys = await caches.keys();
-            await Promise.all(keys.map((key) => caches.delete(key)));
-          } catch {}
-        }
         localStorage.setItem(migrateKey, '1');
       }
       registerSW();
