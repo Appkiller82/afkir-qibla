@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import PushControlsAuto from "./PushControlsAuto.jsx";
 import AutoLocationModal from "./AutoLocationModal.jsx";
 import { updateMetaIfSubscribed } from "./push";
-import { fetchMonthTimings, runDevCompareMode, DEFAULT_ADMIN_OFFSETS, getAdminOffsets, saveAdminOffsets } from "./prayer";
+import { fetchMonthTimings, runDevCompareMode } from "./prayer";
 
 /**
  * Afkir Qibla 7 – RESTORED UI (oppdatert for unified bønnetider)
@@ -849,18 +849,19 @@ export default function App(){
         .hero-stat { border: 1px solid var(--border); border-radius: 14px; padding: 12px; background: rgba(2, 6, 23, .25); }
         .kpi { font-size: 24px; font-weight: 700; }
         .section-grid { display:grid; gap:12px; margin-top:12px; grid-template-columns: 1.2fr .8fr; }
-        .calendar-wrap { margin-top:8px; max-height:220px; overflow:auto; border:1px solid var(--border); border-radius:12px; }
-        .calendar-table { width:100%; border-collapse:separate; border-spacing:0; font-size:14px; }
-        .calendar-table th, .calendar-table td { text-align:left; padding:8px 10px; border-right:1px solid var(--border); }
-        .calendar-table th:last-child, .calendar-table td:last-child { border-right:none; }
-        .calendar-table thead th { position:sticky; top:0; z-index:2; background: rgba(2,6,23,.9); color:#e5e7eb; }
-        .calendar-table tbody tr:nth-child(even) { background: rgba(148,163,184,.10); }
-        .calendar-table tbody tr:hover { background: rgba(56,189,248,.12); }
-        .admin-panel { margin-top:10px; border:1px solid var(--border); border-radius:12px; padding:12px; background: rgba(2, 6, 23, .16); }
-        .admin-grid { display:grid; grid-template-columns: repeat(5, minmax(100px, 1fr)); gap:8px; margin-top:8px; }
-        .admin-grid label { display:flex; flex-direction:column; gap:6px; font-size:13px; color:var(--muted); }
-        .admin-grid input { padding:8px; border-radius:10px; border:1px solid var(--border); background: var(--btn); color:var(--fg); }
-        @media (max-width: 920px){ .section-grid { grid-template-columns: 1fr; } .hero-stat .kpi{ font-size:20px; } .admin-grid { grid-template-columns: repeat(2, minmax(100px, 1fr)); } }
+        .section-grid > * { min-width: 0; }
+        .calendarCard { display:flex; flex-direction:column; width:100%; min-width:0; overflow:hidden; }
+        .calendarHeader { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+        .calendarBody { width:100%; min-width:0; margin-top:8px; overflow-x:auto; overflow-y:auto; -webkit-overflow-scrolling:touch; max-height:clamp(280px, 48vh, 360px); }
+        .calendarBody.hidden { display:none; }
+        .calendarTable { width:100%; min-width:520px; border-collapse:separate; border-spacing:0; font-size:14px; }
+        .calendarTable th, .calendarTable td { text-align:left; white-space:nowrap; padding:8px 10px; }
+        .calendarTable th + th, .calendarTable td + td { border-left:1px solid var(--border); }
+        .calendarTable thead th { position:sticky; top:0; z-index:2; background: var(--card); }
+        .calendarTable tbody tr:nth-child(even) { background: rgba(148,163,184,.10); }
+        .calendarTable tbody tr:hover { background: rgba(56,189,248,.12); }
+        @media (max-width: 920px){ .section-grid { grid-template-columns: 1fr; } .hero-stat .kpi{ font-size:20px; } }
+        @media (max-width: 640px){ .calendarTable thead th { position: static; } }
       `}</style>
 
       <div className="container">
@@ -941,14 +942,14 @@ export default function App(){
             </section>
 
             <section className="card">
-              <div style={{display:"flex", justifyContent:"space-between", alignItems:"center"}}>
-                <h3>Månedskalender</h3>
-                <button className="btn" onClick={() => setCalendarExpanded((v) => !v)}>{calendarExpanded ? "Skjul" : "Vis"}</button>
-              </div>
-              {calendarError && <div className="error" style={{marginTop:8}}>{calendarError}</div>}
-              {calendarExpanded && (
-                <div className="calendar-wrap">
-                  <table className="calendar-table">
+              <div className="calendarCard">
+                <div className="calendarHeader">
+                  <h3>Månedskalender</h3>
+                  <button className="btn" onClick={() => setCalendarExpanded((v) => !v)}>{calendarExpanded ? "Skjul" : "Vis"}</button>
+                </div>
+                {calendarError && <div className="error" style={{marginTop:8}}>{calendarError}</div>}
+                <div className={`calendarBody ${calendarExpanded ? "" : "hidden"}`}>
+                  <table className="calendarTable">
                     <thead>
                       <tr><th>Dato</th><th>Fajr</th><th>Dhuhr</th><th>Asr</th><th>Maghrib</th><th>Isha</th></tr>
                     </thead>
@@ -964,7 +965,7 @@ export default function App(){
                     </tbody>
                   </table>
                 </div>
-              )}
+              </div>
             </section>
 
             <section className="card">
@@ -1031,30 +1032,6 @@ export default function App(){
             />
           </section>
 
-          <section className="card">
-            <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", gap:8}}>
-              <h3>Local admin</h3>
-              <button className="btn" onClick={promptAdminAccess}>Admin (juster tider)</button>
-            </div>
-            {showAdminPanel && (
-              <div className="admin-panel">
-                <div className="hint">Lokal minuttoffset lagres kun i denne nettleseren.</div>
-                <div className="admin-grid">
-                  {["Fajr", "Dhuhr", "Asr", "Maghrib", "Isha"].map((name) => (
-                    <label key={name}>
-                      {name}
-                      <input type="number" value={adminOffsets[name] ?? 0} onChange={(e) => updateAdminOffset(name, e.target.value)} />
-                    </label>
-                  ))}
-                </div>
-                <div className="row" style={{marginTop:10}}>
-                  <button className="btn btn-green" onClick={handleSaveAdminOffsets}>Lagre</button>
-                  <button className="btn" onClick={handleResetAdminOffsets}>Nullstill</button>
-                  {adminStatus ? <span className="hint">{adminStatus}</span> : null}
-                </div>
-              </div>
-            )}
-          </section>
         </div>
       </div>
 
