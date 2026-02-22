@@ -20,7 +20,14 @@ const NB_TEMP = new Intl.NumberFormat("nb-NO", { maximumFractionDigits: 0 });
 
 function useLocalStorage(key, init) {
   const [v, setV] = useState(() => {
-    try { const j = localStorage.getItem(key); return j ? JSON.parse(j) : init } catch { return init }
+    try {
+      const j = localStorage.getItem(key);
+      if (!j) return init;
+      return JSON.parse(j);
+    } catch {
+      try { localStorage.removeItem(key); } catch {}
+      return init;
+    }
   });
   useEffect(() => { try { localStorage.setItem(key, JSON.stringify(v)) } catch {} }, [key, v]);
   return [v, setV];
@@ -270,6 +277,7 @@ function loadCache(key) {
     const obj = JSON.parse(raw);
     return obj?.value ?? null;
   } catch {
+    try { localStorage.removeItem(key); } catch {}
     return null;
   }
 }
