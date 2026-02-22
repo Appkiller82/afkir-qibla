@@ -747,9 +747,7 @@ export default function App(){
       if (seq !== refreshSeqRef.current) return;
       console.error(e);
       const msg = String(e?.message || "");
-      if (msg.includes("Missing BONNETID_API_KEY")) {
-        setCalendarError("Bonnetid API-nøkkel mangler i servermiljøet.");
-      } else if (msg.includes("ALADHAN_")) {
+      if (msg.includes("ALADHAN_")) {
         setCalendarError("Aladhan-konfigurasjon mangler i miljøvariabler.");
       } else {
         setCalendarError("Klarte ikke hente månedskalender akkurat nå.");
@@ -768,11 +766,7 @@ export default function App(){
           Isha: cached.Isha || "",
         });
       } else {
-        if (msg.includes("Missing BONNETID_API_KEY")) {
-          setApiError("Bonnetid API-nøkkel mangler på serveren. Kontakt administrator.");
-        } else {
-          setApiError("Klarte ikke hente bønnetider (API).");
-        }
+        setApiError("Klarte ikke hente bønnetider (API).");
         setTimes(null);
         setTimesText(null);
       }

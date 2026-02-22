@@ -1,4 +1,4 @@
-// Unified prayer-time fetchers (Bonnetid via Netlify functions)
+// Unified prayer-time fetchers (Aladhan only)
 import { applyOffset, normalizeHHMM } from "./prayer-utils";
 
 const COUNTRY_CACHE_PREFIX = "aq_country_cache:";
@@ -35,15 +35,6 @@ export type UnifiedTimingRow = {
   asr: string;
   maghrib: string;
   isha: string;
-};
-
-type BonnetidLocation = {
-  id?: string | number;
-  location_id?: string | number;
-  lat?: number | string;
-  lon?: number | string;
-  latitude?: number | string;
-  longitude?: number | string;
 };
 
 function safeStorage() {
@@ -126,7 +117,7 @@ export async function useNorwayProfile(lat: number, lon: number): Promise<boolea
 function ensure(t: any): Timings {
   return {
     Fajr: normalizeHHMM(t.Fajr || t.fajr),
-    Sunrise: normalizeHHMM(t.Sunrise || t.sunrise || t.shuruq_sunrise || t.Shuruq),
+    Sunrise: normalizeHHMM(t.Sunrise || t.sunrise || t.shuruq_sunrise),
     Dhuhr: normalizeHHMM(t.Dhuhr || t.dhuhr || t.Duhr || t.duhr || t.Zuhr || t.zuhr),
     Asr: normalizeHHMM(t.Asr || t.asr),
     Maghrib: normalizeHHMM(t.Maghrib || t.maghrib),
@@ -175,120 +166,50 @@ function isoDateInTz(tz: string, dayOffset = 0) {
   return `${yyyy}-${mm}-${dd}`;
 }
 
-function pick(obj: any, keys: string[]) {
-  for (const k of keys) {
-    if (obj && obj[k] !== undefined && obj[k] !== null && obj[k] !== "") return obj[k];
+function buildAladhanQuery(profileEnabled: boolean) {
+  const query: Record<string, string> = {};
+  if (profileEnabled) {
+    query.method = "99";
+    query.fajr = String(NO_IRN_PROFILE.fajrAngle);
+    query.isha = String(NO_IRN_PROFILE.ishaAngle);
+    query.school = String(NO_IRN_PROFILE.school);
+    query.latitudeAdjustmentMethod = String(NO_IRN_PROFILE.latitudeAdj);
   }
-  return "";
+  return query;
 }
 
-function parseDateISO(row: any): string {
-  const raw = String(
-    pick(row, ["date", "gregorian_date", "gregorianDate", "date_gregorian", "dateISO", "day", "dato"]) || "",
-  ).trim();
-  const m = raw.match(/(\d{4})-(\d{2})-(\d{2})/);
-  return m ? `${m[1]}-${m[2]}-${m[3]}` : "";
-}
-
-function parseTimings(row: any): Timings {
-  const candidate = row?.timings || row;
-  return ensure({
-    Fajr: pick(candidate, ["Fajr", "fajr"]),
-    Sunrise: pick(candidate, ["Sunrise", "sunrise", "Shuruq", "shuruq_sunrise"]),
-    Dhuhr: pick(candidate, ["Dhuhr", "Duhr", "Zuhr", "dhuhr", "duhr", "zuhr"]),
-    Asr: pick(candidate, ["Asr", "asr"]),
-    Maghrib: pick(candidate, ["Maghrib", "maghrib"]),
-    Isha: pick(candidate, ["Isha", "isha"]),
-  });
-}
-
-function toNumber(v: unknown): number {
-  const n = Number(v);
-  return Number.isFinite(n) ? n : Number.NaN;
-}
-
-function distance2(aLat: number, aLon: number, bLat: number, bLon: number) {
-  const dLat = aLat - bLat;
-  const dLon = aLon - bLon;
-  return dLat * dLat + dLon * dLon;
-}
-
-function findNearestLocationId(locations: BonnetidLocation[], lat: number, lon: number): string {
-  let bestId = "";
-  let bestDistance = Number.POSITIVE_INFINITY;
-
-  for (const loc of locations) {
-    const id = String(pick(loc, ["location_id", "id"]));
-    if (!id) continue;
-
-    const locLat = toNumber(pick(loc, ["lat", "latitude"]));
-    const locLon = toNumber(pick(loc, ["lon", "lng", "longitude"]));
-    if (!Number.isFinite(locLat) || !Number.isFinite(locLon)) continue;
-
-    const d = distance2(lat, lon, locLat, locLon);
-    if (d < bestDistance) {
-      bestDistance = d;
-      bestId = id;
-    }
-  }
-
-  if (!bestId && locations.length > 0) {
-    bestId = String(pick(locations[0], ["location_id", "id"]));
-  }
-
-  if (!bestId) throw new Error("Bonnetid locations missing usable id");
-  return bestId;
-}
-
-async function fetchBonnetidMonth(
+async function fetchAladhanMonth(
   lat: number,
   lon: number,
   month: number,
   year: number,
+  tz: string,
+  profileEnabled: boolean,
   signal?: AbortSignal,
 ): Promise<MonthRow[]> {
-  const locationsUrl = new URL("/.netlify/functions/bonnetid_locations", window.location.origin);
-  const locationsRes = await fetch(locationsUrl.toString(), { signal });
-  const locationsBody = await readJsonOrThrow(locationsRes, "Bonnetid locations");
-  const locations = Array.isArray(locationsBody)
-    ? locationsBody
-    : Array.isArray(locationsBody?.results)
-      ? locationsBody.results
-      : Array.isArray(locationsBody?.data)
-        ? locationsBody.data
-        : [];
+  const adUrl = new URL("/api/aladhan-month", window.location.origin);
+  adUrl.searchParams.set("lat", String(lat));
+  adUrl.searchParams.set("lon", String(lon));
+  adUrl.searchParams.set("tz", String(tz));
+  adUrl.searchParams.set("month", String(month));
+  adUrl.searchParams.set("year", String(year));
 
-  if (!locations.length) {
-    throw new Error("Bonnetid locations returned no rows");
-  }
+  const params = buildAladhanQuery(profileEnabled);
+  Object.entries(params).forEach(([k, v]) => adUrl.searchParams.set(k, v));
 
-  const locationId = findNearestLocationId(locations, lat, lon);
-  const monthUrl = new URL("/.netlify/functions/bonnetid_prayertimes_month", window.location.origin);
-  monthUrl.searchParams.set("location_id", locationId);
-  monthUrl.searchParams.set("year", String(year));
-  monthUrl.searchParams.set("month", String(month));
+  const adRes = await fetch(adUrl.toString(), { signal });
+  const adBody = await readJsonOrThrow(adRes, "Aladhan month");
+  const rows = Array.isArray(adBody?.rows) ? adBody.rows : [];
 
-  const monthRes = await fetch(monthUrl.toString(), { signal });
-  const monthBody = await readJsonOrThrow(monthRes, "Bonnetid month");
-  const rows = Array.isArray(monthBody)
-    ? monthBody
-    : Array.isArray(monthBody?.results)
-      ? monthBody.results
-      : Array.isArray(monthBody?.data)
-        ? monthBody.data
-        : [];
-
-  return rows
-    .map((row: any) => {
-      const date = parseDateISO(row);
-      const normalized = parseTimings(row);
-      return {
-        date,
-        weekday: String(pick(row, ["weekday", "ukedag"]) || ""),
-        timings: normalized,
-      };
-    })
-    .filter((row: MonthRow) => Boolean(row.date));
+  return rows.map((row: any) => {
+    const normalized = ensure(row?.timings || {});
+    const timings = profileEnabled ? applyNoOffsets(normalized) : normalized;
+    return {
+      date: String(row?.date || ""),
+      weekday: row?.weekday,
+      timings,
+    };
+  });
 }
 
 export async function fetchTimingsMonthly(
@@ -296,23 +217,20 @@ export async function fetchTimingsMonthly(
   lon: number,
   year: number,
   month: number,
-  _tz = "UTC",
+  tz = "UTC",
   signal?: AbortSignal,
 ): Promise<UnifiedTimingRow[]> {
   const norway = await useNorwayProfile(lat, lon);
-  const rows = await fetchBonnetidMonth(lat, lon, month, year, signal);
-  return rows.map((row) => {
-    const timings = norway ? applyNoOffsets(row.timings) : row.timings;
-    return {
-      dateISO: row.date,
-      fajr: timings.Fajr,
-      sunrise: timings.Sunrise,
-      dhuhr: timings.Dhuhr,
-      asr: timings.Asr,
-      maghrib: timings.Maghrib,
-      isha: timings.Isha,
-    };
-  });
+  const rows = await fetchAladhanMonth(lat, lon, month, year, tz, norway, signal);
+  return rows.map((row) => ({
+    dateISO: row.date,
+    fajr: row.timings.Fajr,
+    sunrise: row.timings.Sunrise,
+    dhuhr: row.timings.Dhuhr,
+    asr: row.timings.Asr,
+    maghrib: row.timings.Maghrib,
+    isha: row.timings.Isha,
+  }));
 }
 
 export async function fetchMonthTimings(
@@ -349,7 +267,7 @@ export async function fetchTimings(
   const [year, month] = targetIso.split("-").map(Number);
   const rows = await fetchTimingsMonthly(lat, lon, year, month, tz);
   const row = rows.find((d) => d.dateISO === targetIso);
-  if (!row) throw new Error(`Missing Bonnetid month row for ${targetIso}`);
+  if (!row) throw new Error(`Missing Aladhan month row for ${targetIso}`);
   return {
     Fajr: row.fajr,
     Sunrise: row.sunrise,
