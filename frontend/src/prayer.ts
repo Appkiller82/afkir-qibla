@@ -11,6 +11,9 @@ const NO_IRN_PROFILE = {
   offsets: { Fajr: -9, Dhuhr: 6, Asr: 0, Maghrib: 5, Isha: 0 },
 };
 const NORWAY_BBOX = { minLat: 57.8, maxLat: 71.3, minLon: 4.0, maxLon: 31.5 };
+const ADMIN_OFFSETS_KEY = "adminOffsets";
+export const DEFAULT_ADMIN_OFFSETS = { Fajr: 0, Dhuhr: 0, Asr: 0, Maghrib: 0, Isha: 0 };
+
 
 export type Timings = {
   Fajr: string;
@@ -114,6 +117,50 @@ export async function useNorwayProfile(lat: number, lon: number): Promise<boolea
   return cc === "no";
 }
 
+function normalizeAdminOffsets(raw: any) {
+  return {
+    Fajr: Number(raw?.Fajr) || 0,
+    Dhuhr: Number(raw?.Dhuhr) || 0,
+    Asr: Number(raw?.Asr) || 0,
+    Maghrib: Number(raw?.Maghrib) || 0,
+    Isha: Number(raw?.Isha) || 0,
+  };
+}
+
+export function getAdminOffsets() {
+  const storage = safeStorage();
+  if (!storage) return { ...DEFAULT_ADMIN_OFFSETS };
+  try {
+    const raw = storage.getItem(ADMIN_OFFSETS_KEY);
+    if (!raw) return { ...DEFAULT_ADMIN_OFFSETS };
+    return normalizeAdminOffsets(JSON.parse(raw));
+  } catch {
+    return { ...DEFAULT_ADMIN_OFFSETS };
+  }
+}
+
+export function saveAdminOffsets(offsets: any) {
+  const storage = safeStorage();
+  if (!storage) return;
+  try {
+    storage.setItem(ADMIN_OFFSETS_KEY, JSON.stringify(normalizeAdminOffsets(offsets)));
+  } catch {
+    // ignore
+  }
+}
+
+function applyAdminOffsets(t: Timings): Timings {
+  const admin = getAdminOffsets();
+  return {
+    ...t,
+    Fajr: applyOffset(t.Fajr, admin.Fajr),
+    Dhuhr: applyOffset(t.Dhuhr, admin.Dhuhr),
+    Asr: applyOffset(t.Asr, admin.Asr),
+    Maghrib: applyOffset(t.Maghrib, admin.Maghrib),
+    Isha: applyOffset(t.Isha, admin.Isha),
+  };
+}
+
 function ensure(t: any): Timings {
   return {
     Fajr: normalizeHHMM(t.Fajr || t.fajr),
@@ -203,7 +250,8 @@ async function fetchAladhanMonth(
 
   return rows.map((row: any) => {
     const normalized = ensure(row?.timings || {});
-    const timings = profileEnabled ? applyNoOffsets(normalized) : normalized;
+    const norwayAdjusted = profileEnabled ? applyNoOffsets(normalized) : normalized;
+    const timings = applyAdminOffsets(norwayAdjusted);
     return {
       date: String(row?.date || ""),
       weekday: row?.weekday,
