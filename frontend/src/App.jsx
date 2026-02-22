@@ -814,8 +814,8 @@ export default function App(){
         ul.times { list-style:none; padding:0; margin:0 }
         .time-item { display:flex; justify-content:space-between; padding:8px 0; border-bottom:1px dashed var(--border); font-size:16px }
         .error { color:#fecaca; background:rgba(239,68,68,.12); border:1px solid rgba(239,68,68,.35); padding:10px; border-radius:12px; }
-        .calendar-wrap { margin-top:8px; max-height:220px; overflow:auto; border:1px solid var(--border); border-radius:12px; }
-        .calendar-table { width:100%; border-collapse:separate; border-spacing:0; font-size:14px; }
+        .calendar-wrap { margin-top:8px; max-height:220px; overflow:auto; -webkit-overflow-scrolling: touch; border:1px solid var(--border); border-radius:12px; }
+        .calendar-table { width:100%; border-collapse:separate; border-spacing:0; font-size:14px; table-layout: fixed; }
         .calendar-table thead th {
           position: sticky;
           top: 0;
@@ -824,10 +824,16 @@ export default function App(){
           text-align:left;
           font-weight:700;
         }
-        .calendar-table th, .calendar-table td { padding:8px 10px; border-bottom:1px solid var(--border); }
+        .calendar-table th, .calendar-table td { padding:8px 10px; border-bottom:1px solid var(--border); white-space:nowrap; }
         .calendar-table th:not(:last-child), .calendar-table td:not(:last-child) { border-right:1px solid var(--border); }
+        .calendar-table th:first-child, .calendar-table td:first-child { width:30%; }
+        .calendar-table th:not(:first-child), .calendar-table td:not(:first-child) { width:14%; text-align:center; }
         .calendar-table tbody tr:nth-child(even) { background: rgba(148, 163, 184, .08); }
         .calendar-table tbody tr.today-row { background: rgba(56,189,248,.14); font-weight: 700; }
+        @media (max-width: 460px) {
+          .calendar-table { font-size: 13px; }
+          .calendar-table th, .calendar-table td { padding: 7px 6px; }
+        }
 
         .hero-stat { border: 1px solid var(--border); border-radius: 14px; padding: 12px; background: rgba(2, 6, 23, .25); }
         .kpi { font-size: 24px; font-weight: 700; }
