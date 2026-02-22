@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import PushControlsAuto from "./PushControlsAuto.jsx";
 import AutoLocationModal from "./AutoLocationModal.jsx";
 import { updateMetaIfSubscribed } from "./push";
-import { fetchMonthTimings } from "./prayer";
+import { fetchMonthTimings, runDevCompareMode } from "./prayer";
 
 /**
  * Afkir Qibla 7 – RESTORED UI (oppdatert for unified bønnetider)
@@ -573,6 +573,10 @@ export default function App(){
   }, [theme]);
 
   useEffect(() => {
+    runDevCompareMode();
+  }, []);
+
+  useEffect(() => {
     if (coords?.latitude && coords?.longitude) setLastCoords(coords);
   }, [coords?.latitude, coords?.longitude]);
 
@@ -814,7 +818,19 @@ export default function App(){
         .hero-stat { border: 1px solid var(--border); border-radius: 14px; padding: 12px; background: rgba(2, 6, 23, .25); }
         .kpi { font-size: 24px; font-weight: 700; }
         .section-grid { display:grid; gap:12px; margin-top:12px; grid-template-columns: 1.2fr .8fr; }
+        .section-grid > * { min-width: 0; }
+        .calendarCard { display:flex; flex-direction:column; width:100%; min-width:0; overflow:hidden; }
+        .calendarHeader { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+        .calendarBody { width:100%; min-width:0; margin-top:8px; overflow-x:auto; overflow-y:auto; -webkit-overflow-scrolling:touch; max-height:clamp(280px, 48vh, 360px); }
+        .calendarBody.hidden { display:none; }
+        .calendarTable { width:100%; min-width:520px; border-collapse:separate; border-spacing:0; font-size:14px; }
+        .calendarTable th, .calendarTable td { text-align:left; white-space:nowrap; padding:8px 10px; }
+        .calendarTable th + th, .calendarTable td + td { border-left:1px solid var(--border); }
+        .calendarTable thead th { position:sticky; top:0; z-index:2; background: var(--card); }
+        .calendarTable tbody tr:nth-child(even) { background: rgba(148,163,184,.10); }
+        .calendarTable tbody tr:hover { background: rgba(56,189,248,.12); }
         @media (max-width: 920px){ .section-grid { grid-template-columns: 1fr; } .hero-stat .kpi{ font-size:20px; } }
+        @media (max-width: 640px){ .calendarTable thead th { position: static; } }
       `}</style>
 
       <div className="container">
@@ -895,22 +911,22 @@ export default function App(){
             </section>
 
             <section className="card">
-              <div style={{display:"flex", justifyContent:"space-between", alignItems:"center"}}>
-                <h3>Månedskalender</h3>
-                <button className="btn" onClick={() => setCalendarExpanded((v) => !v)}>{calendarExpanded ? "Skjul" : "Vis"}</button>
-              </div>
-              {calendarError && <div className="error" style={{marginTop:8}}>{calendarError}</div>}
-              {calendarExpanded && (
-                <div style={{marginTop:8, maxHeight:220, overflow:"auto"}}>
-                  <table style={{width:"100%", borderCollapse:"collapse", fontSize:14}}>
+              <div className="calendarCard">
+                <div className="calendarHeader">
+                  <h3>Månedskalender</h3>
+                  <button className="btn" onClick={() => setCalendarExpanded((v) => !v)}>{calendarExpanded ? "Skjul" : "Vis"}</button>
+                </div>
+                {calendarError && <div className="error" style={{marginTop:8}}>{calendarError}</div>}
+                <div className={`calendarBody ${calendarExpanded ? "" : "hidden"}`}>
+                  <table className="calendarTable">
                     <thead>
-                      <tr><th style={{textAlign:"left"}}>Dato</th><th style={{textAlign:"left"}}>Fajr</th><th style={{textAlign:"left"}}>Dhuhr</th><th style={{textAlign:"left"}}>Asr</th><th style={{textAlign:"left"}}>Maghrib</th><th style={{textAlign:"left"}}>Isha</th></tr>
+                      <tr><th>Dato</th><th>Fajr</th><th>Dhuhr</th><th>Asr</th><th>Maghrib</th><th>Isha</th></tr>
                     </thead>
                     <tbody>
                       {calendarRows.map((row) => {
                         const isTodayRow = row.date === todayIsoForView;
                         return (
-                          <tr key={row.date} style={isTodayRow ? { background: "rgba(56,189,248,.14)", fontWeight: 700 } : undefined}>
+                          <tr key={row.date} style={isTodayRow ? { background: "rgba(56,189,248,.22)", fontWeight: 700 } : undefined}>
                             <td>{formatCalendarDate(row.date)}{isTodayRow ? " (i dag)" : ""}</td><td>{row.timings.Fajr || "--:--"}</td><td>{row.timings.Dhuhr || "--:--"}</td><td>{row.timings.Asr || "--:--"}</td><td>{row.timings.Maghrib || "--:--"}</td><td>{row.timings.Isha || "--:--"}</td>
                           </tr>
                         );
@@ -918,7 +934,7 @@ export default function App(){
                     </tbody>
                   </table>
                 </div>
-              )}
+              </div>
             </section>
 
             <section className="card">
@@ -984,6 +1000,7 @@ export default function App(){
               tz={timeZone}
             />
           </section>
+
         </div>
       </div>
 
