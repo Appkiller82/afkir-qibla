@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import PushControlsAuto from "./PushControlsAuto.jsx";
 import AutoLocationModal from "./AutoLocationModal.jsx";
 import { updateMetaIfSubscribed } from "./push";
-import { fetchMonthTimings } from "./prayer";
+import { fetchMonthTimings, runDevCompareMode } from "./prayer";
 
 /**
  * Afkir Qibla 7 – RESTORED UI (oppdatert for unified bønnetider)
@@ -20,7 +20,14 @@ const NB_TEMP = new Intl.NumberFormat("nb-NO", { maximumFractionDigits: 0 });
 
 function useLocalStorage(key, init) {
   const [v, setV] = useState(() => {
-    try { const j = localStorage.getItem(key); return j ? JSON.parse(j) : init } catch { return init }
+    try {
+      const j = localStorage.getItem(key);
+      if (!j) return init;
+      return JSON.parse(j);
+    } catch {
+      try { localStorage.removeItem(key); } catch {}
+      return init;
+    }
   });
   useEffect(() => { try { localStorage.setItem(key, JSON.stringify(v)) } catch {} }, [key, v]);
   return [v, setV];
@@ -270,6 +277,7 @@ function loadCache(key) {
     const obj = JSON.parse(raw);
     return obj?.value ?? null;
   } catch {
+    try { localStorage.removeItem(key); } catch {}
     return null;
   }
 }
@@ -571,6 +579,10 @@ export default function App(){
   useEffect(() => {
     document.documentElement.dataset.theme = theme === "dark" ? "dark" : "light";
   }, [theme]);
+
+  useEffect(() => {
+    runDevCompareMode();
+  }, []);
 
   useEffect(() => {
     if (coords?.latitude && coords?.longitude) setLastCoords(coords);
@@ -984,6 +996,7 @@ export default function App(){
               tz={timeZone}
             />
           </section>
+
         </div>
       </div>
 
