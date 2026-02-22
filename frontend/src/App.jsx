@@ -819,7 +819,7 @@ export default function App(){
         .time-item { display:flex; justify-content:space-between; padding:8px 0; border-bottom:1px dashed var(--border); font-size:16px }
         .error { color:#fecaca; background:rgba(239,68,68,.12); border:1px solid rgba(239,68,68,.35); padding:10px; border-radius:12px; }
         .calendar-wrap { margin-top:8px; max-height:220px; overflow:auto; border:1px solid var(--border); border-radius:12px; }
-        .calendar-table { width:100%; border-collapse:separate; border-spacing:0; font-size:14px; }
+        .calendar-table { width:100%; border-collapse:separate; border-spacing:0; font-size:14px; table-layout: fixed; }
         .calendar-table thead th {
           position: sticky;
           top: 0;
@@ -834,6 +834,14 @@ export default function App(){
         .calendar-table th:not(:last-child), .calendar-table td:not(:last-child) { border-right:1px solid var(--border); }
         .calendar-table tbody tr:nth-child(even) { background: rgba(148, 163, 184, .08); }
         .calendar-table tbody tr.today-row { background: rgba(56,189,248,.14); font-weight: 700; }
+
+        @media (max-width: 520px) {
+          .calendar-wrap { max-height: 200px; }
+          .calendar-table { font-size: 13px; }
+          .calendar-table th, .calendar-table td { padding: 8px 6px; }
+          .calendar-table th:first-child, .calendar-table td:first-child { min-width: 0; width: 30%; }
+          .calendar-table th:not(:first-child), .calendar-table td:not(:first-child) { min-width: 0; width: 14%; }
+        }
 
         .hero-stat { border: 1px solid var(--border); border-radius: 14px; padding: 12px; background: rgba(2, 6, 23, .25); }
         .kpi { font-size: 24px; font-weight: 700; }
@@ -919,9 +927,21 @@ export default function App(){
             </section>
 
             <section className="card">
-              <div style={{display:"flex", justifyContent:"space-between", alignItems:"center"}}>
+              <div
+                style={{display:"flex", justifyContent:"space-between", alignItems:"center", cursor:"pointer"}}
+                onClick={() => setCalendarExpanded((v) => !v)}
+                role="button"
+                tabIndex={0}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    setCalendarExpanded((v) => !v);
+                  }
+                }}
+                aria-expanded={calendarExpanded}
+              >
                 <h3>Månedskalender</h3>
-                <button className="btn" onClick={() => setCalendarExpanded((v) => !v)}>{calendarExpanded ? "Skjul" : "Vis"}</button>
+                <span className="hint" style={{fontWeight: 700}}>{calendarExpanded ? "Skjul" : "Trykk for å åpne"}</span>
               </div>
               {calendarError && <div className="error" style={{marginTop:8}}>{calendarError}</div>}
               {calendarExpanded && (
