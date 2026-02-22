@@ -171,6 +171,10 @@ function formatPrayerTime(value) {
   return NB_TIME.format(value);
 }
 
+function formatPrayerLabel(name) {
+  return name === "Dhuhr" ? "Duhr" : name;
+}
+
 // ---------- Countdown ----------
 const ORDER = ["Fajr","Soloppgang","Dhuhr","Asr","Maghrib","Isha"];
 function diffToText(ms) {
@@ -814,8 +818,8 @@ export default function App(){
         ul.times { list-style:none; padding:0; margin:0 }
         .time-item { display:flex; justify-content:space-between; padding:8px 0; border-bottom:1px dashed var(--border); font-size:16px }
         .error { color:#fecaca; background:rgba(239,68,68,.12); border:1px solid rgba(239,68,68,.35); padding:10px; border-radius:12px; }
-        .calendar-wrap { margin-top:8px; max-height:220px; overflow:auto; border:1px solid var(--border); border-radius:12px; }
-        .calendar-table { width:100%; border-collapse:separate; border-spacing:0; font-size:14px; }
+        .calendar-wrap { margin-top:8px; max-height:220px; overflow-y:auto; overflow-x:auto; -webkit-overflow-scrolling: touch; border:1px solid var(--border); border-radius:12px; }
+        .calendar-table { width:max-content; min-width:100%; border-collapse:separate; border-spacing:0; font-size:13px; table-layout:auto; }
         .calendar-table thead th {
           position: sticky;
           top: 0;
@@ -824,10 +828,24 @@ export default function App(){
           text-align:left;
           font-weight:700;
         }
-        .calendar-table th, .calendar-table td { padding:8px 10px; border-bottom:1px solid var(--border); }
+        .calendar-table th, .calendar-table td { padding:8px 9px; border-bottom:1px solid var(--border); white-space: nowrap; }
+        .calendar-table td { font-variant-numeric: tabular-nums; }
+        .calendar-date-cell { white-space: normal; }
+        .calendar-date { display:block; }
+        .calendar-today { display:block; font-size:10px; font-weight:700; color: var(--accent-secondary); text-transform: uppercase; letter-spacing: .04em; line-height: 1.1; margin-bottom: 2px; }
+        .calendar-table th:first-child, .calendar-table td:first-child { min-width: 108px; }
+        .calendar-table th:not(:first-child), .calendar-table td:not(:first-child) { min-width: 72px; }
         .calendar-table th:not(:last-child), .calendar-table td:not(:last-child) { border-right:1px solid var(--border); }
         .calendar-table tbody tr:nth-child(even) { background: rgba(148, 163, 184, .08); }
         .calendar-table tbody tr.today-row { background: rgba(56,189,248,.14); font-weight: 700; }
+
+        @media (max-width: 520px) {
+          .calendar-wrap { max-height: 200px; overflow-x: hidden; }
+          .calendar-table { width: 100%; min-width: 100%; font-size: 11.5px; table-layout: fixed; }
+          .calendar-table th, .calendar-table td { padding: 7px 4px; }
+          .calendar-table th:first-child, .calendar-table td:first-child { width: 28%; min-width: 0; }
+          .calendar-table th:not(:first-child), .calendar-table td:not(:first-child) { width: 14.4%; min-width: 0; }
+        }
 
         .hero-stat { border: 1px solid var(--border); border-radius: 14px; padding: 12px; background: rgba(2, 6, 23, .25); }
         .kpi { font-size: 24px; font-weight: 700; }
@@ -913,23 +931,35 @@ export default function App(){
             </section>
 
             <section className="card">
-              <div style={{display:"flex", justifyContent:"space-between", alignItems:"center"}}>
+              <div
+                style={{display:"flex", justifyContent:"space-between", alignItems:"center", cursor:"pointer"}}
+                onClick={() => setCalendarExpanded((v) => !v)}
+                role="button"
+                tabIndex={0}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    setCalendarExpanded((v) => !v);
+                  }
+                }}
+                aria-expanded={calendarExpanded}
+              >
                 <h3>Månedskalender</h3>
-                <button className="btn" onClick={() => setCalendarExpanded((v) => !v)}>{calendarExpanded ? "Skjul" : "Vis"}</button>
+                <span className="hint" style={{fontWeight: 700}}>{calendarExpanded ? "Skjul" : "Vis"}</span>
               </div>
               {calendarError && <div className="error" style={{marginTop:8}}>{calendarError}</div>}
               {calendarExpanded && (
                 <div className="calendar-wrap">
                   <table className="calendar-table">
                     <thead>
-                      <tr><th style={{textAlign:"left"}}>Dato</th><th style={{textAlign:"left"}}>Fajr</th><th style={{textAlign:"left"}}>Dhuhr</th><th style={{textAlign:"left"}}>Asr</th><th style={{textAlign:"left"}}>Maghrib</th><th style={{textAlign:"left"}}>Isha</th></tr>
+                      <tr><th style={{textAlign:"left"}}>Dato</th><th style={{textAlign:"left"}}>Fajr</th><th style={{textAlign:"left"}}>Duhr</th><th style={{textAlign:"left"}}>Asr</th><th style={{textAlign:"left"}}>Maghrib</th><th style={{textAlign:"left"}}>Isha</th></tr>
                     </thead>
                     <tbody>
                       {calendarRows.map((row) => {
                         const isTodayRow = row.date === todayIsoForView;
                         return (
                           <tr key={row.date} className={isTodayRow ? "today-row" : undefined}>
-                            <td>{formatCalendarDate(row.date)}{isTodayRow ? " (i dag)" : ""}</td><td>{row.timings.Fajr || "--:--"}</td><td>{row.timings.Dhuhr || "--:--"}</td><td>{row.timings.Asr || "--:--"}</td><td>{row.timings.Maghrib || "--:--"}</td><td>{row.timings.Isha || "--:--"}</td>
+                            <td className="calendar-date-cell">{isTodayRow && <span className="calendar-today">i dag</span>}<span className="calendar-date">{formatCalendarDate(row.date)}</span></td><td>{row.timings.Fajr || "--:--"}</td><td>{row.timings.Dhuhr || "--:--"}</td><td>{row.timings.Asr || "--:--"}</td><td>{row.timings.Maghrib || "--:--"}</td><td>{row.timings.Isha || "--:--"}</td>
                           </tr>
                         );
                       })}
@@ -964,7 +994,7 @@ export default function App(){
                 <ul className="times">
                   <li className="time-item"><span>Fajr</span><span>{timesText?.Fajr || formatPrayerTime(times.Fajr)}</span></li>
                   <li className="time-item"><span>Soloppgang</span><span>{timesText?.Soloppgang || formatPrayerTime(times.Soloppgang)}</span></li>
-                  <li className="time-item"><span>Dhuhr</span><span>{timesText?.Dhuhr || formatPrayerTime(times.Dhuhr)}</span></li>
+                  <li className="time-item"><span>Duhr</span><span>{timesText?.Dhuhr || formatPrayerTime(times.Dhuhr)}</span></li>
                   <li className="time-item"><span>Asr</span><span>{timesText?.Asr || formatPrayerTime(times.Asr)}</span></li>
                   <li className="time-item"><span>Maghrib</span><span>{timesText?.Maghrib || formatPrayerTime(times.Maghrib)}</span></li>
                   <li className="time-item"><span>Isha</span><span>{timesText?.Isha || formatPrayerTime(times.Isha)}</span></li>
@@ -972,7 +1002,7 @@ export default function App(){
 
                 <div style={{marginTop:10, fontSize:15}}>
                   {countdown?.name
-                    ? <>{countdown.tomorrow ? "Neste bønn i morgen: " : "Neste bønn: "}<b>{countdown.name}</b> kl <b>{countdown.atText || formatPrayerTime(countdown.at)}</b> (<span className="hint">{countdown.diffText}</span>)</>
+                    ? <>{countdown.tomorrow ? "Neste bønn i morgen: " : "Neste bønn: "}<b>{formatPrayerLabel(countdown.name)}</b> kl <b>{countdown.atText || formatPrayerTime(countdown.at)}</b> (<span className="hint">{countdown.diffText}</span>)</>
                     : <span className="hint">Alle dagens bønner er passert – oppdateres ved midnatt.</span>
                   }
                 </div>
