@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import PushControlsAuto from "./PushControlsAuto.jsx";
 import AutoLocationModal from "./AutoLocationModal.jsx";
 import { updateMetaIfSubscribed } from "./push";
-import { fetchMonthTimings } from "./prayer";
+import { fetchMonthTimings, runDevCompareMode, DEFAULT_ADMIN_OFFSETS, getAdminOffsets, saveAdminOffsets } from "./prayer";
 
 /**
  * Afkir Qibla 7 – RESTORED UI (oppdatert for unified bønnetider)
@@ -554,6 +554,9 @@ export default function App(){
   const [calendarExpanded, setCalendarExpanded] = useState(false);
   const [calendarError, setCalendarError] = useState("");
   const [offline, setOffline] = useState(typeof navigator !== "undefined" ? !navigator.onLine : false);
+  const [showAdminPanel, setShowAdminPanel] = useState(false);
+  const [adminOffsets, setAdminOffsets] = useState(() => getAdminOffsets());
+  const [adminStatus, setAdminStatus] = useState("");
   const timeZone = useMemo(() => Intl.DateTimeFormat().resolvedOptions().timeZone, []);
   const audioRef = useRef(null);
   const timersRef = useRef([]);
@@ -571,6 +574,10 @@ export default function App(){
   useEffect(() => {
     document.documentElement.dataset.theme = theme === "dark" ? "dark" : "light";
   }, [theme]);
+
+  useEffect(() => {
+    runDevCompareMode();
+  }, []);
 
   useEffect(() => {
     if (coords?.latitude && coords?.longitude) setLastCoords(coords);
@@ -652,6 +659,34 @@ export default function App(){
   }, [remindersOn, times?.Fajr?.getTime?.()]);
 
   const qiblaDeg = useMemo(() => activeCoords ? qiblaBearing(activeCoords.latitude, activeCoords.longitude) : null, [activeCoords?.latitude, activeCoords?.longitude]);
+
+  function promptAdminAccess() {
+    const password = window.prompt("Admin-passord:") || "";
+    if (password !== "0199") {
+      setAdminStatus("Feil passord.");
+      return;
+    }
+    setAdminOffsets(getAdminOffsets());
+    setAdminStatus("");
+    setShowAdminPanel((v) => !v);
+  }
+
+  function updateAdminOffset(name, value) {
+    setAdminOffsets((prev) => ({ ...prev, [name]: Number(value) || 0 }));
+  }
+
+  async function handleSaveAdminOffsets() {
+    saveAdminOffsets(adminOffsets);
+    setAdminStatus("Lagret lokalt.");
+    if (activeCoords) await refreshTimes(activeCoords.latitude, activeCoords.longitude);
+  }
+
+  async function handleResetAdminOffsets() {
+    saveAdminOffsets(DEFAULT_ADMIN_OFFSETS);
+    setAdminOffsets({ ...DEFAULT_ADMIN_OFFSETS });
+    setAdminStatus("Nullstilt.");
+    if (activeCoords) await refreshTimes(activeCoords.latitude, activeCoords.longitude);
+  }
 
   async function refreshTimes(lat, lng) {
     const seq = ++refreshSeqRef.current;
@@ -814,7 +849,18 @@ export default function App(){
         .hero-stat { border: 1px solid var(--border); border-radius: 14px; padding: 12px; background: rgba(2, 6, 23, .25); }
         .kpi { font-size: 24px; font-weight: 700; }
         .section-grid { display:grid; gap:12px; margin-top:12px; grid-template-columns: 1.2fr .8fr; }
-        @media (max-width: 920px){ .section-grid { grid-template-columns: 1fr; } .hero-stat .kpi{ font-size:20px; } }
+        .calendar-wrap { margin-top:8px; max-height:220px; overflow:auto; border:1px solid var(--border); border-radius:12px; }
+        .calendar-table { width:100%; border-collapse:separate; border-spacing:0; font-size:14px; }
+        .calendar-table th, .calendar-table td { text-align:left; padding:8px 10px; border-right:1px solid var(--border); }
+        .calendar-table th:last-child, .calendar-table td:last-child { border-right:none; }
+        .calendar-table thead th { position:sticky; top:0; z-index:2; background: rgba(2,6,23,.9); color:#e5e7eb; }
+        .calendar-table tbody tr:nth-child(even) { background: rgba(148,163,184,.10); }
+        .calendar-table tbody tr:hover { background: rgba(56,189,248,.12); }
+        .admin-panel { margin-top:10px; border:1px solid var(--border); border-radius:12px; padding:12px; background: rgba(2, 6, 23, .16); }
+        .admin-grid { display:grid; grid-template-columns: repeat(5, minmax(100px, 1fr)); gap:8px; margin-top:8px; }
+        .admin-grid label { display:flex; flex-direction:column; gap:6px; font-size:13px; color:var(--muted); }
+        .admin-grid input { padding:8px; border-radius:10px; border:1px solid var(--border); background: var(--btn); color:var(--fg); }
+        @media (max-width: 920px){ .section-grid { grid-template-columns: 1fr; } .hero-stat .kpi{ font-size:20px; } .admin-grid { grid-template-columns: repeat(2, minmax(100px, 1fr)); } }
       `}</style>
 
       <div className="container">
@@ -901,16 +947,16 @@ export default function App(){
               </div>
               {calendarError && <div className="error" style={{marginTop:8}}>{calendarError}</div>}
               {calendarExpanded && (
-                <div style={{marginTop:8, maxHeight:220, overflow:"auto"}}>
-                  <table style={{width:"100%", borderCollapse:"collapse", fontSize:14}}>
+                <div className="calendar-wrap">
+                  <table className="calendar-table">
                     <thead>
-                      <tr><th style={{textAlign:"left"}}>Dato</th><th style={{textAlign:"left"}}>Fajr</th><th style={{textAlign:"left"}}>Dhuhr</th><th style={{textAlign:"left"}}>Asr</th><th style={{textAlign:"left"}}>Maghrib</th><th style={{textAlign:"left"}}>Isha</th></tr>
+                      <tr><th>Dato</th><th>Fajr</th><th>Dhuhr</th><th>Asr</th><th>Maghrib</th><th>Isha</th></tr>
                     </thead>
                     <tbody>
                       {calendarRows.map((row) => {
                         const isTodayRow = row.date === todayIsoForView;
                         return (
-                          <tr key={row.date} style={isTodayRow ? { background: "rgba(56,189,248,.14)", fontWeight: 700 } : undefined}>
+                          <tr key={row.date} style={isTodayRow ? { background: "rgba(56,189,248,.22)", fontWeight: 700 } : undefined}>
                             <td>{formatCalendarDate(row.date)}{isTodayRow ? " (i dag)" : ""}</td><td>{row.timings.Fajr || "--:--"}</td><td>{row.timings.Dhuhr || "--:--"}</td><td>{row.timings.Asr || "--:--"}</td><td>{row.timings.Maghrib || "--:--"}</td><td>{row.timings.Isha || "--:--"}</td>
                           </tr>
                         );
@@ -983,6 +1029,31 @@ export default function App(){
               countryCode={effectiveCountryCode}
               tz={timeZone}
             />
+          </section>
+
+          <section className="card">
+            <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", gap:8}}>
+              <h3>Local admin</h3>
+              <button className="btn" onClick={promptAdminAccess}>Admin (juster tider)</button>
+            </div>
+            {showAdminPanel && (
+              <div className="admin-panel">
+                <div className="hint">Lokal minuttoffset lagres kun i denne nettleseren.</div>
+                <div className="admin-grid">
+                  {["Fajr", "Dhuhr", "Asr", "Maghrib", "Isha"].map((name) => (
+                    <label key={name}>
+                      {name}
+                      <input type="number" value={adminOffsets[name] ?? 0} onChange={(e) => updateAdminOffset(name, e.target.value)} />
+                    </label>
+                  ))}
+                </div>
+                <div className="row" style={{marginTop:10}}>
+                  <button className="btn btn-green" onClick={handleSaveAdminOffsets}>Lagre</button>
+                  <button className="btn" onClick={handleResetAdminOffsets}>Nullstill</button>
+                  {adminStatus ? <span className="hint">{adminStatus}</span> : null}
+                </div>
+              </div>
+            )}
           </section>
         </div>
       </div>
