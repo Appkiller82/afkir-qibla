@@ -830,6 +830,9 @@ export default function App(){
         }
         .calendar-table th, .calendar-table td { padding:8px 9px; border-bottom:1px solid var(--border); white-space: nowrap; }
         .calendar-table td { font-variant-numeric: tabular-nums; }
+        .calendar-date-cell { white-space: normal; }
+        .calendar-date { display:block; }
+        .calendar-today { display:block; font-size:10px; font-weight:700; color: var(--accent-secondary); text-transform: uppercase; letter-spacing: .04em; line-height: 1.1; margin-bottom: 2px; }
         .calendar-table th:first-child, .calendar-table td:first-child { min-width: 108px; }
         .calendar-table th:not(:first-child), .calendar-table td:not(:first-child) { min-width: 72px; }
         .calendar-table th:not(:last-child), .calendar-table td:not(:last-child) { border-right:1px solid var(--border); }
@@ -839,9 +842,9 @@ export default function App(){
         @media (max-width: 520px) {
           .calendar-wrap { max-height: 200px; overflow-x: hidden; }
           .calendar-table { width: 100%; min-width: 100%; font-size: 11.5px; table-layout: fixed; }
-          .calendar-table th, .calendar-table td { padding: 7px 5px; }
-          .calendar-table th:first-child, .calendar-table td:first-child { width: 31%; min-width: 0; }
-          .calendar-table th:not(:first-child), .calendar-table td:not(:first-child) { width: 13.8%; min-width: 0; }
+          .calendar-table th, .calendar-table td { padding: 7px 4px; }
+          .calendar-table th:first-child, .calendar-table td:first-child { width: 28%; min-width: 0; }
+          .calendar-table th:not(:first-child), .calendar-table td:not(:first-child) { width: 14.4%; min-width: 0; }
         }
 
         .hero-stat { border: 1px solid var(--border); border-radius: 14px; padding: 12px; background: rgba(2, 6, 23, .25); }
@@ -956,7 +959,7 @@ export default function App(){
                         const isTodayRow = row.date === todayIsoForView;
                         return (
                           <tr key={row.date} className={isTodayRow ? "today-row" : undefined}>
-                            <td>{formatCalendarDate(row.date)}{isTodayRow ? " (i dag)" : ""}</td><td>{row.timings.Fajr || "--:--"}</td><td>{row.timings.Dhuhr || "--:--"}</td><td>{row.timings.Asr || "--:--"}</td><td>{row.timings.Maghrib || "--:--"}</td><td>{row.timings.Isha || "--:--"}</td>
+                            <td className="calendar-date-cell">{isTodayRow && <span className="calendar-today">i dag</span>}<span className="calendar-date">{formatCalendarDate(row.date)}</span></td><td>{row.timings.Fajr || "--:--"}</td><td>{row.timings.Dhuhr || "--:--"}</td><td>{row.timings.Asr || "--:--"}</td><td>{row.timings.Maghrib || "--:--"}</td><td>{row.timings.Isha || "--:--"}</td>
                           </tr>
                         );
                       })}
