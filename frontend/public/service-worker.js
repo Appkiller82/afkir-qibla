@@ -1,23 +1,6 @@
 // public/service-worker.js
-const CACHE_VERSION = 'afkir-sw-v2';
-
-self.addEventListener('install', (event) => {
-  event.waitUntil(self.skipWaiting());
-});
-
-self.addEventListener('activate', (event) => {
-  event.waitUntil((async () => {
-    try {
-      const names = await caches.keys();
-      await Promise.all(
-        names
-          .filter((name) => name !== CACHE_VERSION)
-          .map((name) => caches.delete(name))
-      );
-    } catch {}
-    await self.clients.claim();
-  })());
-});
+self.addEventListener('install', () => self.skipWaiting());
+self.addEventListener('activate', () => self.clients.claim());
 
 self.addEventListener('push', (event) => {
   let data = {};
