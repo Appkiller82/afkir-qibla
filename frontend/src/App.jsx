@@ -865,6 +865,10 @@ export default function App(){
           .calendar-table th, .calendar-table td { padding: 7px 4px; }
           .calendar-table th:first-child, .calendar-table td:first-child { width: 24%; min-width: 0; }
           .calendar-table th:not(:first-child), .calendar-table td:not(:first-child) { width: 15.2%; min-width: 0; }
+          .calendar-table th:nth-child(5), .calendar-table td:nth-child(5) { width: 16%; }
+          .calendar-table th:nth-child(6), .calendar-table td:nth-child(6) { width: 14.4%; }
+          .calendar-table th:nth-child(5), .calendar-table td:nth-child(5) { padding-left: 3px; }
+          .calendar-table th:nth-child(6), .calendar-table td:nth-child(6) { padding-left: 6px; }
         }
 
         .hero-stat { border: 1px solid var(--border); border-radius: 14px; padding: 12px; background: rgba(2, 6, 23, .25); }
@@ -873,6 +877,9 @@ export default function App(){
         .weather-tabs { display:flex; gap:8px; margin-top:10px; }
         .weather-tab-btn { padding:6px 10px; border-radius:10px; border:1px solid var(--border); background:transparent; color:var(--fg); cursor:pointer; font-weight:600; }
         .weather-tab-btn.active { background: color-mix(in srgb, var(--accent-secondary) 22%, transparent); }
+        .forecast-list { list-style:none; margin:0; padding:0; display:grid; gap:8px; }
+        .forecast-item { display:grid; grid-template-columns: 1fr auto; align-items:center; gap:10px; padding:8px 0; border-bottom:1px dashed var(--border); }
+        .forecast-temp { font-variant-numeric: tabular-nums; min-width: 9ch; text-align:right; white-space:nowrap; }
         .section-grid { display:grid; gap:12px; margin-top:12px; grid-template-columns: 1.2fr .8fr; }
         @media (max-width: 920px){ .section-grid { grid-template-columns: 1fr; } .hero-stat .kpi{ font-size:20px; } }
       `}</style>
@@ -959,11 +966,11 @@ export default function App(){
               {weather && weatherTab === "long" && (
                 <div style={{marginTop:10}}>
                   {weather.daily?.length ? (
-                    <ul className="times">
+                    <ul className="forecast-list">
                       {weather.daily.slice(0, 7).map((day) => (
-                        <li className="time-item" key={day.date}>
+                        <li className="forecast-item" key={day.date}>
                           <span>{formatForecastDate(day.date)}</span>
-                          <span>{weatherIcon(day.code)} {formatMetric(day.min, "°")} / {formatMetric(day.max, "°")}</span>
+                          <span className="forecast-temp">{weatherIcon(day.code)} {formatMetric(day.min, "°")} / {formatMetric(day.max, "°")}</span>
                         </li>
                       ))}
                     </ul>
