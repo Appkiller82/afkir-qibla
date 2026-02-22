@@ -171,6 +171,10 @@ function formatPrayerTime(value) {
   return NB_TIME.format(value);
 }
 
+function formatPrayerLabel(name) {
+  return name === "Dhuhr" ? "Duhr" : name;
+}
+
 // ---------- Countdown ----------
 const ORDER = ["Fajr","Soloppgang","Dhuhr","Asr","Maghrib","Isha"];
 function diffToText(ms) {
@@ -824,7 +828,9 @@ export default function App(){
           text-align:left;
           font-weight:700;
         }
-        .calendar-table th, .calendar-table td { padding:8px 10px; border-bottom:1px solid var(--border); }
+        .calendar-table th, .calendar-table td { padding:8px 10px; border-bottom:1px solid var(--border); white-space: nowrap; }
+        .calendar-table th:first-child, .calendar-table td:first-child { min-width: 120px; }
+        .calendar-table th:not(:first-child), .calendar-table td:not(:first-child) { min-width: 76px; }
         .calendar-table th:not(:last-child), .calendar-table td:not(:last-child) { border-right:1px solid var(--border); }
         .calendar-table tbody tr:nth-child(even) { background: rgba(148, 163, 184, .08); }
         .calendar-table tbody tr.today-row { background: rgba(56,189,248,.14); font-weight: 700; }
@@ -922,7 +928,7 @@ export default function App(){
                 <div className="calendar-wrap">
                   <table className="calendar-table">
                     <thead>
-                      <tr><th style={{textAlign:"left"}}>Dato</th><th style={{textAlign:"left"}}>Fajr</th><th style={{textAlign:"left"}}>Dhuhr</th><th style={{textAlign:"left"}}>Asr</th><th style={{textAlign:"left"}}>Maghrib</th><th style={{textAlign:"left"}}>Isha</th></tr>
+                      <tr><th style={{textAlign:"left"}}>Dato</th><th style={{textAlign:"left"}}>Fajr</th><th style={{textAlign:"left"}}>Duhr</th><th style={{textAlign:"left"}}>Asr</th><th style={{textAlign:"left"}}>Maghrib</th><th style={{textAlign:"left"}}>Isha</th></tr>
                     </thead>
                     <tbody>
                       {calendarRows.map((row) => {
@@ -964,7 +970,7 @@ export default function App(){
                 <ul className="times">
                   <li className="time-item"><span>Fajr</span><span>{timesText?.Fajr || formatPrayerTime(times.Fajr)}</span></li>
                   <li className="time-item"><span>Soloppgang</span><span>{timesText?.Soloppgang || formatPrayerTime(times.Soloppgang)}</span></li>
-                  <li className="time-item"><span>Dhuhr</span><span>{timesText?.Dhuhr || formatPrayerTime(times.Dhuhr)}</span></li>
+                  <li className="time-item"><span>Duhr</span><span>{timesText?.Dhuhr || formatPrayerTime(times.Dhuhr)}</span></li>
                   <li className="time-item"><span>Asr</span><span>{timesText?.Asr || formatPrayerTime(times.Asr)}</span></li>
                   <li className="time-item"><span>Maghrib</span><span>{timesText?.Maghrib || formatPrayerTime(times.Maghrib)}</span></li>
                   <li className="time-item"><span>Isha</span><span>{timesText?.Isha || formatPrayerTime(times.Isha)}</span></li>
@@ -972,7 +978,7 @@ export default function App(){
 
                 <div style={{marginTop:10, fontSize:15}}>
                   {countdown?.name
-                    ? <>{countdown.tomorrow ? "Neste bønn i morgen: " : "Neste bønn: "}<b>{countdown.name}</b> kl <b>{countdown.atText || formatPrayerTime(countdown.at)}</b> (<span className="hint">{countdown.diffText}</span>)</>
+                    ? <>{countdown.tomorrow ? "Neste bønn i morgen: " : "Neste bønn: "}<b>{formatPrayerLabel(countdown.name)}</b> kl <b>{countdown.atText || formatPrayerTime(countdown.at)}</b> (<span className="hint">{countdown.diffText}</span>)</>
                     : <span className="hint">Alle dagens bønner er passert – oppdateres ved midnatt.</span>
                   }
                 </div>
