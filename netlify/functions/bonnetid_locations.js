@@ -1,9 +1,9 @@
-exports.handler = async () => {
+exports.handler = async (event) => {
   const base = (process.env.BONNETID_API_BASE_URL || "https://api.bonnetid.no").replace(/\/$/, "");
   const token = process.env.BONNETID_API_KEY;
 
-  console.log("[bonnetid] token present:", Boolean(process.env.BONNETID_API_KEY));
-  console.log("[bonnetid] base:", base);
+  console.log("[bonnetid] hasKey", Boolean(process.env.BONNETID_API_KEY));
+  console.log("[bonnetid] base", base);
 
   if (!token) {
     return {
