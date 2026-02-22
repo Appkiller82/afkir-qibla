@@ -818,8 +818,8 @@ export default function App(){
         ul.times { list-style:none; padding:0; margin:0 }
         .time-item { display:flex; justify-content:space-between; padding:8px 0; border-bottom:1px dashed var(--border); font-size:16px }
         .error { color:#fecaca; background:rgba(239,68,68,.12); border:1px solid rgba(239,68,68,.35); padding:10px; border-radius:12px; }
-        .calendar-wrap { margin-top:8px; max-height:220px; overflow:auto; border:1px solid var(--border); border-radius:12px; }
-        .calendar-table { width:100%; border-collapse:separate; border-spacing:0; font-size:14px; table-layout: fixed; }
+        .calendar-wrap { margin-top:8px; max-height:220px; overflow-y:auto; overflow-x:auto; -webkit-overflow-scrolling: touch; border:1px solid var(--border); border-radius:12px; }
+        .calendar-table { width:max-content; min-width:100%; border-collapse:separate; border-spacing:0; font-size:13.5px; table-layout:auto; }
         .calendar-table thead th {
           position: sticky;
           top: 0;
@@ -829,18 +829,19 @@ export default function App(){
           font-weight:700;
         }
         .calendar-table th, .calendar-table td { padding:8px 10px; border-bottom:1px solid var(--border); white-space: nowrap; }
-        .calendar-table th:first-child, .calendar-table td:first-child { min-width: 120px; }
-        .calendar-table th:not(:first-child), .calendar-table td:not(:first-child) { min-width: 76px; }
+        .calendar-table td { font-variant-numeric: tabular-nums; }
+        .calendar-table th:first-child, .calendar-table td:first-child { min-width: 112px; }
+        .calendar-table th:not(:first-child), .calendar-table td:not(:first-child) { min-width: 74px; }
         .calendar-table th:not(:last-child), .calendar-table td:not(:last-child) { border-right:1px solid var(--border); }
         .calendar-table tbody tr:nth-child(even) { background: rgba(148, 163, 184, .08); }
         .calendar-table tbody tr.today-row { background: rgba(56,189,248,.14); font-weight: 700; }
 
         @media (max-width: 520px) {
           .calendar-wrap { max-height: 200px; }
-          .calendar-table { font-size: 13px; }
-          .calendar-table th, .calendar-table td { padding: 8px 6px; }
-          .calendar-table th:first-child, .calendar-table td:first-child { min-width: 0; width: 30%; }
-          .calendar-table th:not(:first-child), .calendar-table td:not(:first-child) { min-width: 0; width: 14%; }
+          .calendar-table { font-size: 12px; }
+          .calendar-table th, .calendar-table td { padding: 7px 8px; }
+          .calendar-table th:first-child, .calendar-table td:first-child { min-width: 98px; }
+          .calendar-table th:not(:first-child), .calendar-table td:not(:first-child) { min-width: 64px; }
         }
 
         .hero-stat { border: 1px solid var(--border); border-radius: 14px; padding: 12px; background: rgba(2, 6, 23, .25); }
@@ -941,7 +942,7 @@ export default function App(){
                 aria-expanded={calendarExpanded}
               >
                 <h3>Månedskalender</h3>
-                <span className="hint" style={{fontWeight: 700}}>{calendarExpanded ? "Skjul" : "Trykk for å åpne"}</span>
+                <span className="hint" style={{fontWeight: 700}}>{calendarExpanded ? "Skjul" : "Vis"}</span>
               </div>
               {calendarError && <div className="error" style={{marginTop:8}}>{calendarError}</div>}
               {calendarExpanded && (
