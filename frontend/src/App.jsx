@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import PushControlsAuto from "./PushControlsAuto.jsx";
 import AutoLocationModal from "./AutoLocationModal.jsx";
 import { updateMetaIfSubscribed } from "./push";
-import { fetchMonthTimings, runDevCompareMode } from "./prayer";
+import { fetchMonthTimings } from "./prayer";
 
 /**
  * Afkir Qibla 7 – RESTORED UI (oppdatert for unified bønnetider)
@@ -582,10 +582,6 @@ export default function App(){
   useEffect(() => {
     document.documentElement.dataset.theme = theme === "dark" ? "dark" : "light";
   }, [theme]);
-
-  useEffect(() => {
-    runDevCompareMode();
-  }, []);
 
   useEffect(() => {
     if (coords?.latitude && coords?.longitude) setLastCoords(coords);
