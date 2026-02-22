@@ -814,6 +814,20 @@ export default function App(){
         ul.times { list-style:none; padding:0; margin:0 }
         .time-item { display:flex; justify-content:space-between; padding:8px 0; border-bottom:1px dashed var(--border); font-size:16px }
         .error { color:#fecaca; background:rgba(239,68,68,.12); border:1px solid rgba(239,68,68,.35); padding:10px; border-radius:12px; }
+        .calendar-wrap { margin-top:8px; max-height:220px; overflow:auto; border:1px solid var(--border); border-radius:12px; }
+        .calendar-table { width:100%; border-collapse:separate; border-spacing:0; font-size:14px; }
+        .calendar-table thead th {
+          position: sticky;
+          top: 0;
+          background: color-mix(in srgb, var(--card) 95%, #94a3b8 5%);
+          z-index: 1;
+          text-align:left;
+          font-weight:700;
+        }
+        .calendar-table th, .calendar-table td { padding:8px 10px; border-bottom:1px solid var(--border); }
+        .calendar-table th:not(:last-child), .calendar-table td:not(:last-child) { border-right:1px solid var(--border); }
+        .calendar-table tbody tr:nth-child(even) { background: rgba(148, 163, 184, .08); }
+        .calendar-table tbody tr.today-row { background: rgba(56,189,248,.14); font-weight: 700; }
 
         .hero-stat { border: 1px solid var(--border); border-radius: 14px; padding: 12px; background: rgba(2, 6, 23, .25); }
         .kpi { font-size: 24px; font-weight: 700; }
@@ -905,8 +919,8 @@ export default function App(){
               </div>
               {calendarError && <div className="error" style={{marginTop:8}}>{calendarError}</div>}
               {calendarExpanded && (
-                <div style={{marginTop:8, maxHeight:220, overflow:"auto"}}>
-                  <table style={{width:"100%", borderCollapse:"collapse", fontSize:14}}>
+                <div className="calendar-wrap">
+                  <table className="calendar-table">
                     <thead>
                       <tr><th style={{textAlign:"left"}}>Dato</th><th style={{textAlign:"left"}}>Fajr</th><th style={{textAlign:"left"}}>Dhuhr</th><th style={{textAlign:"left"}}>Asr</th><th style={{textAlign:"left"}}>Maghrib</th><th style={{textAlign:"left"}}>Isha</th></tr>
                     </thead>
@@ -914,7 +928,7 @@ export default function App(){
                       {calendarRows.map((row) => {
                         const isTodayRow = row.date === todayIsoForView;
                         return (
-                          <tr key={row.date} style={isTodayRow ? { background: "rgba(56,189,248,.14)", fontWeight: 700 } : undefined}>
+                          <tr key={row.date} className={isTodayRow ? "today-row" : undefined}>
                             <td>{formatCalendarDate(row.date)}{isTodayRow ? " (i dag)" : ""}</td><td>{row.timings.Fajr || "--:--"}</td><td>{row.timings.Dhuhr || "--:--"}</td><td>{row.timings.Asr || "--:--"}</td><td>{row.timings.Maghrib || "--:--"}</td><td>{row.timings.Isha || "--:--"}</td>
                           </tr>
                         );
