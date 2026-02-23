@@ -1,4 +1,4 @@
-// Unified prayer-time fetchers (Aladhan only)
+// Unified prayer-time fetchers (Bonnetid for Norway, AlAdhan elsewhere)
 import { applyOffset, normalizeHHMM } from "./prayer-utils";
 
 const COUNTRY_CACHE_PREFIX = "aq_country_cache:";
@@ -11,6 +11,11 @@ const NO_IRN_PROFILE = {
   offsets: { Fajr: -9, Dhuhr: 6, Asr: 0, Maghrib: 5, Isha: 0 },
 };
 const NORWAY_BBOX = { minLat: 57.8, maxLat: 71.3, minLon: 4.0, maxLon: 31.5 };
+
+
+const BONNETID_LOCATIONS_CACHE_KEY = "bonnetid_locations_cache_v1";
+const BONNETID_LOCATIONS_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const BONNETID_LOCATION_ID_CACHE_PREFIX = "bonnetid_location_id_";
 
 export type Timings = {
   Fajr: string;
@@ -35,6 +40,26 @@ export type UnifiedTimingRow = {
   asr: string;
   maghrib: string;
   isha: string;
+};
+
+
+type BonnetidLocation = {
+  pk: number;
+  lat: number;
+  lon: number;
+  name?: string;
+};
+
+type NormalizedTimingRow = {
+  date: string;
+  timings: {
+    fajr: string;
+    sunrise: string;
+    dhuhr: string;
+    asr: string;
+    maghrib: string;
+    isha: string;
+  };
 };
 
 function safeStorage() {
@@ -112,6 +137,125 @@ export async function getCountryCode(lat: number, lon: number): Promise<string> 
 export async function useNorwayProfile(lat: number, lon: number): Promise<boolean> {
   const cc = await getCountryCode(lat, lon);
   return cc === "no";
+}
+
+function roundedCoord(v: number) {
+  return v.toFixed(2);
+}
+
+function bonnetidLocationIdCacheKey(lat: number, lon: number) {
+  return `${BONNETID_LOCATION_ID_CACHE_PREFIX}${roundedCoord(lat)}_${roundedCoord(lon)}`;
+}
+
+function toRadians(v: number) {
+  return (v * Math.PI) / 180;
+}
+
+function haversineKm(lat1: number, lon1: number, lat2: number, lon2: number) {
+  const earthRadiusKm = 6371;
+  const dLat = toRadians(lat2 - lat1);
+  const dLon = toRadians(lon2 - lon1);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRadians(lat1)) * Math.cos(toRadians(lat2)) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return earthRadiusKm * c;
+}
+
+function readBonnetidLocationsFromCache(): BonnetidLocation[] | null {
+  const storage = safeStorage();
+  if (!storage) return null;
+  try {
+    const raw = storage.getItem(BONNETID_LOCATIONS_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed?.ts || !Array.isArray(parsed?.data)) return null;
+    if (Date.now() - Number(parsed.ts) > BONNETID_LOCATIONS_TTL_MS) return null;
+    return parsed.data as BonnetidLocation[];
+  } catch {
+    return null;
+  }
+}
+
+function writeBonnetidLocationsToCache(locations: BonnetidLocation[]) {
+  const storage = safeStorage();
+  if (!storage) return;
+  try {
+    storage.setItem(BONNETID_LOCATIONS_CACHE_KEY, JSON.stringify({ ts: Date.now(), data: locations }));
+  } catch {
+    // ignore
+  }
+}
+
+async function getBonnetidLocations(signal?: AbortSignal): Promise<BonnetidLocation[]> {
+  const cached = readBonnetidLocationsFromCache();
+  if (cached?.length) return cached;
+
+  const res = await fetch('/.netlify/functions/bonnetid_locations', { signal, headers: { Accept: 'application/json' } });
+  const body = await readJsonOrThrow(res, 'Bonnetid locations');
+  const rows = Array.isArray(body) ? body : Array.isArray(body?.results) ? body.results : [];
+  const locations = rows
+    .map((loc: any) => ({
+      pk: Number(loc?.pk),
+      lat: Number(loc?.lat),
+      lon: Number(loc?.lon),
+      name: loc?.name,
+    }))
+    .filter((loc: BonnetidLocation) => Number.isFinite(loc.pk) && Number.isFinite(loc.lat) && Number.isFinite(loc.lon));
+
+  if (!locations.length) throw new Error('Bonnetid locations empty');
+  writeBonnetidLocationsToCache(locations);
+  return locations;
+}
+
+async function findNearestBonnetidLocationId(lat: number, lon: number, signal?: AbortSignal): Promise<number> {
+  const storage = safeStorage();
+  const key = bonnetidLocationIdCacheKey(lat, lon);
+  if (storage) {
+    const raw = storage.getItem(key);
+    if (raw) {
+      const cached = Number(raw);
+      if (Number.isFinite(cached)) return cached;
+    }
+  }
+
+  const locations = await getBonnetidLocations(signal);
+  let nearest: BonnetidLocation | null = null;
+  let minDistance = Number.POSITIVE_INFINITY;
+
+  for (const loc of locations) {
+    const distance = haversineKm(lat, lon, loc.lat, loc.lon);
+    if (distance < minDistance) {
+      minDistance = distance;
+      nearest = loc;
+    }
+  }
+
+  if (!nearest) throw new Error('No nearest Bonnetid location found');
+
+  if (storage) {
+    try {
+      storage.setItem(key, String(nearest.pk));
+    } catch {
+      // ignore
+    }
+  }
+
+  return nearest.pk;
+}
+
+function normalizeBonnetidMonthRows(rows: any[]): NormalizedTimingRow[] {
+  return rows.map((row: any) => ({
+    date: String(row?.date || ''),
+    timings: {
+      fajr: normalizeHHMM(row?.fajr),
+      sunrise: normalizeHHMM(row?.shuruq_sunrise || row?.sunrise),
+      dhuhr: normalizeHHMM(row?.duhr || row?.dhuhr),
+      asr: normalizeHHMM(row?.asr),
+      maghrib: normalizeHHMM(row?.maghrib),
+      isha: normalizeHHMM(row?.isha),
+    },
+  }));
 }
 
 function ensure(t: any): Timings {
@@ -212,6 +356,29 @@ async function fetchAladhanMonth(
   });
 }
 
+async function fetchBonnetidMonth(
+  lat: number,
+  lon: number,
+  month: number,
+  year: number,
+  signal?: AbortSignal,
+): Promise<NormalizedTimingRow[]> {
+  const locationId = await findNearestBonnetidLocationId(lat, lon, signal);
+  if (import.meta.env.DEV) {
+    console.debug('[timings] provider=bonnetid', { location_id: locationId, year, month });
+  }
+
+  const url = new URL('/.netlify/functions/bonnetid_prayertimes_month', window.location.origin);
+  url.searchParams.set('location_id', String(locationId));
+  url.searchParams.set('year', String(year));
+  url.searchParams.set('month', String(month));
+
+  const res = await fetch(url.toString(), { signal, headers: { Accept: 'application/json' } });
+  const body = await readJsonOrThrow(res, 'Bonnetid month');
+  const rows = Array.isArray(body) ? body : Array.isArray(body?.results) ? body.results : [];
+  return normalizeBonnetidMonthRows(rows);
+}
+
 export async function fetchTimingsMonthly(
   lat: number,
   lon: number,
@@ -221,7 +388,23 @@ export async function fetchTimingsMonthly(
   signal?: AbortSignal,
 ): Promise<UnifiedTimingRow[]> {
   const norway = await useNorwayProfile(lat, lon);
-  const rows = await fetchAladhanMonth(lat, lon, month, year, tz, norway, signal);
+  if (norway) {
+    const rows = await fetchBonnetidMonth(lat, lon, month, year, signal);
+    return rows.map((row) => ({
+      dateISO: row.date,
+      fajr: row.timings.fajr,
+      sunrise: row.timings.sunrise,
+      dhuhr: row.timings.dhuhr,
+      asr: row.timings.asr,
+      maghrib: row.timings.maghrib,
+      isha: row.timings.isha,
+    }));
+  }
+
+  if (import.meta.env.DEV) {
+    console.debug('[timings] provider=aladhan', { lat, lon, year, month });
+  }
+  const rows = await fetchAladhanMonth(lat, lon, month, year, tz, false, signal);
   return rows.map((row) => ({
     dateISO: row.date,
     fajr: row.timings.Fajr,
