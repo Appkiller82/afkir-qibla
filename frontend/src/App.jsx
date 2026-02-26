@@ -172,7 +172,7 @@ function formatPrayerTime(value) {
 }
 
 function formatPrayerLabel(name) {
-  return name;
+  return name === "Dhuhr" ? "Duhr" : name;
 }
 
 // ---------- Countdown ----------
@@ -240,7 +240,7 @@ async function fetchWeather(lat, lng, signal) {
   url.searchParams.set("longitude", String(lng));
   url.searchParams.set("timezone", "auto");
   url.searchParams.set("current", "temperature_2m,apparent_temperature,wind_speed_10m,weather_code");
-  url.searchParams.set("daily", "weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset");
+  url.searchParams.set("daily", "temperature_2m_max,temperature_2m_min,sunrise,sunset");
   const res = await fetch(url.toString(), { signal });
   if (!res.ok) throw new Error("Weather API failed");
   const data = await res.json();
@@ -253,14 +253,6 @@ async function fetchWeather(lat, lng, signal) {
     max: data?.daily?.temperature_2m_max?.[0],
     sunrise: data?.daily?.sunrise?.[0] ? new Date(data.daily.sunrise[0]) : null,
     sunset: data?.daily?.sunset?.[0] ? new Date(data.daily.sunset[0]) : null,
-    daily: Array.isArray(data?.daily?.time)
-      ? data.daily.time.map((date, index) => ({
-          date,
-          code: data?.daily?.weather_code?.[index],
-          min: data?.daily?.temperature_2m_min?.[index],
-          max: data?.daily?.temperature_2m_max?.[index],
-        }))
-      : [],
   };
 }
 
@@ -300,15 +292,7 @@ function normalizeWeatherCache(w) {
     ...w,
     sunrise: sunrise && !Number.isNaN(sunrise.getTime()) ? sunrise : null,
     sunset: sunset && !Number.isNaN(sunset.getTime()) ? sunset : null,
-    daily: Array.isArray(w.daily) ? w.daily : [],
   };
-}
-
-function formatForecastDate(isoDate) {
-  if (!isoDate) return "Ukjent dato";
-  const d = new Date(`${isoDate}T12:00:00`);
-  if (Number.isNaN(d.getTime())) return isoDate;
-  return new Intl.DateTimeFormat("nb-NO", { weekday: "short", day: "2-digit", month: "2-digit" }).format(d);
 }
 
 function safeNum(value) {
@@ -570,7 +554,6 @@ export default function App(){
   const [lastCoords, setLastCoords] = useLocalStorage("aq_last_coords", null);
   const [weather, setWeather] = useState(() => normalizeWeatherCache(loadCache("aq_weather_cache")));
   const [weatherError, setWeatherError] = useState("");
-  const [weatherTab, setWeatherTab] = useState("now");
   const [calendarRows, setCalendarRows] = useState([]);
   const [calendarExpanded, setCalendarExpanded] = useState(false);
   const [calendarError, setCalendarError] = useState("");
@@ -782,8 +765,6 @@ export default function App(){
     let active = true;
     setWeatherError("");
     const controller = new AbortController();
-    // Vær og bønnetider deler samme activeCoords slik at lokasjonsbytte oppdaterer begge likt.
-    // Ikke hent vær fra en separat lokasjonskilde.
     fetchWeather(activeCoords.latitude, activeCoords.longitude, controller.signal)
       .then((w) => {
         if (!active) return;
@@ -851,9 +832,8 @@ export default function App(){
         .calendar-table td { font-variant-numeric: tabular-nums; }
         .calendar-date-cell { white-space: normal; }
         .calendar-date { display:block; }
-        .calendar-date { font-size: 12px; }
         .calendar-today { display:block; font-size:10px; font-weight:700; color: var(--accent-secondary); text-transform: uppercase; letter-spacing: .04em; line-height: 1.1; margin-bottom: 2px; }
-        .calendar-table th:first-child, .calendar-table td:first-child { min-width: 96px; }
+        .calendar-table th:first-child, .calendar-table td:first-child { min-width: 108px; }
         .calendar-table th:not(:first-child), .calendar-table td:not(:first-child) { min-width: 72px; }
         .calendar-table th:not(:last-child), .calendar-table td:not(:last-child) { border-right:1px solid var(--border); }
         .calendar-table tbody tr:nth-child(even) { background: rgba(148, 163, 184, .08); }
@@ -863,23 +843,12 @@ export default function App(){
           .calendar-wrap { max-height: 200px; overflow-x: hidden; }
           .calendar-table { width: 100%; min-width: 100%; font-size: 11.5px; table-layout: fixed; }
           .calendar-table th, .calendar-table td { padding: 7px 4px; }
-          .calendar-table th:first-child, .calendar-table td:first-child { width: 24%; min-width: 0; }
-          .calendar-table th:not(:first-child), .calendar-table td:not(:first-child) { width: 15.2%; min-width: 0; }
-          .calendar-table th:nth-child(5), .calendar-table td:nth-child(5) { width: 16%; }
-          .calendar-table th:nth-child(6), .calendar-table td:nth-child(6) { width: 14.4%; }
-          .calendar-table th:nth-child(5), .calendar-table td:nth-child(5) { padding-left: 3px; }
-          .calendar-table th:nth-child(6), .calendar-table td:nth-child(6) { padding-left: 6px; }
+          .calendar-table th:first-child, .calendar-table td:first-child { width: 28%; min-width: 0; }
+          .calendar-table th:not(:first-child), .calendar-table td:not(:first-child) { width: 14.4%; min-width: 0; }
         }
 
         .hero-stat { border: 1px solid var(--border); border-radius: 14px; padding: 12px; background: rgba(2, 6, 23, .25); }
         .kpi { font-size: 24px; font-weight: 700; }
-        .kpi-time { font-variant-numeric: tabular-nums; min-width: 8ch; display: inline-block; }
-        .weather-tabs { display:flex; gap:8px; margin-top:10px; }
-        .weather-tab-btn { padding:6px 10px; border-radius:10px; border:1px solid var(--border); background:transparent; color:var(--fg); cursor:pointer; font-weight:600; }
-        .weather-tab-btn.active { background: color-mix(in srgb, var(--accent-secondary) 22%, transparent); }
-        .forecast-list { list-style:none; margin:0; padding:0; display:grid; gap:8px; }
-        .forecast-item { display:grid; grid-template-columns: 1fr auto; align-items:center; gap:10px; padding:8px 0; border-bottom:1px dashed var(--border); }
-        .forecast-temp { font-variant-numeric: tabular-nums; min-width: 9ch; text-align:right; white-space:nowrap; }
         .section-grid { display:grid; gap:12px; margin-top:12px; grid-template-columns: 1.2fr .8fr; }
         @media (max-width: 920px){ .section-grid { grid-template-columns: 1fr; } .hero-stat .kpi{ font-size:20px; } }
       `}</style>
@@ -902,7 +871,7 @@ export default function App(){
             <div className="hero-stat"><div className="hint">Neste bønn</div><div className="kpi">{countdown?.name || "--"}</div></div>
             <div className="hero-stat">
               <div className="hint">Nedtelling</div>
-              <div className="kpi kpi-time" style={{fontSize:20}}>
+              <div className="kpi" style={{fontSize:20}}>
                 {countdown?.diffText || "--:--"}
               </div>
             </div>
@@ -949,34 +918,14 @@ export default function App(){
 
           <div style={{display:"grid", gap:12}}>
             <section className="card">
-              <h3>Vær</h3>
-              <div className="weather-tabs" role="tablist" aria-label="Værvisning">
-                <button className={`weather-tab-btn ${weatherTab === "now" ? "active" : ""}`} role="tab" aria-selected={weatherTab === "now"} onClick={() => setWeatherTab("now")}>Nå</button>
-                <button className={`weather-tab-btn ${weatherTab === "long" ? "active" : ""}`} role="tab" aria-selected={weatherTab === "long"} onClick={() => setWeatherTab("long")}>Langtidsvarsel</button>
-              </div>
+              <h3>Været nå</h3>
               {weatherError && <div className="error" style={{marginTop:8}}>{weatherError}</div>}
               {!weather && !weatherError && <div className="hint" style={{marginTop:8}}>Henter værdata…</div>}
-              {weather && weatherTab === "now" && (
+              {weather && (
                 <div style={{marginTop:10}}>
                   <div style={{fontSize:28, fontWeight:700}}>{weatherIcon(weather.code)} {formatMetric(weather.currentTemp, "°")}</div>
                   <div className="hint" style={{marginTop:4}}>{weatherCodeToText(weather.code)} · Føles som {formatMetric(weather.feelsLike, "°")}</div>
                   <div className="hint" style={{marginTop:4}}>Vind: {formatMetric(weather.wind, " m/s")} · Min/maks: {formatMetric(weather.min, "°")} / {formatMetric(weather.max, "°")}</div>
-                </div>
-              )}
-              {weather && weatherTab === "long" && (
-                <div style={{marginTop:10}}>
-                  {weather.daily?.length ? (
-                    <ul className="forecast-list">
-                      {weather.daily.slice(0, 7).map((day) => (
-                        <li className="forecast-item" key={day.date}>
-                          <span>{formatForecastDate(day.date)}</span>
-                          <span className="forecast-temp">{weatherIcon(day.code)} {formatMetric(day.min, "°")} / {formatMetric(day.max, "°")}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  ) : (
-                    <div className="hint">Langtidsvarsel ikke tilgjengelig</div>
-                  )}
                 </div>
               )}
             </section>
@@ -1003,7 +952,7 @@ export default function App(){
                 <div className="calendar-wrap">
                   <table className="calendar-table">
                     <thead>
-                      <tr><th style={{textAlign:"left"}}>Dato</th><th style={{textAlign:"left"}}>Fajr</th><th style={{textAlign:"left"}}>Dhuhr</th><th style={{textAlign:"left"}}>Asr</th><th style={{textAlign:"left"}}>Maghrib</th><th style={{textAlign:"left"}}>Isha</th></tr>
+                      <tr><th style={{textAlign:"left"}}>Dato</th><th style={{textAlign:"left"}}>Fajr</th><th style={{textAlign:"left"}}>Duhr</th><th style={{textAlign:"left"}}>Asr</th><th style={{textAlign:"left"}}>Maghrib</th><th style={{textAlign:"left"}}>Isha</th></tr>
                     </thead>
                     <tbody>
                       {calendarRows.map((row) => {
@@ -1045,7 +994,7 @@ export default function App(){
                 <ul className="times">
                   <li className="time-item"><span>Fajr</span><span>{timesText?.Fajr || formatPrayerTime(times.Fajr)}</span></li>
                   <li className="time-item"><span>Soloppgang</span><span>{timesText?.Soloppgang || formatPrayerTime(times.Soloppgang)}</span></li>
-                  <li className="time-item"><span>Dhuhr</span><span>{timesText?.Dhuhr || formatPrayerTime(times.Dhuhr)}</span></li>
+                  <li className="time-item"><span>Duhr</span><span>{timesText?.Dhuhr || formatPrayerTime(times.Dhuhr)}</span></li>
                   <li className="time-item"><span>Asr</span><span>{timesText?.Asr || formatPrayerTime(times.Asr)}</span></li>
                   <li className="time-item"><span>Maghrib</span><span>{timesText?.Maghrib || formatPrayerTime(times.Maghrib)}</span></li>
                   <li className="time-item"><span>Isha</span><span>{timesText?.Isha || formatPrayerTime(times.Isha)}</span></li>
