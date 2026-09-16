@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import PushControlsAuto from "./PushControlsAuto.jsx";
 import AutoLocationModal from "./AutoLocationModal.jsx";
 import { updateMetaIfSubscribed } from "./push";
-import { fetchMonthTimings, runDevCompareMode } from "./prayer";
+import { fetchMonthTimings } from "./prayer";
 import AppView from "./AppView.jsx";
 import Compass from "./Compass.jsx";
 import "./design.css";
@@ -290,9 +290,9 @@ function loadCache(key) {
 }
 
 function timesCacheKey(lat, lng, isoDate) {
-  const latKey = Number(lat).toFixed(2);
-  const lngKey = Number(lng).toFixed(2);
-  return `aq_times_cache:${latKey}:${lngKey}:${isoDate}`;
+  const latKey = Number(lat).toString();
+  const lngKey = Number(lng).toString();
+  return `aq_times_irn_v1:${latKey}:${lngKey}:${isoDate}`;
 }
 
 function normalizeWeatherCache(w) {
@@ -447,6 +447,7 @@ export default function App(){
   const [countryCode, setCountryCode] = useLocalStorage("aq_country", "");
   const [times, setTimes] = useState(null);
   const [timesText, setTimesText] = useState(null);
+  const [prayerSource, setPrayerSource] = useState("");
   const [apiError, setApiError] = useState("");
   const [bgList, setBgList] = useState(CANDIDATE_BACKGROUNDS);
   const [bgIdx, setBgIdx] = useState(() => Math.floor(Math.random() * CANDIDATE_BACKGROUNDS.length));
@@ -487,10 +488,6 @@ export default function App(){
   useEffect(() => {
     document.documentElement.dataset.theme = theme === "dark" ? "dark" : "light";
   }, [theme]);
-
-  useEffect(() => {
-    runDevCompareMode();
-  }, []);
 
   useEffect(() => {
     if (coords?.latitude && coords?.longitude) setLastCoords(coords);
@@ -569,12 +566,17 @@ export default function App(){
       }
     });
     return () => { timersRef.current.forEach(id => clearTimeout(id)); timersRef.current = [] };
-  }, [remindersOn, times?.Fajr?.getTime?.()]);
+  }, [remindersOn, times]);
 
   const qiblaDeg = useMemo(() => activeCoords ? qiblaBearing(activeCoords.latitude, activeCoords.longitude) : null, [activeCoords?.latitude, activeCoords?.longitude]);
 
   async function refreshTimes(lat, lng) {
     const seq = ++refreshSeqRef.current;
+    setTimes(null);
+    setTimesText(null);
+    setPrayerSource("");
+    setCalendarRows([]);
+    setCountdown({ name: null, at: null, diffText: null, tomorrow: false });
     try {
       setApiError("");
       const tz = timeZone;
@@ -595,6 +597,8 @@ export default function App(){
       }
 
       const todayStr = todayRow.timings;
+      const sourceLabel = todayRow.source === "irn" ? `IRN · ${todayRow.sourceLocation}` : "AlAdhan";
+      setPrayerSource(sourceLabel);
       if (todayStr?.Maghrib && todayStr?.Isha && todayStr.Maghrib === todayStr.Isha) {
         console.warn("[Aladhan] Maghrib equals Isha for selected date", { date: todayIso, timings: todayStr });
       }
@@ -609,7 +613,7 @@ export default function App(){
         Maghrib: todayStr.Maghrib || "",
         Isha: todayStr.Isha || "",
       });
-      saveCache(timesCacheKey(lat, lng, todayIso), todayStr);
+      saveCache(timesCacheKey(lat, lng, todayIso), { timings: todayStr, source: sourceLabel });
 
       const info = nextPrayerInfo(today);
       const infoAtText = info?.name
@@ -648,8 +652,10 @@ export default function App(){
         setCalendarError("Klarte ikke hente månedskalender akkurat nå.");
       }
       const todayIso = isoDateInTz(timeZone, 0);
-      const cached = loadCache(timesCacheKey(lat, lng, todayIso));
+      const saved = loadCache(timesCacheKey(lat, lng, todayIso));
+      const cached = saved?.timings;
       if (cached) {
+        setPrayerSource(saved.source || "Lagrede tider");
         setApiError("Viser lagrede tider for denne posisjonen.");
         setTimes(ensureDates(cached, todayIso));
         setTimesText({
@@ -660,8 +666,11 @@ export default function App(){
           Maghrib: cached.Maghrib || "",
           Isha: cached.Isha || "",
         });
+        const info = nextPrayerInfo(ensureDates(cached, todayIso));
+        setCountdown({ ...info, atText: cached[info.name] || null });
       } else {
-        setApiError("Klarte ikke hente bønnetider (API).");
+        setPrayerSource("");
+        setApiError(msg || "Klarte ikke hente bønnetider (API).");
         setTimes(null);
         setTimesText(null);
       }
@@ -714,5 +723,6 @@ export default function App(){
     }).catch(()=>{});
   }, [coords?.latitude, coords?.longitude, city, effectiveCountryCode]);
 
-  return <AppView {...{ page, setPage, city, coords, lastCoords, activeCoords, permission, loading, onUseLocation, offline, theme, setTheme, quranMode, setQuranMode, bg, bgList, rotateBackground, setRotateBackground, setSelectedBackground, countdown, times, timesText, apiError, remindersOn, setRemindersOn, audioRef, weather, weatherError, weatherTab, setWeatherTab, calendarRows, calendarError, todayIsoForView, showMap, setShowMap, qiblaDeg, showModal, setShowModal, allowLocation, effectiveCountryCode, timeZone, NB_DAY, formatPrayerTime, formatMetric, weatherIcon, weatherCodeToText, formatForecastDate, formatCalendarDate, exportCalendarIcs, ModernCompass: Compass, QiblaMap, PushControlsAuto, AutoLocationModal }} />;
+return <AppView prayerSource={prayerSource} {...{ page, setPage, city, coords, lastCoords, activeCoords, permission, loading, onUseLocation, offline, theme, setTheme, quranMode, setQuranMode, bg, bgList, rotateBackground, setRotateBackground, setSelectedBackground, countdown, times, timesText, apiError, remindersOn, setRemindersOn, audioRef, weather, weatherError, weatherTab, setWeatherTab, calendarRows, calendarError, todayIsoForView, showMap, setShowMap, qiblaDeg, showModal, setShowModal, allowLocation, effectiveCountryCode, timeZone, NB_DAY, formatPrayerTime, formatMetric, weatherIcon, weatherCodeToText, formatForecastDate, formatCalendarDate, exportCalendarIcs, ModernCompass: Compass, QiblaMap, PushControlsAuto, AutoLocationModal }} />;
 }
+

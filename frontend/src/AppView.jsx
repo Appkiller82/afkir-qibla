@@ -55,6 +55,7 @@ export default function AppView(p) {
       {p.offline && <div className="notice" role="status">Du er frakoblet. Tilgjengelige lagrede tider vises.</div>}
 
       <main id="main-content">
+        {p.prayerSource && <p className="fine-print" aria-label="Kilde for bønnetider">Bønnetider: {p.prayerSource}</p>}
         {p.page === "home" && <div className="home-layout">
           <section className="hero-card" style={{ backgroundImage: `linear-gradient(90deg, rgba(5,25,22,.86), rgba(5,25,22,.14)), linear-gradient(0deg, rgba(5,25,22,.70), transparent 65%), url("${p.bg}")` }}>
             <div className="hero-location"><Icon name="pin" size={17}/>{p.city || "Oslo"}{!p.coords && !p.lastCoords && <span>· standardplassering</span>}</div>
@@ -89,3 +90,4 @@ export default function AppView(p) {
     <p.AutoLocationModal open={p.showModal} onAllow={p.allowLocation} onClose={() => p.setShowModal(false)}/>
   </div>;
 }
+
