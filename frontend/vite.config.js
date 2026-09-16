@@ -7,5 +7,10 @@ export default defineConfig({
   server: {
     host: true,
     port: 5173,
+    // Read-only prayer endpoints for local UI verification. Push actions are not proxied.
+    proxy: {
+      '/api/aladhan-month': { target: 'https://afkirqibla.netlify.app', changeOrigin: true },
+      '/api/aladhan-today': { target: 'https://afkirqibla.netlify.app', changeOrigin: true },
+    },
   }
 });

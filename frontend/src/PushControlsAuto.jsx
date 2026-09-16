@@ -1,10 +1,11 @@
 // frontend/src/PushControlsAuto.jsx
 import React, { useState } from "react";
-import { registerWithMetadata, sendTest } from "./push";
+import { registerWithMetadata, sendTest, unsubscribe } from "./push";
 
 export default function PushControlsAuto({ coords, city, countryCode, tz }) {
   const [status, setStatus] = useState("");
-  const subId = (typeof window !== "undefined" && localStorage.getItem("pushSubId")) || null;
+  const [busy, setBusy] = useState(false);
+  const subId = (() => { try { return localStorage.getItem("pushSubId"); } catch { return null; } })();
 
   async function onEnable() {
     if (!coords) {
@@ -12,6 +13,7 @@ export default function PushControlsAuto({ coords, city, countryCode, tz }) {
       return;
     }
     setStatus("Aktiverer …");
+    setBusy(true);
     try {
       const ok = await registerWithMetadata({
         lat: coords.latitude,
@@ -26,39 +28,39 @@ export default function PushControlsAuto({ coords, city, countryCode, tz }) {
     } catch (e) {
       console.error(e);
       setStatus("Feil ved aktivering (se konsoll)");
-    }
+    } finally { setBusy(false); }
   }
 
   async function onSend() {
     setStatus("Sender test …");
+    setBusy(true);
     const ok = await sendTest();
-    setStatus("Sendt: " + String(ok));
+    setStatus(ok ? "Testvarsel sendt." : "Kunne ikke sende testvarsel.");
+    setBusy(false);
   }
 
   async function onDisable() {
+    setBusy(true);
     try {
-      if ("serviceWorker" in navigator) {
-        const reg = await navigator.serviceWorker.ready;
-        const sub = await reg.pushManager.getSubscription();
-        if (sub) await sub.unsubscribe();
-      }
-      localStorage.removeItem("pushSubId");
-      setStatus("Skrudd av");
+      const ok = await unsubscribe();
+      if (!ok) { setStatus("Kunne ikke skru av varsler. Prøv igjen."); return; }
+      try { localStorage.removeItem("pushSubId"); } catch {}
+      setStatus("Push-varsler er skrudd av.");
     } catch (e) {
       console.error(e);
       setStatus("Feil ved avskrudd");
-    }
+    } finally { setBusy(false); }
   }
 
   return (
-    <div className="space-x-2">
-      <button onClick={onEnable}>Aktiver push (auto)</button>
-      <button onClick={onSend}>Send test</button>
-      <button onClick={onDisable}>Skru av</button>
-      <div style={{ marginTop: 8, opacity: 0.8 }}>
-        {subId ? `Lagret ID: ${String(subId).slice(0, 10)}…` : "Ingen lagret ID"}
+    <div className="push-controls">
+      <button className="btn" disabled={busy} onClick={onEnable}>Aktiver push</button>
+      <button className="btn" disabled={busy} onClick={onSend}>Send test</button>
+      <button className="btn" disabled={busy} onClick={onDisable}>Skru av</button>
+      <div className="push-status">
+        {subId ? "Varsler er registrert på denne enheten." : "Varsler er ikke registrert på denne enheten."}
       </div>
-      <div style={{ marginTop: 6, fontSize: 12, opacity: 0.7 }}>{status}</div>
+      <div className="push-status" role="status">{status}</div>
     </div>
   );
 }

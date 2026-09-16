@@ -55,7 +55,16 @@ async function getVapidPublic(): Promise<string> {
 
 async function swReady(): Promise<ServiceWorkerRegistration> {
   if (!('serviceWorker' in navigator)) throw new Error('Service worker unsupported')
-  return await navigator.serviceWorker.ready
+  if ((import.meta as any)?.env?.DEV) throw new Error('Push is available in the published app')
+  let timeout: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([
+      navigator.serviceWorker.ready,
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(() => reject(new Error('Service worker not ready')), 10000)
+      }),
+    ])
+  } finally { if (timeout) clearTimeout(timeout) }
 }
 export async function getSubscription(): Promise<PushSubscription | null> {
   try {
@@ -94,10 +103,10 @@ export async function subscribe(): Promise<boolean> {
 
 export async function unsubscribe(): Promise<boolean> {
   try {
-    const sub = await getSubscription()
+    const reg = await swReady()
+    const sub = await reg.pushManager.getSubscription()
     if (!sub) return true
-    await sub.unsubscribe()
-    return true
+    return await sub.unsubscribe()
   } catch { return false }
 }
 

@@ -3,6 +3,9 @@ import PushControlsAuto from "./PushControlsAuto.jsx";
 import AutoLocationModal from "./AutoLocationModal.jsx";
 import { updateMetaIfSubscribed } from "./push";
 import { fetchMonthTimings, runDevCompareMode } from "./prayer";
+import AppView from "./AppView.jsx";
+import Compass from "./Compass.jsx";
+import "./design.css";
 
 /**
  * Afkir Qibla 7 – RESTORED UI (oppdatert for unified bønnetider)
@@ -375,119 +378,8 @@ function exportCalendarIcs(city, days) {
   a.href = url;
   a.download = "afkir-prayertider.ics";
   a.click();
-  URL.revokeObjectURL(url);
-}
-
-// ---------- Compass (restored) ----------
-function ModernCompass({ bearing }) {
-  const [heading, setHeading] = useState(null);
-  const [showHelp, setShowHelp] = useState(false);
-
-  const onOrientation = (e) => {
-    let hdg = null;
-    if (typeof e?.webkitCompassHeading === "number") hdg = e.webkitCompassHeading; // iOS
-    else if (typeof e?.alpha === "number") hdg = 360 - e.alpha; // others
-    if (hdg != null && !Number.isNaN(hdg)) setHeading((hdg + 360) % 360);
-  };
-
-  const requestSensors = async () => {
-    try { if (window.DeviceMotionEvent?.requestPermission) await window.DeviceMotionEvent.requestPermission() } catch {}
-    if (window.DeviceOrientationEvent?.requestPermission) {
-      try { const p = await window.DeviceOrientationEvent.requestPermission(); if (p !== "granted") { setShowHelp(true); return false } } catch { setShowHelp(true); return false }
-    }
-    return true;
-  };
-
-  const activateCompass = async () => {
-    let ok = true;
-    if (window.DeviceOrientationEvent?.requestPermission) ok = await requestSensors();
-    if (!ok) { setShowHelp(true); return }
-    window.addEventListener("deviceorientationabsolute", onOrientation, true);
-    window.addEventListener("deviceorientation", onOrientation, true);
-    setTimeout(() => { if (heading == null) setShowHelp(true) }, 3000);
-  };
-
-  useEffect(() => () => {
-    window.removeEventListener("deviceorientationabsolute", onOrientation, true);
-    window.removeEventListener("deviceorientation", onOrientation, true);
-  }, []);
-
-  const needleAngle = (bearing == null || heading == null) ? 0 : ((bearing - heading + 360) % 360);
-  const delta = (bearing == null || heading == null) ? null : (((bearing - heading + 540) % 360) - 180);
-  const aligned = delta != null && Math.abs(delta) <= 3;
-
-  return (
-    <div>
-      <div style={{display:"flex", justifyContent:"center", gap:8}}>
-        <button className="btn" onClick={activateCompass}>Tillat kompass</button>
-        <button className="btn" onClick={()=>setShowHelp(true)}>Hjelp</button>
-      </div>
-
-      <div style={{position:"relative", width:280, height:300, margin:"12px auto 0"}}>
-        {/* dial */}
-        <div style={{position:"absolute", inset:"20px 0 0 0", borderRadius:"50%",
-          background:"radial-gradient(140px 140px at 50% 45%, rgba(255,255,255,.10), rgba(15,23,42,.65))",
-          boxShadow:"inset 0 10px 30px rgba(0,0,0,.5), 0 6px 24px rgba(0,0,0,.35)", border:`1px solid ${aligned ? "rgba(16,185,129,.8)" : "rgba(148,163,184,.35)"}`}}/>
-        <div style={{position:"absolute", inset:"30px 10px 10px 10px", borderRadius:"50%"}}>
-          {[...Array(60)].map((_,i)=>(
-            <div key={i} style={{position:"absolute", inset:0, transform:`rotate(${i*6}deg)`}}>
-              <div style={{position:"absolute", top:8, left:"50%", transform:"translateX(-50%)", width: i%5===0 ? 3 : 2, height: i%5===0 ? 16 : 10, background: aligned ? "#10b981" : "#445169", opacity: i%5===0 ? 1 : .7, borderRadius:2}}/>
-            </div>
-          ))}
-          <div style={{position:"absolute", inset:0, color: aligned ? "#10b981" : "#a5b4fc", fontWeight:700}}>
-            <div style={{position:"absolute", top:14, left:"50%", transform:"translateX(-50%)"}}>N</div>
-            <div style={{position:"absolute", bottom:14, left:"50%", transform:"translateX(-50%)"}}>S</div>
-            <div style={{position:"absolute", top:"50%", left:14, transform:"translateY(-50%)"}}>V</div>
-            <div style={{position:"absolute", top:"50%", right:14, transform:"translateY(-50%)"}}>Ø</div>
-          </div>
-        </div>
-        {/* Kaaba fixed */}
-        <div style={{position:"absolute", top:30, left:"50%", transform:"translateX(-50%)", zIndex:3}}>
-          <img src="/icons/kaaba_3d.svg" alt="Kaaba" width={40} height={40} draggable="false" />
-        </div>
-        {/* Needle */}
-        <svg width="280" height="280" style={{position:"absolute", top:20, left:0, right:0, margin:"0 auto", pointerEvents:"none", zIndex:4}} aria-hidden="true">
-          <defs>
-            <linearGradient id="needle" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor={aligned ? "#10b981" : "#ef4444"}/><stop offset="100%" stopColor={aligned ? "#065f46" : "#991b1b"}/>
-            </linearGradient>
-            <linearGradient id="tail" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="#94a3b8"/><stop offset="100%" stopColor="#475569"/>
-            </linearGradient>
-          </defs>
-          <g transform={`rotate(${needleAngle} 140 140)`}>
-            <polygon points="140,40 132,140 148,140" fill="url(#needle)" opacity="0.98"/>
-            <polygon points="132,140 148,140 140,208" fill="url(#tail)" opacity="0.86"/>
-            <circle cx="140" cy="140" r="8.5" fill={aligned ? "#10b981" : "#e5e7eb"} stroke={aligned ? "#065f46" : "#334155"} strokeWidth="2"/>
-            <circle cx="140" cy="140" r="2.8" fill="#1f2937"/>
-          </g>
-        </svg>
-      </div>
-
-      <div style={{textAlign:"center", marginTop:10}}>
-        <div className="hint">
-          {aligned === null ? "Aktiver kompass" : `Avvik: ${Math.abs(Math.round(delta))}° ${aligned ? "✓ På Qibla" : ""}`}
-        </div>
-      </div>
-
-      {/* Help modal */}
-      {showHelp && (
-        <div style={{position:"fixed", inset:0, background:"rgba(0,0,0,.6)", display:"grid", placeItems:"center", zIndex:50}} onClick={()=>setShowHelp(false)}>
-          <div style={{background:"rgba(11,18,32,.96)", backdropFilter:"blur(8px)", border:"1px solid #334155", borderRadius:12, padding:16, width:"90%", maxWidth:420}} onClick={e=>e.stopPropagation()}>
-            <div style={{display:"flex", justifyContent:"space-between", alignItems:"center"}}>
-              <h3 style={{margin:0}}>Få i gang kompasset</h3>
-              <button className="btn" onClick={()=>setShowHelp(false)}>Lukk</button>
-            </div>
-            <ol style={{margin:"12px 0 0 18px"}}>
-              <li>Trykk <b>Tillat kompass</b> og gi tilgang til bevegelse/orientering.</li>
-              <li>Safari (iPhone): aA → Nettstedsinnstillinger → slå på <b>Bevegelse & orientering</b>.</li>
-              <li>Kalibrer ved å bevege telefonen i en <b>figur-8</b>.</li>
-            </ol>
-          </div>
-        </div>
-      )}
-    </div>
-  );
+  // Let the browser start the download before releasing the object URL.
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 // ---------- Map (Leaflet) ----------
@@ -519,7 +411,7 @@ function QiblaMap({ coords }) {
       if (cancelled || !divRef.current) return;
       const mecca = [21.4225, 39.8262];
       map = L.map(divRef.current, { zoomControl: true, attributionControl: true }).setView([coords.latitude, coords.longitude], 5);
-      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19 }).addTo(map);
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>' }).addTo(map);
       L.marker([coords.latitude, coords.longitude]).addTo(map).bindPopup("Din posisjon");
       L.marker(mecca).addTo(map).bindPopup("Kaaba (Mekka)");
       const line = L.polyline([[coords.latitude, coords.longitude], mecca], { color: "#ef4444", weight: 3 }).addTo(map);
@@ -534,11 +426,8 @@ function QiblaMap({ coords }) {
 
 // ---------- Backgrounds (restore & validate) ----------
 const CANDIDATE_BACKGROUNDS = [
-  "/backgrounds/mecca_panorama.jpg",
-  "/backgrounds/kaaba_2024.jpg",
-  "/backgrounds/mecca_aerial.jpg",
-  "/backgrounds/mecca_city_panorama.jpg",
-  "/backgrounds/mecca_exterior.jpg" // hvis ikke finnes, blir filtrert bort av validering
+  "/backgrounds/kaaba-dusk.webp",
+  "/backgrounds/kaaba-dawn.webp"
 ];
 
 async function validateBackgrounds(list) {
@@ -560,7 +449,10 @@ export default function App(){
   const [timesText, setTimesText] = useState(null);
   const [apiError, setApiError] = useState("");
   const [bgList, setBgList] = useState(CANDIDATE_BACKGROUNDS);
-  const [bgIdx, setBgIdx] = useState(0);
+  const [bgIdx, setBgIdx] = useState(() => Math.floor(Math.random() * CANDIDATE_BACKGROUNDS.length));
+  const [rotateBackground, setRotateBackground] = useLocalStorage("aq_rotate_background", true);
+  const [selectedBackground, setSelectedBackground] = useLocalStorage("aq_background", CANDIDATE_BACKGROUNDS[0]);
+  const [page, setPage] = useState("home");
   const [countdown, setCountdown] = useState({ name: null, at: null, diffText: null, tomorrow: false });
   const [remindersOn, setRemindersOn] = useLocalStorage("aq_reminders_on", false);
   const [showMap, setShowMap] = useState(false);
@@ -572,7 +464,6 @@ export default function App(){
   const [weatherError, setWeatherError] = useState("");
   const [weatherTab, setWeatherTab] = useState("now");
   const [calendarRows, setCalendarRows] = useState([]);
-  const [calendarExpanded, setCalendarExpanded] = useState(false);
   const [calendarError, setCalendarError] = useState("");
   const [offline, setOffline] = useState(typeof navigator !== "undefined" ? !navigator.onLine : false);
   const timeZone = useMemo(() => Intl.DateTimeFormat().resolvedOptions().timeZone, []);
@@ -583,8 +474,12 @@ export default function App(){
   // Validate backgrounds once
   useEffect(() => { validateBackgrounds(CANDIDATE_BACKGROUNDS).then(setBgList) }, []);
   // Rotate backgrounds
-  useEffect(() => { const id = setInterval(()=> setBgIdx(i => (i+1)%bgList.length), 25000); return () => clearInterval(id) }, [bgList.length]);
-  const bg = bgList[bgIdx % bgList.length];
+  useEffect(() => {
+    if (!rotateBackground || window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
+    const id = setInterval(() => setBgIdx(i => (i + 1) % bgList.length), 25000);
+    return () => clearInterval(id);
+  }, [bgList.length, rotateBackground]);
+  const bg = rotateBackground ? bgList[bgIdx % bgList.length] : (bgList.includes(selectedBackground) ? selectedBackground : bgList[0]);
   const activeCoords = coords || lastCoords || DEFAULT_COORDS;
   const effectiveCountryCode = inferCountryCode(activeCoords?.latitude, activeCoords?.longitude, countryCode || "");
   const todayIsoForView = isoDateInTz(timeZone, 0);
@@ -819,274 +714,5 @@ export default function App(){
     }).catch(()=>{});
   }, [coords?.latitude, coords?.longitude, city, effectiveCountryCode]);
 
-  return (
-    <div style={{minHeight:"100dvh", color:"var(--fg)", backgroundSize:"cover", backgroundPosition:"center", backgroundImage:`linear-gradient(${quranMode ? "rgba(3, 12, 16, .78), rgba(3, 12, 16, .78)" : "rgba(4,6,12,.65), rgba(4,6,12,.65)"}), url(${bg})`, transition:"background-image .8s ease"}}>
-      <style>{`
-        :root { --fg:#0f172a; --muted:#475569; --card:rgba(255,255,255,.93); --border:#d1d5db; --btn:#f8fafc; --accent:#16a34a; --accent-secondary:#0284c7; }
-        :root[data-theme="dark"] { --fg:#e5e7eb; --muted:#cbd5e1; --card:rgba(15,23,42,.78); --border:#334155; --btn:#0b1220; --accent:#16a34a; --accent-secondary:#38bdf8; }
-        .container { max-width: 1060px; margin: 0 auto; padding: calc(env(safe-area-inset-top) + 12px) 12px calc(env(safe-area-inset-bottom) + 20px); font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
-        .card { border:1px solid var(--border); border-radius: 18px; padding: 16px; background: var(--card); backdrop-filter: blur(14px); box-shadow: 0 12px 28px rgba(2, 6, 23, 0.22); }
-        .hero { background: linear-gradient(135deg, rgba(22,163,74,.18), rgba(56,189,248,.16)); padding-bottom: 12px; }
-        .btn { padding:10px 14px; border-radius:12px; border:1px solid var(--border); background: var(--btn); color: var(--fg); cursor:pointer; font-weight: 600; }
-        .btn:hover { opacity:.95 }
-        .btn-green { background: var(--accent); border-color: var(--accent); color: white; }
-        .hint { color: var(--muted); font-size: 13px; }
-        .row { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
-        h1 { margin:0 0 6px 0; font-size: clamp(32px, 5vw, 44px); line-height:1.1 }
-        h3 { margin: 0; font-size: 18px; }
-        ul.times { list-style:none; padding:0; margin:0 }
-        .time-item { display:flex; justify-content:space-between; padding:8px 0; border-bottom:1px dashed var(--border); font-size:16px }
-        .error { color:#fecaca; background:rgba(239,68,68,.12); border:1px solid rgba(239,68,68,.35); padding:10px; border-radius:12px; }
-        .calendar-wrap { margin-top:8px; max-height:220px; overflow-y:auto; overflow-x:auto; -webkit-overflow-scrolling: touch; border:1px solid var(--border); border-radius:12px; }
-        .calendar-table { width:max-content; min-width:100%; border-collapse:separate; border-spacing:0; font-size:13px; table-layout:auto; }
-        .calendar-table thead th {
-          position: sticky;
-          top: 0;
-          background: color-mix(in srgb, var(--card) 95%, #94a3b8 5%);
-          z-index: 1;
-          text-align:left;
-          font-weight:700;
-        }
-        .calendar-table th, .calendar-table td { padding:8px 9px; border-bottom:1px solid var(--border); white-space: nowrap; }
-        .calendar-table td { font-variant-numeric: tabular-nums; }
-        .calendar-date-cell { white-space: normal; }
-        .calendar-date { display:block; }
-        .calendar-date { font-size: 12px; }
-        .calendar-today { display:block; font-size:10px; font-weight:700; color: var(--accent-secondary); text-transform: uppercase; letter-spacing: .04em; line-height: 1.1; margin-bottom: 2px; }
-        .calendar-table th:first-child, .calendar-table td:first-child { min-width: 96px; }
-        .calendar-table th:not(:first-child), .calendar-table td:not(:first-child) { min-width: 72px; }
-        .calendar-table th:not(:last-child), .calendar-table td:not(:last-child) { border-right:1px solid var(--border); }
-        .calendar-table tbody tr:nth-child(even) { background: rgba(148, 163, 184, .08); }
-        .calendar-table tbody tr.today-row { background: rgba(56,189,248,.14); font-weight: 700; }
-
-        @media (max-width: 520px) {
-          .calendar-wrap { max-height: 200px; overflow-x: hidden; }
-          .calendar-table { width: 100%; min-width: 100%; font-size: 11.5px; table-layout: fixed; }
-          .calendar-table th, .calendar-table td { padding: 7px 4px; }
-          .calendar-table th:first-child, .calendar-table td:first-child { width: 24%; min-width: 0; }
-          .calendar-table th:not(:first-child), .calendar-table td:not(:first-child) { width: 15.2%; min-width: 0; }
-          .calendar-table th:nth-child(5), .calendar-table td:nth-child(5) { width: 16%; }
-          .calendar-table th:nth-child(6), .calendar-table td:nth-child(6) { width: 14.4%; }
-          .calendar-table th:nth-child(5), .calendar-table td:nth-child(5) { padding-left: 3px; }
-          .calendar-table th:nth-child(6), .calendar-table td:nth-child(6) { padding-left: 6px; }
-        }
-
-        .hero-stat { border: 1px solid var(--border); border-radius: 14px; padding: 12px; background: rgba(2, 6, 23, .25); }
-        .kpi { font-size: 24px; font-weight: 700; }
-        .kpi-time { font-variant-numeric: tabular-nums; min-width: 8ch; display: inline-block; }
-        .weather-tabs { display:flex; gap:8px; margin-top:10px; }
-        .weather-tab-btn { padding:6px 10px; border-radius:10px; border:1px solid var(--border); background:transparent; color:var(--fg); cursor:pointer; font-weight:600; }
-        .weather-tab-btn.active { background: color-mix(in srgb, var(--accent-secondary) 22%, transparent); }
-        .forecast-list { list-style:none; margin:0; padding:0; display:grid; gap:8px; }
-        .forecast-item { display:grid; grid-template-columns: 1fr auto; align-items:center; gap:10px; padding:8px 0; border-bottom:1px dashed var(--border); }
-        .forecast-temp { font-variant-numeric: tabular-nums; min-width: 9ch; text-align:right; white-space:nowrap; }
-        .section-grid { display:grid; gap:12px; margin-top:12px; grid-template-columns: 1.2fr .8fr; }
-        @media (max-width: 920px){ .section-grid { grid-template-columns: 1fr; } .hero-stat .kpi{ font-size:20px; } }
-      `}</style>
-
-      <div className="container">
-        <header className="card hero" style={{marginBottom:12, textAlign:"left"}}>
-          <div className="row" style={{justifyContent:"space-between", marginBottom:10}}>
-            <div>
-              <h1>Afkir Qibla</h1>
-              <div className="hint">{NB_DAY.format(new Date())}</div>
-            </div>
-            <button className="btn" onClick={()=> setTheme(t => t === "dark" ? "light" : "dark") }>
-              Tema: {theme === "dark" ? "Mørk" : "Lys"}
-            </button>
-          </div>
-
-          <div className="hero-grid" style={{display:"grid", gridTemplateColumns:"1fr", gap:10}}>
-            <div className="hero-stat"><div className="hint">Sted</div><div className="kpi">{city || "Ukjent"}</div></div>
-            <div className="hero-stat"><div className="hint">Qibla</div><div className="kpi">{qiblaDeg != null ? `${Math.round(qiblaDeg)}°` : "--"}</div></div>
-            <div className="hero-stat"><div className="hint">Neste bønn</div><div className="kpi">{countdown?.name || "--"}</div></div>
-            <div className="hero-stat">
-              <div className="hint">Nedtelling</div>
-              <div className="kpi kpi-time" style={{fontSize:20}}>
-                {countdown?.diffText || "--:--"}
-              </div>
-            </div>
-          </div>
-        </header>
-
-        {/* Location */}
-        <section className="card">
-          <h3>Plassering</h3>
-          <div className="row" style={{marginTop:8}}>
-            <button className="btn" onClick={onUseLocation} disabled={loading}>{loading ? "Henter…" : "Bruk stedstjenester"}</button>
-            <span className="hint" style={{color: offline ? "#fbbf24" : "var(--muted)"}}>{offline ? "Offline-modus aktiv" : "Online"}</span>
-            <span className="hint">
-              {activeCoords
-                ? ((city ? city + " • " : "") + activeCoords.latitude.toFixed(4) + ", " + activeCoords.longitude.toFixed(4))
-                : (permission === "denied" ? "Posisjon er blokkert i nettleseren." : "Gi tilgang for automatisk lokasjon")}
-            </span>
-          </div>
-        </section>
-
-        {/* Compass + Map + Times */}
-        <div className="section-grid">
-          {/* Qibla retning */}
-          <section className="card">
-            <div style={{display:"flex", justifyContent:"space-between", alignItems:"center"}}>
-              <h3>Qibla retning</h3>
-              <button className="btn" onClick={()=>setShowMap(v=>!v)}>{showMap ? "Skjul kart" : "Vis kart"}</button>
-            </div>
-            {activeCoords ? (
-              <>
-                <div className="hint" style={{marginBottom:8}}>
-                  {qiblaDeg != null ? `Qibla: ${Math.round(qiblaDeg)}°` : "Finne retning…"}
-                </div>
-                <ModernCompass bearing={qiblaDeg ?? 0} />
-                {showMap && (
-                  <div style={{marginTop:12}}>
-                    <QiblaMap coords={activeCoords} />
-                    <div className="hint" style={{marginTop:6}}>Linjen viser retningen fra din posisjon til Kaaba (Mekka).</div>
-                  </div>
-                )}
-              </>
-            ) : <div className="hint">Velg/bekreft posisjon for å vise Qibla og kart.</div>}
-          </section>
-
-          <div style={{display:"grid", gap:12}}>
-            <section className="card">
-              <h3>Vær</h3>
-              <div className="weather-tabs" role="tablist" aria-label="Værvisning">
-                <button className={`weather-tab-btn ${weatherTab === "now" ? "active" : ""}`} role="tab" aria-selected={weatherTab === "now"} onClick={() => setWeatherTab("now")}>Nå</button>
-                <button className={`weather-tab-btn ${weatherTab === "long" ? "active" : ""}`} role="tab" aria-selected={weatherTab === "long"} onClick={() => setWeatherTab("long")}>Langtidsvarsel</button>
-              </div>
-              {weatherError && <div className="error" style={{marginTop:8}}>{weatherError}</div>}
-              {!weather && !weatherError && <div className="hint" style={{marginTop:8}}>Henter værdata…</div>}
-              {weather && weatherTab === "now" && (
-                <div style={{marginTop:10}}>
-                  <div style={{fontSize:28, fontWeight:700}}>{weatherIcon(weather.code)} {formatMetric(weather.currentTemp, "°")}</div>
-                  <div className="hint" style={{marginTop:4}}>{weatherCodeToText(weather.code)} · Føles som {formatMetric(weather.feelsLike, "°")}</div>
-                  <div className="hint" style={{marginTop:4}}>Vind: {formatMetric(weather.wind, " m/s")} · Min/maks: {formatMetric(weather.min, "°")} / {formatMetric(weather.max, "°")}</div>
-                </div>
-              )}
-              {weather && weatherTab === "long" && (
-                <div style={{marginTop:10}}>
-                  {weather.daily?.length ? (
-                    <ul className="forecast-list">
-                      {weather.daily.slice(0, 7).map((day) => (
-                        <li className="forecast-item" key={day.date}>
-                          <span>{formatForecastDate(day.date)}</span>
-                          <span className="forecast-temp">{weatherIcon(day.code)} {formatMetric(day.min, "°")} / {formatMetric(day.max, "°")}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  ) : (
-                    <div className="hint">Langtidsvarsel ikke tilgjengelig</div>
-                  )}
-                </div>
-              )}
-            </section>
-
-            <section className="card">
-              <div
-                style={{display:"flex", justifyContent:"space-between", alignItems:"center", cursor:"pointer"}}
-                onClick={() => setCalendarExpanded((v) => !v)}
-                role="button"
-                tabIndex={0}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") {
-                    e.preventDefault();
-                    setCalendarExpanded((v) => !v);
-                  }
-                }}
-                aria-expanded={calendarExpanded}
-              >
-                <h3>Månedskalender</h3>
-                <span className="hint" style={{fontWeight: 700}}>{calendarExpanded ? "Skjul" : "Vis"}</span>
-              </div>
-              {calendarError && <div className="error" style={{marginTop:8}}>{calendarError}</div>}
-              {calendarExpanded && (
-                <div className="calendar-wrap">
-                  <table className="calendar-table">
-                    <thead>
-                      <tr><th style={{textAlign:"left"}}>Dato</th><th style={{textAlign:"left"}}>Fajr</th><th style={{textAlign:"left"}}>Dhuhr</th><th style={{textAlign:"left"}}>Asr</th><th style={{textAlign:"left"}}>Maghrib</th><th style={{textAlign:"left"}}>Isha</th></tr>
-                    </thead>
-                    <tbody>
-                      {calendarRows.map((row) => {
-                        const isTodayRow = row.date === todayIsoForView;
-                        return (
-                          <tr key={row.date} className={isTodayRow ? "today-row" : undefined}>
-                            <td className="calendar-date-cell">{isTodayRow && <span className="calendar-today">i dag</span>}<span className="calendar-date">{formatCalendarDate(row.date)}</span></td><td>{row.timings.Fajr || "--:--"}</td><td>{row.timings.Dhuhr || "--:--"}</td><td>{row.timings.Asr || "--:--"}</td><td>{row.timings.Maghrib || "--:--"}</td><td>{row.timings.Isha || "--:--"}</td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </section>
-
-            <section className="card">
-              <div style={{display:"flex", justifyContent:"space-between", alignItems:"center"}}>
-                <h3>Quran & Dhikr</h3>
-                <button className={quranMode ? "btn btn-green" : "btn"} onClick={() => setQuranMode(v => !v)}>{quranMode ? "På" : "Av"}</button>
-              </div>
-              <div className="hint" style={{marginTop:8}}>Stillere modus for moské/ramadan med korte påminnelser.</div>
-              {quranMode && (
-                <ul style={{margin:"10px 0 0", paddingLeft:18}}>
-                  <li className="hint">"Hasbunallahu wa ni'mal wakeel" × 7</li>
-                  <li className="hint">"Astaghfirullah" × 33</li>
-                  <li className="hint">Surah Al-Ikhlas, Al-Falaq, An-Nas før søvn.</li>
-                </ul>
-              )}
-            </section>
-          </div>
-
-          {/* Bønnetider */}
-          <section className="card">
-            <h3>Bønnetider</h3>
-            {apiError && <div className="error" style={{margin:"8px 0"}}>{apiError}</div>}
-            {times ? (
-              <>
-                <ul className="times">
-                  <li className="time-item"><span>Fajr</span><span>{timesText?.Fajr || formatPrayerTime(times.Fajr)}</span></li>
-                  <li className="time-item"><span>Soloppgang</span><span>{timesText?.Soloppgang || formatPrayerTime(times.Soloppgang)}</span></li>
-                  <li className="time-item"><span>Dhuhr</span><span>{timesText?.Dhuhr || formatPrayerTime(times.Dhuhr)}</span></li>
-                  <li className="time-item"><span>Asr</span><span>{timesText?.Asr || formatPrayerTime(times.Asr)}</span></li>
-                  <li className="time-item"><span>Maghrib</span><span>{timesText?.Maghrib || formatPrayerTime(times.Maghrib)}</span></li>
-                  <li className="time-item"><span>Isha</span><span>{timesText?.Isha || formatPrayerTime(times.Isha)}</span></li>
-                </ul>
-
-                <div style={{marginTop:10, fontSize:15}}>
-                  {countdown?.name
-                    ? <>{countdown.tomorrow ? "Neste bønn i morgen: " : "Neste bønn: "}<b>{formatPrayerLabel(countdown.name)}</b> kl <b>{countdown.atText || formatPrayerTime(countdown.at)}</b> (<span className="hint">{countdown.diffText}</span>)</>
-                    : <span className="hint">Alle dagens bønner er passert – oppdateres ved midnatt.</span>
-                  }
-                </div>
-
-                <div className="row" style={{marginTop:10}}>
-                  <button className={remindersOn ? "btn btn-green" : "btn"} onClick={async ()=>{
-                    if ("Notification" in window && Notification.permission === "default") { try { await Notification.requestPermission() } catch {} }
-                    try { audioRef.current?.play?.().then(()=>{ audioRef.current.pause(); audioRef.current.currentTime=0; }) } catch {}
-                    setRemindersOn(v=>!v);
-                  }}>{remindersOn ? "Adhan-varsler: PÅ" : "Adhan-varsler: AV"}</button>
-
-                  <button className="btn" onClick={()=>{ const a = audioRef.current; if (a) { a.currentTime=0; a.play().catch(()=>{}) } }}>Test Adhan</button>
-                  <audio ref={audioRef} preload="auto" src="/audio/adhan.mp3"></audio>
-                </div>
-              </>
-            ) : <div className="hint">Henter bønnetider…</div>}
-          </section>
-
-          {/* Push controls card (auto-metadata) */}
-          <section className="card">
-            <h3>Push-varsler</h3>
-            <div className="hint" style={{marginBottom:8}}>Aktiver push for å få varsler om bønnetider på denne enheten.</div>
-            <PushControlsAuto
-              coords={coords}
-              city={city}
-              countryCode={effectiveCountryCode}
-              tz={timeZone}
-            />
-          </section>
-        </div>
-      </div>
-
-      <AutoLocationModal open={showModal} onAllow={allowLocation} onClose={()=>setShowModal(false)} />
-    </div>
-  );
+  return <AppView {...{ page, setPage, city, coords, lastCoords, activeCoords, permission, loading, onUseLocation, offline, theme, setTheme, quranMode, setQuranMode, bg, bgList, rotateBackground, setRotateBackground, setSelectedBackground, countdown, times, timesText, apiError, remindersOn, setRemindersOn, audioRef, weather, weatherError, weatherTab, setWeatherTab, calendarRows, calendarError, todayIsoForView, showMap, setShowMap, qiblaDeg, showModal, setShowModal, allowLocation, effectiveCountryCode, timeZone, NB_DAY, formatPrayerTime, formatMetric, weatherIcon, weatherCodeToText, formatForecastDate, formatCalendarDate, exportCalendarIcs, ModernCompass: Compass, QiblaMap, PushControlsAuto, AutoLocationModal }} />;
 }
