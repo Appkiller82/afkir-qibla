@@ -11,6 +11,12 @@
   package = "@netlify/plugin-functions-install-core"
 
 [[redirects]]
+  from = "/api/irn-month"
+  to = "/.netlify/functions/irn-month"
+  status = 200
+  force = true
+
+[[redirects]]
   from = "/api/aladhan-today"
   to = "/.netlify/functions/aladhan-today"
   status = 200
@@ -21,3 +27,4 @@
   to = "/.netlify/functions/aladhan-month"
   status = 200
   force = true
+
