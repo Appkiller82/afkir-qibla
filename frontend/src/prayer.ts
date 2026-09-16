@@ -7,7 +7,7 @@ const NO_IRN_PROFILE = {
   fajrAngle: 16.0,
   ishaAngle: 15.0,
   latitudeAdj: 3,
-  school: 1,
+  school: 0, // Standard Asr calculation for Norway (AlAdhan: 0=standard, 1=Hanafi).
   offsets: { Fajr: -9, Dhuhr: 6, Asr: 0, Maghrib: 5, Isha: 0 },
 };
 const NORWAY_BBOX = { minLat: 57.8, maxLat: 71.3, minLon: 4.0, maxLon: 31.5 };
